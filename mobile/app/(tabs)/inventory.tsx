@@ -1,16 +1,16 @@
 import { StyleSheet } from "react-native";
 import { Text, View } from "@/components/Themed";
 
-// ─── Home Screen ─────────────────────────────────────────────────────────────
-// Dashboard that will show expiration alerts, quick stats, and recent activity.
-// For now it's a placeholder — we'll build it out in Phase 2+.
-export default function HomeScreen() {
+// ─── Inventory Screen ────────────────────────────────────────────────────────
+// Will display all fridge/pantry items grouped by category with expiration info.
+// Built in Phase 2 (Task 2.3).
+export default function InventoryScreen() {
   return (
     <View style={styles.container}>
-      <Text style={styles.emoji}>🍽️</Text>
-      <Text style={styles.title}>Welcome to FreshPlate</Text>
+      <Text style={styles.emoji}>🧊</Text>
+      <Text style={styles.title}>Inventory</Text>
       <Text style={styles.subtitle}>
-        Your fridge dashboard will appear here.
+        Your fridge and pantry items will appear here.
       </Text>
     </View>
   );

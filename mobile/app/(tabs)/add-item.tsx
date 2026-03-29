@@ -1,16 +1,16 @@
 import { StyleSheet } from "react-native";
 import { Text, View } from "@/components/Themed";
 
-// ─── Home Screen ─────────────────────────────────────────────────────────────
-// Dashboard that will show expiration alerts, quick stats, and recent activity.
-// For now it's a placeholder — we'll build it out in Phase 2+.
-export default function HomeScreen() {
+// ─── Add Item Screen ─────────────────────────────────────────────────────────
+// Will provide three ways to add items: manual entry, barcode scan, photo.
+// Built across Phase 2 (manual), Phase 3 (barcode), and Phase 4 (photo).
+export default function AddItemScreen() {
   return (
     <View style={styles.container}>
-      <Text style={styles.emoji}>🍽️</Text>
-      <Text style={styles.title}>Welcome to FreshPlate</Text>
+      <Text style={styles.emoji}>➕</Text>
+      <Text style={styles.title}>Add Item</Text>
       <Text style={styles.subtitle}>
-        Your fridge dashboard will appear here.
+        Add items by typing, scanning, or taking a photo.
       </Text>
     </View>
   );
