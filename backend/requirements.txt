@@ -1,0 +1,12 @@
+# Web framework
+fastapi==0.115.8
+uvicorn[standard]==0.34.0
+
+# Settings management
+pydantic-settings==2.7.1
+
+# HTTP client (for calling Gemini, Open Food Facts)
+httpx==0.28.1
+
+# Supabase auth token verification
+python-jose[cryptography]==3.3.0
