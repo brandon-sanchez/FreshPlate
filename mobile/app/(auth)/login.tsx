@@ -20,7 +20,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as AppleAuthentication from "expo-apple-authentication";
 import { StatusBar } from "expo-status-bar";
 import { useAuthStore } from "@/stores/auth";
-import { brand } from "@/constants/Colors";
+import { useTheme } from "@/hooks/useTheme";
 
 function getSignInErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -35,6 +35,7 @@ function getSignInErrorMessage(error: unknown): string {
 
 export default function LoginScreen() {
   const [isLoading, setIsLoading] = useState<"google" | "apple" | null>(null);
+  const { colors, colorScheme } = useTheme();
 
   const signInWithGoogle = useAuthStore((s) => s.signInWithGoogle);
   const signInWithApple = useAuthStore((s) => s.signInWithApple);
@@ -107,14 +108,16 @@ export default function LoginScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      <StatusBar style="dark" />
+    <View style={[styles.container, { backgroundColor: colors.bg }]}>
+      <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
       <Animated.View style={[styles.header, brandAnimatedStyle]}>
-        <View style={styles.iconCircle}>
-          <Ionicons name="leaf-outline" size={32} color={brand.green} />
+        <View style={[styles.iconCircle, { backgroundColor: colors.accentSoft }]}>
+          <Ionicons name="leaf-outline" size={32} color={colors.accent} />
         </View>
-        <Text style={styles.title}>FreshPlate</Text>
-        <Text style={styles.subtitle}>Track your fridge. Cook smarter.</Text>
+        <Text style={[styles.title, { color: colors.accent }]}>FreshPlate</Text>
+        <Text style={[styles.subtitle, { color: colors.textMuted }]}>
+          Track your fridge. Cook smarter.
+        </Text>
       </Animated.View>
 
       <Animated.View style={buttonsAnimatedStyle}>
@@ -122,7 +125,11 @@ export default function LoginScreen() {
           <Pressable
             style={({ pressed }) => [
               styles.button,
-              styles.googleButton,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+                shadowColor: colors.text,
+              },
               pressed && styles.buttonPressed,
             ]}
             onPress={handleGoogleSignIn}
@@ -135,11 +142,11 @@ export default function LoginScreen() {
             }}
           >
             {isLoading === "google" ? (
-              <ActivityIndicator color="#3D3D38" />
+              <ActivityIndicator color={colors.text} />
             ) : (
               <View style={styles.buttonContent}>
-                <Ionicons name="logo-google" size={18} color="#3D3D38" />
-                <Text style={styles.googleButtonText}>
+                <Ionicons name="logo-google" size={18} color={colors.text} />
+                <Text style={[styles.googleButtonText, { color: colors.text }]}>
                   Continue with Google
                 </Text>
               </View>
@@ -152,7 +159,9 @@ export default function LoginScreen() {
                 AppleAuthentication.AppleAuthenticationButtonType.CONTINUE
               }
               buttonStyle={
-                AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
+                colorScheme === "dark"
+                  ? AppleAuthentication.AppleAuthenticationButtonStyle.WHITE
+                  : AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
               }
               cornerRadius={12}
               style={styles.appleButton}
@@ -161,7 +170,7 @@ export default function LoginScreen() {
           )}
         </View>
 
-        <Text style={styles.privacyNote}>
+        <Text style={[styles.privacyNote, { color: colors.textSubtle }]}>
           We only use your name and email to create your account.
         </Text>
       </Animated.View>
@@ -172,7 +181,6 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#FAF9F7",
     paddingHorizontal: 28,
     justifyContent: "center",
     paddingBottom: 80,
@@ -185,7 +193,6 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: brand.greenLight,
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 16,
@@ -193,13 +200,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 34,
     fontWeight: "700",
-    color: brand.green,
     letterSpacing: -0.5,
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 16,
-    color: "#7A7A72",
     letterSpacing: 0.2,
   },
   buttons: {
@@ -210,6 +215,11 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
+    borderWidth: 1,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
   },
   buttonPressed: {
     opacity: 0.7,
@@ -220,27 +230,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
   },
-  googleButton: {
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#D8D6D2",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
-    elevation: 1,
-  },
   googleButtonText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#3D3D38",
   },
   appleButton: {
     height: 52,
   },
   privacyNote: {
     fontSize: 13,
-    color: "#908F88",
     textAlign: "center",
     marginTop: 20,
   },

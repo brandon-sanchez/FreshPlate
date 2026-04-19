@@ -1,13 +1,11 @@
-import { Alert, Pressable, StyleSheet } from "react-native";
-import { Text, View } from "@/components/Themed";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { useAuthStore } from "@/stores/auth";
+import { useTheme } from "@/hooks/useTheme";
 
-// ─── Profile Screen ──────────────────────────────────────────────────────────
-// Shows the signed-in user's info and a sign-out button.
-// Will eventually include household management and preferences (Phases 7-8).
 export default function ProfileScreen() {
   const user = useAuthStore((s) => s.user);
   const signOut = useAuthStore((s) => s.signOut);
+  const { colors } = useTheme();
 
   const handleSignOut = () => {
     Alert.alert("Sign Out", "Are you sure you want to sign out?", [
@@ -30,26 +28,27 @@ export default function ProfileScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      {/* User info section */}
+    <View style={[styles.container, { backgroundColor: colors.bg }]}>
       <View style={styles.infoSection}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>
+        <View style={[styles.avatar, { backgroundColor: colors.accent }]}>
+          <Text style={[styles.avatarText, { color: colors.accentInk }]}>
             {user?.email?.[0]?.toUpperCase() ?? "?"}
           </Text>
         </View>
-        <Text style={styles.email}>{user?.email ?? "No email"}</Text>
+        <Text style={[styles.email, { color: colors.textMuted }]}>
+          {user?.email ?? "No email"}
+        </Text>
       </View>
 
-      {/* Sign out */}
       <Pressable
         style={({ pressed }) => [
           styles.signOutButton,
+          { backgroundColor: colors.crit },
           pressed && styles.buttonPressed,
         ]}
         onPress={handleSignOut}
       >
-        <Text style={styles.signOutText}>Sign Out</Text>
+        <Text style={[styles.signOutText, { color: colors.accentInk }]}>Sign Out</Text>
       </Pressable>
     </View>
   );
@@ -69,7 +68,6 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: "#2f95dc",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 16,
@@ -77,14 +75,11 @@ const styles = StyleSheet.create({
   avatarText: {
     fontSize: 32,
     fontWeight: "bold",
-    color: "#fff",
   },
   email: {
     fontSize: 16,
-    opacity: 0.7,
   },
   signOutButton: {
-    backgroundColor: "#ff3b30",
     height: 50,
     borderRadius: 8,
     justifyContent: "center",
@@ -94,7 +89,6 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   signOutText: {
-    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
   },

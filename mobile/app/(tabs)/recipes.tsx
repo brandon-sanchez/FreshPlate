@@ -1,15 +1,14 @@
-import { StyleSheet } from "react-native";
-import { Text, View } from "@/components/Themed";
+import { StyleSheet, Text, View } from "react-native";
+import { useTheme } from "@/hooks/useTheme";
 
-// ─── Recipes Screen ──────────────────────────────────────────────────────────
-// Will show AI-generated recipe suggestions based on current inventory.
-// Built in Phase 5 (Task 5.3).
 export default function RecipesScreen() {
+  const { colors } = useTheme();
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.bg }]}>
       <Text style={styles.emoji}>👨‍🍳</Text>
-      <Text style={styles.title}>Recipes</Text>
-      <Text style={styles.subtitle}>
+      <Text style={[styles.title, { color: colors.text }]}>Recipes</Text>
+      <Text style={[styles.subtitle, { color: colors.textMuted }]}>
         AI recipe suggestions based on your fridge will appear here.
       </Text>
     </View>
@@ -34,7 +33,6 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 15,
-    opacity: 0.6,
     textAlign: "center",
   },
 });

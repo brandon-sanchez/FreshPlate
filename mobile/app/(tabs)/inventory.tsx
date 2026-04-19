@@ -1,15 +1,14 @@
-import { StyleSheet } from "react-native";
-import { Text, View } from "@/components/Themed";
+import { StyleSheet, Text, View } from "react-native";
+import { useTheme } from "@/hooks/useTheme";
 
-// ─── Inventory Screen ────────────────────────────────────────────────────────
-// Will display all fridge/pantry items grouped by category with expiration info.
-// Built in Phase 2 (Task 2.3).
 export default function InventoryScreen() {
+  const { colors } = useTheme();
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.bg }]}>
       <Text style={styles.emoji}>🧊</Text>
-      <Text style={styles.title}>Inventory</Text>
-      <Text style={styles.subtitle}>
+      <Text style={[styles.title, { color: colors.text }]}>Inventory</Text>
+      <Text style={[styles.subtitle, { color: colors.textMuted }]}>
         Your fridge and pantry items will appear here.
       </Text>
     </View>
@@ -34,7 +33,6 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 15,
-    opacity: 0.6,
     textAlign: "center",
   },
 });

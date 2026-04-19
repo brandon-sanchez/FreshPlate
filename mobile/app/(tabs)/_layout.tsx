@@ -1,12 +1,8 @@
 import React from "react";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { Tabs } from "expo-router";
+import { useTheme } from "@/hooks/useTheme";
 
-import Colors from "@/constants/Colors";
-import { useColorScheme } from "@/components/useColorScheme";
-
-// Helper that renders an icon in the tab bar.
-// Browse all available icons: https://icons.expo.fyi/
 function TabBarIcon(props: {
   name: React.ComponentProps<typeof FontAwesome>["name"];
   color: string;
@@ -14,21 +10,17 @@ function TabBarIcon(props: {
   return <FontAwesome size={24} style={{ marginBottom: -3 }} {...props} />;
 }
 
-// ─── Tab Layout ──────────────────────────────────────────────────────────────
-// Defines FreshPlate's 5-tab navigation bar.
-// File names in this folder map to tab routes:
-//   index.tsx → /(tabs)/       (Home)
-//   inventory.tsx → /(tabs)/inventory
-//   add-item.tsx → /(tabs)/add-item
-//   recipes.tsx → /(tabs)/recipes
-//   profile.tsx → /(tabs)/profile
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
+  const { colors } = useTheme();
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? "light"].tint,
+        tabBarActiveTintColor: colors.accent,
+        tabBarInactiveTintColor: colors.textMuted,
+        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+        headerStyle: { backgroundColor: colors.bg },
+        headerTintColor: colors.text,
         headerShown: true,
       }}
     >

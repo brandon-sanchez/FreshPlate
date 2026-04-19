@@ -9,10 +9,8 @@ import {
 import { useState } from "react";
 import SegmentedControl from "@/components/SegmentedControl";
 import PickerModal from "@/components/PickerModal";
+import { useTheme } from "@/hooks/useTheme";
 
-// ─── Add Item Screen ─────────────────────────────────────────────────────────
-// Will provide three ways to add items: manual entry, barcode scan, photo.
-// Built across Phase 2 (manual), Phase 3 (barcode), and Phase 4 (photo).
 export default function AddItemScreen() {
   const [storage, setStorage] = useState("Fridge");
   const [name, setName] = useState("");
@@ -24,21 +22,26 @@ export default function AddItemScreen() {
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showUnitPicker, setShowUnitPicker] = useState(false);
 
+  const { colors, spacing } = useTheme();
+
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Add Item</Text>
+    <ScrollView contentContainerStyle={[styles.container, { backgroundColor: colors.bg }]}>
+      <Text style={[styles.title, { color: colors.text }]}>Add Item</Text>
       <TextInput
         placeholder="What are you adding?"
+        placeholderTextColor={colors.textSubtle}
         value={name}
         onChangeText={setName}
-        style={styles.inputStyle}
+        style={[styles.input, { borderColor: colors.border, backgroundColor: colors.surface, color: colors.text }]}
       />
-      <Text style={styles.label}>Category</Text>
+      <Text style={[styles.label, { color: colors.textMuted }]}>Category</Text>
       <Pressable
-        style={styles.inputStyle}
+        style={[styles.input, { borderColor: colors.border, backgroundColor: colors.surface }]}
         onPress={() => setShowCategoryPicker(true)}
       >
-        <Text>{category || "Select a category"}</Text>
+        <Text style={{ color: category ? colors.text : colors.textSubtle }}>
+          {category || "Select a category"}
+        </Text>
       </Pressable>
       <PickerModal
         visible={showCategoryPicker}
@@ -74,18 +77,16 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginBottom: 8,
   },
-  inputStyle: {
+  input: {
     height: 52,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#E2E0DC",
     paddingHorizontal: 16,
     fontSize: 16,
-    backgroundColor: "#FFFFFF",
+    justifyContent: "center",
   },
   label: {
     fontSize: 14,
-    color: "#3D3D38",
     marginBottom: 8,
     marginTop: 20,
   },

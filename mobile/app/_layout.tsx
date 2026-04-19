@@ -10,8 +10,10 @@ import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 import "react-native-reanimated";
 
-import { useColorScheme } from "@/components/useColorScheme";
+import { useColorScheme } from "react-native";
 import { useAuthStore } from "@/stores/auth";
+import { Inter_400Regular, Inter_600SemiBold } from "@expo-google-fonts/inter";
+import { Fraunces_500Medium } from "@expo-google-fonts/fraunces";
 
 // Re-export ErrorBoundary so Expo Router can catch rendering crashes in this layout.
 export { ErrorBoundary } from "expo-router";
@@ -32,6 +34,9 @@ export default function RootLayout() {
   const [loaded, error] = useFonts({
     SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
     ...FontAwesome.font,
+    Inter_400Regular,
+    Inter_600SemiBold,
+    Fraunces_500Medium,
   });
 
   // If font loading fails, throw so ErrorBoundary catches it

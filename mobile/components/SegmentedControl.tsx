@@ -1,4 +1,5 @@
-import { Text, View, Pressable, StyleSheet } from "react-native";
+import { Text, View, Pressable } from "react-native";
+import { useTheme } from "@/hooks/useTheme";
 
 type SegmentedControlProps = {
   options: string[];
@@ -11,15 +12,28 @@ function SegmentedControl({
   selected,
   onSelect,
 }: SegmentedControlProps) {
+  const { colors } = useTheme();
+
   return (
-    <View style={styles.container}>
+    <View style={{ flexDirection: "row", height: 44, borderRadius: 10, overflow: "hidden" }}>
       {options.map((option) => (
         <Pressable
-          style={[styles.segment, option === selected && styles.segmentActive]}
+          style={{
+            flex: 1,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: option === selected ? colors.accent : colors.surfaceAlt,
+          }}
           key={option}
           onPress={() => onSelect(option)}
         >
-          <Text style={[styles.segmentText, option === selected && styles.segmentTextActive]}>
+          <Text
+            style={{
+              color: option === selected ? colors.accentInk : colors.text,
+              fontWeight: "600",
+              fontSize: 14,
+            }}
+          >
             {option}
           </Text>
         </Pressable>
@@ -27,31 +41,5 @@ function SegmentedControl({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flexDirection: "row",
-    height: 44,
-    borderRadius: 10,
-    overflow: "hidden",
-  },
-  segment: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center", 
-    backgroundColor: "#F0EFEB"
-  },
-  segmentActive: {
-    backgroundColor: "#2D6A4F",
-  },
-  segmentTextActive: {
-    color: "#FFFFFF"
-  },
-  segmentText: {
-    color: "#3D3D38",
-    fontWeight: "600",
-    fontSize: 14
-  }
-});
 
 export default SegmentedControl;

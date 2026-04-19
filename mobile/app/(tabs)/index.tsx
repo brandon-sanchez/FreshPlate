@@ -1,15 +1,14 @@
-import { StyleSheet } from "react-native";
-import { Text, View } from "@/components/Themed";
+import { StyleSheet, Text, View } from "react-native";
+import { useTheme } from "@/hooks/useTheme";
 
-// ─── Home Screen ─────────────────────────────────────────────────────────────
-// Dashboard that will show expiration alerts, quick stats, and recent activity.
-// For now it's a placeholder — we'll build it out in Phase 2+.
 export default function HomeScreen() {
+  const { colors } = useTheme();
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.bg }]}>
       <Text style={styles.emoji}>🍽️</Text>
-      <Text style={styles.title}>Welcome to FreshPlate</Text>
-      <Text style={styles.subtitle}>
+      <Text style={[styles.title, { color: colors.text }]}>Welcome to FreshPlate</Text>
+      <Text style={[styles.subtitle, { color: colors.textMuted }]}>
         Your fridge dashboard will appear here.
       </Text>
     </View>
@@ -34,7 +33,6 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 15,
-    opacity: 0.6,
     textAlign: "center",
   },
 });
