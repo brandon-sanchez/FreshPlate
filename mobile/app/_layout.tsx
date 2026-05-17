@@ -14,6 +14,17 @@ import { useColorScheme } from "react-native";
 import { useAuthStore } from "@/stores/auth";
 import { Inter_400Regular, Inter_600SemiBold } from "@expo-google-fonts/inter";
 import { Fraunces_500Medium } from "@expo-google-fonts/fraunces";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import Toast from "react-native-toast-message";
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 60 * 1000,
+      retry: 1,
+    },
+  },
+});
 
 // Re-export ErrorBoundary so Expo Router can catch rendering crashes in this layout.
 export { ErrorBoundary } from "expo-router";
@@ -26,9 +37,7 @@ export const unstable_settings = {
 // Keep the splash screen visible until fonts are loaded.
 SplashScreen.preventAutoHideAsync();
 
-// ─── Root Layout ─────────────────────────────────────────────────────────────
-// This is the first component Expo Router renders. It loads fonts,
-// then hands off to RootLayoutNav which handles auth + navigation.
+//  Root Layout
 export default function RootLayout() {
   // useFonts returns [loaded: boolean, error: Error | null]
   const [loaded, error] = useFonts({
@@ -59,15 +68,10 @@ export default function RootLayout() {
   return <RootLayoutNav />;
 }
 
-// ─── Navigation + Auth Guard ─────────────────────────────────────────────────
-// Sets up the navigation stack and redirects users based on login status.
+//  Navigation + Auth Guard
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
   const router = useRouter();
-
-  // useSegments() returns the current route as an array of path parts.
-  // Example: /(auth)/login → ["(auth)", "login"]
-  // Example: /(tabs)/index → ["(tabs)"]
   const segments = useSegments();
 
   // Pull auth state from our Zustand store (each selector grabs one field)
@@ -99,11 +103,14 @@ function RootLayoutNav() {
   // ThemeProvider gives all child screens access to light/dark theme colors.
   // Stack defines the available screen groups for navigation.
   return (
-    <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      </Stack>
-    </ThemeProvider>
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
+        <Stack>
+          <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        </Stack>
+      </ThemeProvider>
+      <Toast />
+    </QueryClientProvider>
   );
 }

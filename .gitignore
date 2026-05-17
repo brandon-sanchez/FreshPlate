@@ -35,3 +35,6 @@ Thumbs.db
 *.swp
 *.swo
 DESIGN.md
+.mcp.json
+AGENTS.md
+.codex/config.toml

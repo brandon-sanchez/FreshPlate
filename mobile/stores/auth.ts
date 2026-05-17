@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { Session, User } from "@supabase/supabase-js";
 import * as WebBrowser from "expo-web-browser";
 import * as AppleAuthentication from "expo-apple-authentication";
+import * as Linking from "expo-linking";
 import { supabase } from "@/lib/supabase";
 
 // Where Supabase redirects after OAuth login completes.
@@ -30,84 +31,143 @@ function extractSessionFromUrl(url: string) {
   return { access_token, refresh_token };
 }
 
-// ─── Store Type Definition ───────────────────────────────────────────────────
-// Think of this like a Python TypedDict — it defines the exact shape of our store.
-// Every property and function listed here must exist in the store below.
+// Store Type Definition
 type AuthState = {
-  session: Session | null; // null = not logged in (like Python's Optional[Session])
+  session: Session | null;
   user: User | null;
+  householdId: string | null;
   isLoading: boolean;
   initialize: () => void;
-  signInWithGoogle: () => Promise<void>; // async function (like Python's async def)
+  signInWithGoogle: () => Promise<void>;
   signInWithApple: () => Promise<void>;
   signOut: () => Promise<void>;
 };
 
-// Prevents double-initialization. React's Strict Mode (dev only) re-runs effects,
-// which would create duplicate auth listeners without this guard.
+/**
+ * Returns the user's household_id.
+ * - `string` — household found.
+ * - `null` — no row (permanent broken: signup trigger failed).
+ * - throws  — DB / network error (transient: caller decides).
+ */
+async function loadHouseholdId(userId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("household_members")
+    .select("household_id")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  return data?.household_id ?? null;
+}
+
 let initialized = false;
 
-// ─── Auth Store ──────────────────────────────────────────────────────────────
-// create<AuthState>() builds a Zustand store matching the AuthState shape.
-// `set` is the function used to update state (triggers re-renders in components using the store).
+//  Auth Store
 export const useAuthStore = create<AuthState>((set) => ({
   session: null,
   user: null,
+  householdId: null,
   isLoading: true, // starts true — we haven't checked for a saved session yet
 
   initialize: () => {
     if (initialized) return;
     initialized = true;
 
-    // Check AsyncStorage for a saved session from a previous app launch.
-    // Uses .then() because Zustand's create callback can't be async.
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      set({ session, user: session?.user ?? null, isLoading: false });
-      // session?.user  → "optional chaining" — returns undefined if session is null
-      // ?? null        → "nullish coalescing" — fallback to null if left side is null/undefined
-      // Python equivalent: session.user if session else None
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session?.user) {
+        set({ session: null, user: null, householdId: null, isLoading: false });
+        return;
+      }
+      try {
+        const hh = await loadHouseholdId(session.user.id);
+        if (hh === null) {
+          set({ session: null, user: null, householdId: null, isLoading: false });
+          await supabase.auth.signOut();
+          return;
+        } else {
+          set({ session, user: session.user, householdId: hh, isLoading: false });
+        }
+      } catch (_err) {
+        console.error("Failed to load household:", _err);
+        set({ householdId: null, isLoading: false });
+      }
     });
 
-    // Listen for all future auth changes (sign in, sign out, token refresh).
-    // This runs for the lifetime of the app — no cleanup needed.
     supabase.auth.onAuthStateChange((_event, session) => {
-      set({ session, user: session?.user ?? null });
+      setTimeout(async () => {
+        if (!session?.user) {
+          set({ session: null, user: null, householdId: null });
+          return;
+        }
+        try {
+          const hh = await loadHouseholdId(session.user.id);
+          if (hh === null) {
+            set({ session: null, user: null, householdId: null, isLoading: false });
+            await supabase.auth.signOut();
+            return;
+          } else {
+            set({ session, user: session.user, householdId: hh });
+          }
+        } catch (_err) {
+          console.error("Failed to refetch household:", _err);
+          set({ householdId: null });
+        }
+      }, 0);
     });
   },
 
-  // ─── Google OAuth Flow (3 steps) ────────────────────────────────────────
+  // Google OAuth Flow
   signInWithGoogle: async () => {
-    // Step 1: Get the Google OAuth URL from Supabase
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
         redirectTo: REDIRECT_URL,
-        skipBrowserRedirect: true, // we'll open the browser ourselves
+        skipBrowserRedirect: true,
       },
     });
 
     if (error) throw error;
     if (!data.url) throw new Error("No OAuth URL returned");
 
-    // Step 2: Open an in-app browser for the user to sign in with Google
-    const result = await WebBrowser.openAuthSessionAsync(
-      data.url,
-      REDIRECT_URL
-    );
+    /*
+     * Race openAuthSessionAsync against a Linking listener.
+     *
+     * The system sometimes intercepts the redirect to `freshplate://auth/callback`
+     * before openAuthSessionAsync resolves — the browser sheet dismisses but the
+     * promise hangs forever. The Linking listener catches that deep link as a
+     * fallback so the auth flow always completes.
+     */
+    const redirectUrl = await new Promise<string | null>((resolve) => {
+      let settled = false;
 
-    // Step 3: If auth completed, extract tokens and create the session
-    if (result.type === "success") {
-      const tokens = extractSessionFromUrl(result.url);
-      if (tokens) {
-        const { error: sessionError } = await supabase.auth.setSession(tokens);
-        if (sessionError) throw sessionError;
-        // onAuthStateChange fires automatically after setSession → store updates
-      }
-    }
-    // If result.type is "cancel" or "dismiss", the user closed the browser — nothing to do
+      const finish = (url: string | null) => {
+        if (settled) return;
+        settled = true;
+        subscription.remove();
+        WebBrowser.dismissAuthSession();
+        resolve(url);
+      };
+
+      const subscription = Linking.addEventListener("url", ({ url }) => {
+        if (url.startsWith(REDIRECT_URL)) finish(url);
+      });
+
+      WebBrowser.openAuthSessionAsync(data.url, REDIRECT_URL).then((result) => {
+        finish(result.type === "success" ? result.url : null);
+      });
+    });
+
+    if (!redirectUrl) return;
+
+    const tokens = extractSessionFromUrl(redirectUrl);
+    if (!tokens) return;
+
+    const { error: sessionError } = await supabase.auth.setSession(tokens);
+    if (sessionError) throw sessionError;
   },
 
-  // ─── Apple Sign-In (native iOS dialog) ──────────────────────────────────
+  //  Apple Sign-In
   signInWithApple: async () => {
     // Uses a native iOS dialog — no browser needed.
     // The login screen hides this button on Android since it's iOS-only.
@@ -123,20 +183,16 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
 
     // Exchange the Apple token for a Supabase session.
-    // signInWithIdToken is for native flows where we already have a token,
-    // unlike signInWithOAuth which opens a browser.
     const { error } = await supabase.auth.signInWithIdToken({
       provider: "apple",
       token: credential.identityToken,
     });
 
     if (error) throw error;
-    // onAuthStateChange fires automatically → store updates
   },
 
   signOut: async () => {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
-    // No manual state clearing needed — onAuthStateChange fires with a null session
   },
 }));
