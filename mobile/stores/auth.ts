@@ -82,38 +82,70 @@ export const useAuthStore = create<AuthState>((set) => ({
       try {
         const hh = await loadHouseholdId(session.user.id);
         if (hh === null) {
-          set({ session: null, user: null, householdId: null, isLoading: false });
+          set({
+            session: null,
+            user: null,
+            householdId: null,
+            isLoading: false,
+          });
           await supabase.auth.signOut();
           return;
         } else {
-          set({ session, user: session.user, householdId: hh, isLoading: false });
+          set({
+            session,
+            user: session.user,
+            householdId: hh,
+            isLoading: false,
+          });
         }
       } catch (_err) {
         console.error("Failed to load household:", _err);
-        set({ householdId: null, isLoading: false });
+        set({ session: null, user: null, householdId: null, isLoading: false });
+        await supabase.auth.signOut();
       }
     });
 
     supabase.auth.onAuthStateChange((_event, session) => {
-      setTimeout(async () => {
+      (async () => {
         if (!session?.user) {
-          set({ session: null, user: null, householdId: null });
+          set({
+            session: null,
+            user: null,
+            householdId: null,
+            isLoading: false,
+          });
           return;
         }
         try {
           const hh = await loadHouseholdId(session.user.id);
           if (hh === null) {
-            set({ session: null, user: null, householdId: null, isLoading: false });
+            set({
+              session: null,
+              user: null,
+              householdId: null,
+              isLoading: false,
+            });
             await supabase.auth.signOut();
             return;
           } else {
-            set({ session, user: session.user, householdId: hh });
+            set({
+              session,
+              user: session.user,
+              householdId: hh,
+              isLoading: false,
+            });
           }
         } catch (_err) {
           console.error("Failed to refetch household:", _err);
-          set({ householdId: null });
+          set({
+            session: null,
+            user: null,
+            householdId: null,
+            isLoading: false,
+          });
+          await supabase.auth.signOut();
         }
-      }, 0);
+      })();
     });
   },
 
