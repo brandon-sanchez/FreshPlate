@@ -8,29 +8,62 @@ import {
 } from "react-native";
 import { useEffect, useState } from "react";
 import Slider from "@react-native-community/slider";
+import FontAwesome from "@expo/vector-icons/FontAwesome";
+import { useRouter } from "expo-router";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Toast from "react-native-toast-message";
 import SegmentedControl from "@/components/SegmentedControl";
 import Field from "@/components/Field";
 import { useTheme } from "@/hooks/useTheme";
-import { useFoodCategories } from "@/hooks/useFoodCategories";
+import {
+  FoodCategory,
+  shelfLifeFor,
+  useFoodCategories,
+} from "@/hooks/useFoodCategories";
 import { useAddItem } from "@/hooks/useAddItem";
 
 type StorageLocation = "fridge" | "freezer" | "pantry";
 
 const STORAGE_OPTIONS = ["Fridge", "Freezer", "Pantry"] as const;
 const MIN_DAYS = 1;
-const MAX_DAYS = 30;
+// Slider tops out at 1 year. Shelf-stable items (canned goods up to 3 years per
+// USDA) clamp here and the hint surfaces the real number in text.
+const MAX_DAYS = 365;
 const DEFAULT_DAYS = 7;
 
 function formatExpirationDate(daysFromNow: number): string {
   const date = new Date(Date.now() + daysFromNow * 86400000);
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const options: Intl.DateTimeFormatOptions =
+    daysFromNow > 60
+      ? { month: "short", day: "numeric", year: "numeric" }
+      : { month: "short", day: "numeric" };
+  return date.toLocaleDateString(undefined, options);
+}
+
+function formatShelfLife(days: number): string {
+  if (days < 30) return `${days}d`;
+  if (days < 365) return `≈ ${Math.round(days / 30)}mo`;
+  const years = days / 365;
+  if (years < 2) return `≈ ${Math.round(years * 12)}mo`;
+  return `≈ ${Math.round(years)}yr`;
+}
+
+function recommendedStorages(cat: FoodCategory): StorageLocation[] {
+  return (
+    [
+      ["fridge", cat.fridge_days] as const,
+      ["freezer", cat.freezer_days] as const,
+      ["pantry", cat.pantry_days] as const,
+    ]
+      .filter(([, d]) => d !== null)
+      .map(([s]) => s)
+  );
 }
 
 export default function AddItemScreen() {
   const { colors, fonts } = useTheme();
+  const router = useRouter();
   const tabBarHeight = useBottomTabBarHeight();
   const insets = useSafeAreaInsets();
   const { data: categories } = useFoodCategories();
@@ -64,16 +97,18 @@ export default function AddItemScreen() {
   };
   const isValid = !errors.name && !errors.quantity && !errors.category;
 
-  useEffect(() => {
-    // Auto-suggest expDays from category's default_shelf_life_days, but only if user hasn't manually edited the date.
-    if (userEditedDate) return;
-    if (!selectedCategory || selectedCategory.default_shelf_life_days == null)
-      return;
+  const usdaSuggestion = shelfLifeFor(selectedCategory, storage);
+  const storageNotRecommended =
+    selectedCategory !== null && usdaSuggestion === null;
 
-    const suggestedDays = Math.round(selectedCategory.default_shelf_life_days);
-    const clampedDays = Math.min(MAX_DAYS, Math.max(MIN_DAYS, suggestedDays));
-    setExpDays(clampedDays);
-  }, [categoryId, categories, userEditedDate]);
+  useEffect(() => {
+    if (usdaSuggestion === null) return;
+    const clamped = Math.min(MAX_DAYS, Math.max(MIN_DAYS, usdaSuggestion));
+    setExpDays(clamped);
+    setUserEditedDate(false);
+    // userEditedDate excluded from deps — this effect resets it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryId, storage, categories, usdaSuggestion]);
 
   const handleStorageSelect = (option: string) => {
     setStorage(option.toLowerCase() as StorageLocation);
@@ -111,6 +146,8 @@ export default function AddItemScreen() {
       .toISOString()
       .slice(0, 10);
 
+    const addedName = trimmedName;
+
     addItem.mutate(
       {
         name: trimmedName,
@@ -122,11 +159,16 @@ export default function AddItemScreen() {
         notes: null,
       },
       {
-        onSuccess: () => {
+        onSuccess: ({ id }) => {
           resetForm();
           Toast.show({
             type: "success",
-            text1: "Added to inventory",
+            text1: `Added ${addedName}`,
+            text2: "Tap to view in your inventory.",
+          });
+          router.push({
+            pathname: "/(tabs)/inventory",
+            params: { added: id },
           });
         },
         onError: () => {
@@ -140,10 +182,15 @@ export default function AddItemScreen() {
     );
   };
 
-  const expirationHint =
-    selectedCategory && !userEditedDate
-      ? `≈ ${formatExpirationDate(expDays)} · suggested ${selectedCategory.name} shelf life`
-      : `≈ ${formatExpirationDate(expDays)}`;
+  const expirationHint = (() => {
+    const dateText = `≈ ${formatExpirationDate(expDays)}`;
+    if (userEditedDate || !selectedCategory) return dateText;
+    if (usdaSuggestion === null) return dateText;
+    if (usdaSuggestion > MAX_DAYS) {
+      return `${dateText} · USDA: ${formatShelfLife(usdaSuggestion)} for ${selectedCategory.name} (capped)`;
+    }
+    return `${dateText} · USDA average for ${selectedCategory.name} in ${storage}`;
+  })();
 
   return (
     <ScrollView
@@ -266,6 +313,47 @@ export default function AddItemScreen() {
           </View>
         </View>
 
+        <Field label="Storage">
+          <SegmentedControl
+            options={[...STORAGE_OPTIONS]}
+            selected={storageLabel}
+            onSelect={handleStorageSelect}
+          />
+        </Field>
+
+        {storageNotRecommended && selectedCategory ? (
+          <View
+            style={[
+              styles.warningRow,
+              {
+                backgroundColor: colors.surfaceAlt,
+                borderColor: colors.warn,
+              },
+            ]}
+          >
+            <FontAwesome
+              name="exclamation-triangle"
+              size={13}
+              color={colors.warn}
+            />
+            <Text
+              style={{
+                flex: 1,
+                fontFamily: fonts.body,
+                fontSize: 12.5,
+                color: colors.text,
+                lineHeight: 17,
+              }}
+            >
+              <Text style={{ fontFamily: fonts.bodyStrong }}>
+                {selectedCategory.name}
+              </Text>{" "}
+              isn't recommended in the {storage}. USDA suggests{" "}
+              {recommendedStorages(selectedCategory).join(" or ")} instead.
+            </Text>
+          </View>
+        ) : null}
+
         <Field label="Expires in" hint={expirationHint}>
           <View
             style={[
@@ -291,14 +379,6 @@ export default function AddItemScreen() {
               {expDays}d
             </Text>
           </View>
-        </Field>
-
-        <Field label="Storage">
-          <SegmentedControl
-            options={[...STORAGE_OPTIONS]}
-            selected={storageLabel}
-            onSelect={handleStorageSelect}
-          />
         </Field>
 
         <Pressable
@@ -384,5 +464,13 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     minWidth: 46,
     textAlign: "right",
+  },
+  warningRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
   },
 });

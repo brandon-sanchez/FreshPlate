@@ -1,5 +1,14 @@
+import { useEffect } from "react";
 import { Pressable, Text, View } from "react-native";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
+import Animated, {
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withSequence,
+  withTiming,
+} from "react-native-reanimated";
 import { useTheme } from "@/hooks/useTheme";
 import { getUrgency } from "@/constants/theme";
 import UrgencyBar from "@/components/UrgencyBar";
@@ -8,9 +17,13 @@ import { daysUntilExpiration, InventoryItem } from "@/hooks/useInventoryItems";
 type InventoryRowProps = {
   item: InventoryItem;
   onPress?: (item: InventoryItem) => void;
+  /** When true, the row pulses with the accent color once to draw the eye. */
+  highlight?: boolean;
 };
 
-function InventoryRow({ item, onPress }: InventoryRowProps) {
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+function InventoryRow({ item, onPress, highlight }: InventoryRowProps) {
   const { colors, fonts, card } = useTheme();
   const days = daysUntilExpiration(item.expiration_date);
   const urgencyLabel = days === null ? null : getUrgency(days).label;
@@ -27,24 +40,50 @@ function InventoryRow({ item, onPress }: InventoryRowProps) {
     typeof FontAwesome
   >["name"];
 
+  // Highlight pulse: ramp in 200ms, hold 600ms, ramp out 700ms — total ~1.5s.
+  const pulse = useSharedValue(0);
+  useEffect(() => {
+    if (!highlight) return;
+    pulse.value = 0;
+    pulse.value = withSequence(
+      withTiming(1, { duration: 200 }),
+      withDelay(600, withTiming(0, { duration: 700 })),
+    );
+  }, [highlight, pulse]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    borderColor: interpolateColor(
+      pulse.value,
+      [0, 1],
+      [colors.border, colors.accent],
+    ),
+    backgroundColor: interpolateColor(
+      pulse.value,
+      [0, 1],
+      [colors.surface, colors.accentSoft],
+    ),
+    transform: [{ scale: 1 + pulse.value * 0.012 }],
+  }));
+
   return (
-    <Pressable
+    <AnimatedPressable
       onPress={onPress ? () => onPress(item) : undefined}
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 12,
-        padding: 12,
-        backgroundColor: colors.surface,
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: colors.border,
-        shadowColor: card.shadowColor,
-        shadowOffset: card.shadowOffset,
-        shadowOpacity: card.shadowOpacity,
-        shadowRadius: card.shadowRadius,
-        elevation: card.elevation,
-      }}
+      style={[
+        {
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 12,
+          padding: 12,
+          borderRadius: 14,
+          borderWidth: 1,
+          shadowColor: card.shadowColor,
+          shadowOffset: card.shadowOffset,
+          shadowOpacity: card.shadowOpacity,
+          shadowRadius: card.shadowRadius,
+          elevation: card.elevation,
+        },
+        animatedStyle,
+      ]}
     >
       <View
         style={{
@@ -100,7 +139,7 @@ function InventoryRow({ item, onPress }: InventoryRowProps) {
           {urgencyLabel}
         </Text>
       ) : null}
-    </Pressable>
+    </AnimatedPressable>
   );
 }
 

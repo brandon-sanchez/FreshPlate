@@ -16,20 +16,23 @@ export function useAddItem() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (input: AddItemInput) => {
-      const { user, householdId } = useAuthStore.getState()
-      if (!user || !householdId) throw new Error("not signed in")
+    mutationFn: async (input: AddItemInput): Promise<{ id: string }> => {
+      const { user, householdId } = useAuthStore.getState();
+      if (!user || !householdId) throw new Error("not signed in");
 
-      const payload = {...input, household_id: householdId, added_by: user.id};
+      const payload = { ...input, household_id: householdId, added_by: user.id };
 
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("inventory_items")
         .insert(payload)
-        
+        .select("id")
+        .single();
+
       if (error) throw error;
+      return { id: data.id };
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["inventory"] })
+      queryClient.invalidateQueries({ queryKey: ["inventory"] });
     },
   });
 }

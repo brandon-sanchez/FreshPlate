@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Pressable,
   RefreshControl,
@@ -7,7 +7,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
@@ -41,6 +41,19 @@ export default function InventoryScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const inventory = useInventoryItems();
   const categoriesQuery = useFoodCategories();
+
+  // `added=<id>` is set by AddItem → router.push after a successful insert.
+  // We pulse the matching row exactly once per navigation, then clear so a
+  // re-render (e.g. filter change) doesn't replay the animation.
+  const { added } = useLocalSearchParams<{ added?: string }>();
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!added) return;
+    setHighlightId(added);
+    router.setParams({ added: undefined });
+    const t = setTimeout(() => setHighlightId(null), 1800);
+    return () => clearTimeout(t);
+  }, [added, router]);
 
   const [groupBy, setGroupBy] = useState<GroupBy>("Urgency");
   const [query, setQuery] = useState("");
@@ -117,6 +130,20 @@ export default function InventoryScreen() {
       data,
     }));
   }, [filtered, groupBy]);
+
+  // Ensure the user can actually see the highlighted row — auto-open its
+  // collapsible section once the refetch lands it in the list.
+  useEffect(() => {
+    if (!highlightId) return;
+    for (const s of sections) {
+      if (s.data.some((it) => it.id === highlightId)) {
+        if (openGroups[s.key] === false) {
+          setOpenGroups((g) => ({ ...g, [s.key]: true }));
+        }
+        return;
+      }
+    }
+  }, [highlightId, sections, openGroups]);
 
   const visibleSections: Section[] = sections
     .filter((s) => s.data.length > 0)
@@ -425,6 +452,7 @@ export default function InventoryScreen() {
         renderItem={({ item }) => (
           <InventoryRow
             item={item}
+            highlight={item.id === highlightId}
             onPress={() => router.push(`/item/${item.id}`)}
           />
         )}
