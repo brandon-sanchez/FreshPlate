@@ -17,6 +17,7 @@ import { Fraunces_500Medium } from "@expo-google-fonts/fraunces";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Toast from "react-native-toast-message";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { toastConfig } from "@/components/toastConfig";
 
 const queryClient = new QueryClient({
@@ -70,6 +71,12 @@ export default function RootLayout() {
   return <RootLayoutNav />;
 }
 
+function SafeAreaToast() {
+  const insets = useSafeAreaInsets();
+
+  return <Toast config={toastConfig} topOffset={Math.max(insets.top, 8)} />;
+}
+
 //  Navigation + Auth Guard
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
@@ -107,7 +114,9 @@ function RootLayoutNav() {
   return (
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
-        <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
+        <ThemeProvider
+          value={colorScheme === "dark" ? DarkTheme : DefaultTheme}
+        >
           <Stack>
             <Stack.Screen name="(auth)" options={{ headerShown: false }} />
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
@@ -118,7 +127,7 @@ function RootLayoutNav() {
             />
           </Stack>
         </ThemeProvider>
-        <Toast config={toastConfig} topOffset={0} />
+        <SafeAreaToast />
       </QueryClientProvider>
     </SafeAreaProvider>
   );

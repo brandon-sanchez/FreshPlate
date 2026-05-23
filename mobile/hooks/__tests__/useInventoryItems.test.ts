@@ -81,7 +81,10 @@ describe("useInventoryItems", () => {
   });
 
   it("surfaces supabase errors via the query error state", async () => {
-    mockOrder.mockResolvedValue({ data: null, error: new Error("RLS denied") });
+    mockOrder.mockResolvedValue({
+      data: null,
+      error: { message: "RLS denied", code: "P000", details: undefined },
+    });
 
     const { result } = renderHook(() => useInventoryItems(), { wrapper });
 

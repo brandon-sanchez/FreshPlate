@@ -20,7 +20,6 @@ export default function SetNameScreen() {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    if (hydrated) return;
     const existing = profile.data?.display_name?.trim();
     if (existing) {
       const parts = existing.split(/\s+/);
@@ -61,9 +60,17 @@ export default function SetNameScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top + 12 }}>
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: colors.bg,
+        paddingTop: insets.top + 12,
+      }}
+    >
       <Stack.Screen options={{ headerShown: false }} />
-      <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 24 }}>
+      <View
+        style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 24 }}
+      >
         <Text
           style={{
             fontFamily: fonts.display,
