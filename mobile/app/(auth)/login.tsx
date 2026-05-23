@@ -17,6 +17,7 @@ import Animated, {
   Easing,
 } from "react-native-reanimated";
 import { Ionicons } from "@expo/vector-icons";
+import FontAwesome from "@expo/vector-icons/FontAwesome";
 import * as AppleAuthentication from "expo-apple-authentication";
 import { StatusBar } from "expo-status-bar";
 import { useAuthStore } from "@/stores/auth";
@@ -35,7 +36,7 @@ function getSignInErrorMessage(error: unknown): string {
 
 export default function LoginScreen() {
   const [isLoading, setIsLoading] = useState<"google" | "apple" | null>(null);
-  const { colors, colorScheme } = useTheme();
+  const { colors, colorScheme, fonts } = useTheme();
 
   const signInWithGoogle = useAuthStore((s) => s.signInWithGoogle);
   const signInWithApple = useAuthStore((s) => s.signInWithApple);
@@ -112,12 +113,43 @@ export default function LoginScreen() {
       <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
       <Animated.View style={[styles.header, brandAnimatedStyle]}>
         <View style={[styles.iconCircle, { backgroundColor: colors.accentSoft }]}>
-          <Ionicons name="leaf-outline" size={32} color={colors.accent} />
+          <Ionicons name="leaf-outline" size={36} color={colors.accent} />
         </View>
-        <Text style={[styles.title, { color: colors.accent }]}>FreshPlate</Text>
+        <Text
+          style={[
+            styles.title,
+            { color: colors.text, fontFamily: fonts.display },
+          ]}
+        >
+          FreshPlate
+        </Text>
         <Text style={[styles.subtitle, { color: colors.textMuted }]}>
           Track your fridge. Cook smarter.
         </Text>
+
+        <View style={styles.featureGrid}>
+          <FeatureTile
+            icon="barcode"
+            label="Scan"
+            sublabel="Barcodes"
+            colors={colors}
+            fonts={fonts}
+          />
+          <FeatureTile
+            icon="camera"
+            label="Snap"
+            sublabel="Groceries"
+            colors={colors}
+            fonts={fonts}
+          />
+          <FeatureTile
+            icon="cutlery"
+            label="Cook"
+            sublabel="AI recipes"
+            colors={colors}
+            fonts={fonts}
+          />
+        </View>
       </Animated.View>
 
       <Animated.View style={buttonsAnimatedStyle}>
@@ -178,6 +210,56 @@ export default function LoginScreen() {
   );
 }
 
+function FeatureTile({
+  icon,
+  label,
+  sublabel,
+  colors,
+  fonts,
+}: {
+  icon: React.ComponentProps<typeof FontAwesome>["name"];
+  label: string;
+  sublabel: string;
+  colors: ReturnType<typeof useTheme>["colors"];
+  fonts: ReturnType<typeof useTheme>["fonts"];
+}) {
+  return (
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: colors.surface,
+        borderWidth: 1,
+        borderColor: colors.border,
+        borderRadius: 14,
+        paddingVertical: 14,
+        alignItems: "center",
+        gap: 6,
+      }}
+    >
+      <FontAwesome name={icon} size={18} color={colors.accent} />
+      <Text
+        style={{
+          fontFamily: fonts.bodyStrong,
+          fontSize: 12.5,
+          color: colors.text,
+          letterSpacing: -0.1,
+        }}
+      >
+        {label}
+      </Text>
+      <Text
+        style={{
+          fontFamily: fonts.body,
+          fontSize: 10.5,
+          color: colors.textMuted,
+        }}
+      >
+        {sublabel}
+      </Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -190,22 +272,27 @@ const styles = StyleSheet.create({
     marginBottom: 40,
   },
   iconCircle: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: 80,
+    height: 80,
+    borderRadius: 20,
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 16,
+    marginBottom: 18,
   },
   title: {
-    fontSize: 34,
-    fontWeight: "700",
-    letterSpacing: -0.5,
+    fontSize: 36,
+    letterSpacing: -0.7,
     marginBottom: 8,
   },
   subtitle: {
-    fontSize: 16,
-    letterSpacing: 0.2,
+    fontSize: 15,
+    letterSpacing: 0.1,
+  },
+  featureGrid: {
+    flexDirection: "row",
+    gap: 8,
+    width: "100%",
+    marginTop: 28,
   },
   buttons: {
     gap: 14,

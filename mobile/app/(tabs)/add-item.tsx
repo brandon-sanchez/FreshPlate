@@ -8,6 +8,8 @@ import {
 } from "react-native";
 import { useEffect, useState } from "react";
 import Slider from "@react-native-community/slider";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Toast from "react-native-toast-message";
 import SegmentedControl from "@/components/SegmentedControl";
 import Field from "@/components/Field";
@@ -29,6 +31,8 @@ function formatExpirationDate(daysFromNow: number): string {
 
 export default function AddItemScreen() {
   const { colors, fonts } = useTheme();
+  const tabBarHeight = useBottomTabBarHeight();
+  const insets = useSafeAreaInsets();
   const { data: categories } = useFoodCategories();
   const addItem = useAddItem();
 
@@ -143,7 +147,14 @@ export default function AddItemScreen() {
 
   return (
     <ScrollView
-      contentContainerStyle={[styles.container, { backgroundColor: colors.bg }]}
+      contentContainerStyle={[
+        styles.container,
+        {
+          backgroundColor: colors.bg,
+          paddingTop: insets.top + 16,
+          paddingBottom: tabBarHeight + 24,
+        },
+      ]}
     >
       <Text
         style={[

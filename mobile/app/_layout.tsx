@@ -16,6 +16,8 @@ import { Inter_400Regular, Inter_600SemiBold } from "@expo-google-fonts/inter";
 import { Fraunces_500Medium } from "@expo-google-fonts/fraunces";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Toast from "react-native-toast-message";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { toastConfig } from "@/components/toastConfig";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -103,14 +105,21 @@ function RootLayoutNav() {
   // ThemeProvider gives all child screens access to light/dark theme colors.
   // Stack defines the available screen groups for navigation.
   return (
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
-        <Stack>
-          <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        </Stack>
-      </ThemeProvider>
-      <Toast />
-    </QueryClientProvider>
+    <SafeAreaProvider>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
+          <Stack>
+            <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="item/[id]" />
+            <Stack.Screen
+              name="set-name"
+              options={{ headerShown: false, presentation: "modal" }}
+            />
+          </Stack>
+        </ThemeProvider>
+        <Toast config={toastConfig} topOffset={0} />
+      </QueryClientProvider>
+    </SafeAreaProvider>
   );
 }

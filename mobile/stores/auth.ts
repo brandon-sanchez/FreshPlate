@@ -44,6 +44,27 @@ type AuthState = {
 };
 
 /**
+ * Best-effort first name from OAuth provider metadata.
+ * Google sets `given_name`/`full_name`/`name`; Apple writes `full_name` on first auth
+ * (after we persist it). Returns null if nothing usable was supplied — caller should
+ * fall back to the profiles.display_name column or prompt the user.
+ */
+export function firstNameFromMetadata(user: User | null): string | null {
+  if (!user) return null;
+  const meta = user.user_metadata ?? {};
+  const given = (meta.given_name as string | undefined)?.trim();
+  if (given) return given;
+  const full =
+    (meta.full_name as string | undefined)?.trim() ||
+    (meta.name as string | undefined)?.trim();
+  if (full) {
+    const first = full.split(/\s+/)[0];
+    if (first) return first;
+  }
+  return null;
+}
+
+/**
  * Returns the user's household_id.
  * - `string` — household found.
  * - `null` — no row (permanent broken: signup trigger failed).
@@ -215,12 +236,29 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
 
     // Exchange the Apple token for a Supabase session.
-    const { error } = await supabase.auth.signInWithIdToken({
+    const { data, error } = await supabase.auth.signInWithIdToken({
       provider: "apple",
       token: credential.identityToken,
     });
 
     if (error) throw error;
+
+    // Apple only returns fullName on the *first* sign-in. Persist it immediately
+    // so future sessions don't lose access to the user's real name. Don't let a
+    // profile-write failure tank the whole sign-in — the user can edit later.
+    const given = credential.fullName?.givenName?.trim();
+    const family = credential.fullName?.familyName?.trim();
+    if (given && data.user) {
+      const displayName = [given, family].filter(Boolean).join(" ");
+      try {
+        await supabase
+          .from("profiles")
+          .update({ display_name: displayName })
+          .eq("id", data.user.id);
+      } catch (err) {
+        console.warn("Failed to persist Apple display_name:", err);
+      }
+    }
   },
 
   signOut: async () => {
