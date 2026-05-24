@@ -10,3 +10,8 @@ httpx==0.28.1
 
 # Supabase auth token verification
 python-jose[cryptography]==3.3.0
+cachetools==5.5.0
+
+# Tests
+pytest==8.3.4
+pytest-asyncio==0.25.2
