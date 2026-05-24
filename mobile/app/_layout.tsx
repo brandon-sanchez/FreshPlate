@@ -18,7 +18,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Toast from "react-native-toast-message";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { toastConfig } from "@/components/toastConfig";
+import CenterToast from "@/components/CenterToast";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -112,23 +114,33 @@ function RootLayoutNav() {
   // ThemeProvider gives all child screens access to light/dark theme colors.
   // Stack defines the available screen groups for navigation.
   return (
-    <SafeAreaProvider>
-      <QueryClientProvider client={queryClient}>
-        <ThemeProvider
-          value={colorScheme === "dark" ? DarkTheme : DefaultTheme}
-        >
-          <Stack>
-            <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            <Stack.Screen name="item/[id]" />
-            <Stack.Screen
-              name="set-name"
-              options={{ headerShown: false, presentation: "modal" }}
-            />
-          </Stack>
-        </ThemeProvider>
-        <SafeAreaToast />
-      </QueryClientProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <QueryClientProvider client={queryClient}>
+          <ThemeProvider
+            value={colorScheme === "dark" ? DarkTheme : DefaultTheme}
+          >
+            <Stack screenOptions={{ headerBackTitle: "Back" }}>
+              <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              <Stack.Screen
+                name="item/[id]"
+                options={{ title: "Item", headerBackTitle: "Inventory" }}
+              />
+              <Stack.Screen
+                name="set-name"
+                options={{ headerShown: false, presentation: "modal" }}
+              />
+              <Stack.Screen
+                name="scan-review"
+                options={{ title: "Review item", headerBackTitle: "Scan" }}
+              />
+            </Stack>
+          </ThemeProvider>
+          <SafeAreaToast />
+          <CenterToast />
+        </QueryClientProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

@@ -96,10 +96,14 @@ export default function ItemDetailScreen() {
 
   const trimmedName = name.trim();
   const isValid = trimmedName.length > 0 && quantity > 0;
-  const expirationISO =
-    expDays === null
-      ? null
-      : new Date(Date.now() + expDays * 86400000).toISOString().slice(0, 10);
+  /* Local-calendar math; UTC slicing rounds evening adds in negative-UTC
+   * zones to the next day. */
+  const expirationISO = (() => {
+    if (expDays === null) return null;
+    const now = new Date();
+    const t = new Date(now.getFullYear(), now.getMonth(), now.getDate() + expDays);
+    return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+  })();
   const urgency = expDays === null ? null : getUrgency(expDays);
   const urgencyColor =
     urgency?.level === "crit"

@@ -34,7 +34,13 @@
     "plugins": [
       "expo-router",
       "expo-apple-authentication",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "FreshPlate needs camera access to scan product barcodes."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

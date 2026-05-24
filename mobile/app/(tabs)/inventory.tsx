@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Pressable,
   RefreshControl,
@@ -7,10 +7,21 @@ import {
   TextInput,
   View,
 } from "react-native";
+import ReanimatedSwipeable, {
+  type SwipeableMethods,
+} from "react-native-gesture-handler/ReanimatedSwipeable";
+import {
+  runOnJS,
+  SharedValue,
+  useAnimatedReaction,
+  useSharedValue,
+} from "react-native-reanimated";
+import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
+import Toast from "react-native-toast-message";
 import { useTheme } from "@/hooks/useTheme";
 import {
   daysUntilExpiration,
@@ -18,6 +29,8 @@ import {
   useInventoryItems,
 } from "@/hooks/useInventoryItems";
 import { useFoodCategories } from "@/hooks/useFoodCategories";
+import { useDeleteItem } from "@/hooks/useDeleteItem";
+import { useCenterToast } from "@/stores/centerToast";
 import SegmentedControl from "@/components/SegmentedControl";
 import InventoryRow from "@/components/InventoryRow";
 import LoadingState from "@/components/LoadingState";
@@ -41,10 +54,30 @@ export default function InventoryScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const inventory = useInventoryItems();
   const categoriesQuery = useFoodCategories();
+  const deleteItem = useDeleteItem();
+  const showCenterToast = useCenterToast((s) => s.show);
 
-  // `added=<id>` is set by AddItem → router.push after a successful insert.
-  // We pulse the matching row exactly once per navigation, then clear so a
-  // re-render (e.g. filter change) doesn't replay the animation.
+  const handleSwipeDelete = (
+    item: InventoryItem,
+    swipeable: SwipeableMethods | null,
+  ) => {
+    deleteItem.mutate(item.id, {
+      onSuccess: () => {
+        showCenterToast({ icon: "check", text: "Deleted", tone: "success" });
+      },
+      onError: () => {
+        Toast.show({
+          type: "error",
+          text1: "Couldn't delete",
+          text2: "Check your connection and try again.",
+        });
+        swipeable?.close();
+      },
+    });
+  };
+
+  /* The `added` query param pulses the matching row once per navigation, then
+   * clears so subsequent re-renders don't replay the animation. */
   const { added } = useLocalSearchParams<{ added?: string }>();
   const [highlightId, setHighlightId] = useState<string | null>(null);
   useEffect(() => {
@@ -131,8 +164,8 @@ export default function InventoryScreen() {
     }));
   }, [filtered, groupBy]);
 
-  // Ensure the user can actually see the highlighted row — auto-open its
-  // collapsible section once the refetch lands it in the list.
+  /* Auto-open the collapsible section containing the highlighted row so the
+   * pulse animation isn't hidden behind a closed group. */
   useEffect(() => {
     if (!highlightId) return;
     for (const s of sections) {
@@ -450,10 +483,11 @@ export default function InventoryScreen() {
           );
         }}
         renderItem={({ item }) => (
-          <InventoryRow
+          <SwipeableInventoryRow
             item={item}
             highlight={item.id === highlightId}
             onPress={() => router.push(`/item/${item.id}`)}
+            onSwipeDelete={handleSwipeDelete}
           />
         )}
         ListEmptyComponent={
@@ -583,4 +617,133 @@ function ActiveChip({
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+type SwipeableInventoryRowProps = {
+  item: InventoryItem;
+  highlight: boolean;
+  onPress: () => void;
+  onSwipeDelete: (
+    item: InventoryItem,
+    swipeable: SwipeableMethods | null,
+  ) => void;
+};
+
+/* ReanimatedSwipeable needs a fixed action width — `flex: 1` leaves the
+ * snap-open animation without an anchor and the swipe stalls mid-drag. */
+const ACTION_WIDTH = 96;
+/* Commit threshold is capped by ACTION_WIDTH because `overshootRight: false`
+ * prevents drag past the action edge. Higher feels more deliberate. */
+const COMMIT_THRESHOLD = 88;
+const PILL_RADIUS = 14;
+
+function fireHaptic(style: Haptics.ImpactFeedbackStyle) {
+  Haptics.impactAsync(style).catch(() => {});
+}
+
+function SwipeableInventoryRow({
+  item,
+  highlight,
+  onPress,
+  onSwipeDelete,
+}: SwipeableInventoryRowProps) {
+  const { colors, fonts } = useTheme();
+  const swipeRef = useRef<SwipeableMethods>(null);
+  /* onSwipeableWillOpen fires at snap kickoff; onSwipeableOpen fires when fully
+   * open. Either commits the delete; this ref blocks the duplicate call. */
+  const committedRef = useRef(false);
+
+  const commit = () => {
+    if (committedRef.current) return;
+    committedRef.current = true;
+    fireHaptic(Haptics.ImpactFeedbackStyle.Medium);
+    onSwipeDelete(item, swipeRef.current);
+  };
+
+  return (
+    <ReanimatedSwipeable
+      ref={swipeRef}
+      friction={1}
+      rightThreshold={COMMIT_THRESHOLD}
+      overshootRight={false}
+      onSwipeableWillOpen={commit}
+      onSwipeableOpen={commit}
+      onSwipeableClose={() => {
+        committedRef.current = false;
+      }}
+      renderRightActions={(progress) => (
+        <SwipeDeleteAction
+          progress={progress}
+          colors={colors}
+          fonts={fonts}
+        />
+      )}
+    >
+      <InventoryRow item={item} highlight={highlight} onPress={onPress} />
+    </ReanimatedSwipeable>
+  );
+}
+
+type SwipeDeleteActionProps = {
+  progress: SharedValue<number>;
+  colors: ReturnType<typeof useTheme>["colors"];
+  fonts: ReturnType<typeof useTheme>["fonts"];
+};
+
+function SwipeDeleteAction({ progress, colors, fonts }: SwipeDeleteActionProps) {
+  /* Fire one light haptic as the row crosses the open threshold; re-arm when
+   * the swipe relaxes so each gesture gets its own cue. */
+  const armed = useSharedValue(false);
+  useAnimatedReaction(
+    () => progress.value,
+    (current, previous) => {
+      if (current >= 1 && (previous ?? 0) < 1 && !armed.value) {
+        armed.value = true;
+        runOnJS(fireHaptic)(Haptics.ImpactFeedbackStyle.Light);
+      } else if (current < 0.35) {
+        armed.value = false;
+      }
+    },
+  );
+
+  return (
+    <View
+      style={{
+        width: ACTION_WIDTH,
+        paddingLeft: 8,
+        paddingRight: 4,
+        paddingVertical: 4,
+        alignItems: "stretch",
+        justifyContent: "center",
+      }}
+    >
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: colors.crit,
+          borderRadius: PILL_RADIUS,
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 4,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.16,
+          shadowRadius: 6,
+          elevation: 3,
+        }}
+      >
+        <FontAwesome name="trash" size={18} color="#FFFFFF" />
+        <Text
+          style={{
+            color: "#FFFFFF",
+            fontFamily: fonts.bodyStrong,
+            fontSize: 11.5,
+            letterSpacing: -0.1,
+          }}
+        >
+          Delete
+        </Text>
+      </View>
+    </View>
+  );
 }
