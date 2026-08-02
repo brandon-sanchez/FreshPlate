@@ -24,8 +24,11 @@ from jose.exceptions import ExpiredSignatureError, JWTError
 from app.core.config import settings
 
 _JWKS_CACHE_KEY = "jwks"
-_jwks_cache: TTLCache[str, dict[str, Any]] = TTLCache(
-    maxsize=1, ttl=settings.jwks_cache_ttl_seconds
+_jwks_cache: TTLCache[str, dict[str, Any], float] = TTLCache[
+    str, dict[str, Any], float
+](
+    maxsize=1,
+    ttl=settings.jwks_cache_ttl_seconds,
 )
 _jwks_lock = asyncio.Lock()
 
@@ -122,7 +125,9 @@ async def get_current_user(
     explicit dependency can still read it.
     """
     if credentials is None or not credentials.credentials:
-        raise _unauthorized("Missing or invalid Authorization header", "AUTH_MISSING_TOKEN")
+        raise _unauthorized(
+            "Missing or invalid Authorization header", "AUTH_MISSING_TOKEN"
+        )
 
     token = credentials.credentials
     key = await _resolve_signing_key(token)

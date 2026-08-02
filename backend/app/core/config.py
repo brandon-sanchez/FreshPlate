@@ -32,7 +32,10 @@ class Settings(BaseSettings):
 
     @property
     def supabase_jwks_url(self) -> str:
-        """Derive the JWKS URL from supabase_url. Empty string if unset (tests override)."""
+        """Derive the JWKS URL from supabase_url.
+
+        Returns an empty string when unset so tests can override the fetch path.
+        """
         if not self.supabase_url:
             return ""
         return f"{self.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
