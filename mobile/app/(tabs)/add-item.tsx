@@ -1,22 +1,20 @@
 import { StyleSheet, Text, View } from "react-native";
 import { useState } from "react";
-import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useRouter } from "expo-router";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useIsFocused } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Toast from "react-native-toast-message";
 import SegmentedControl from "@/components/SegmentedControl";
-import EmptyState from "@/components/EmptyState";
 import BarcodeScanner from "@/components/BarcodeScanner";
 import ItemForm from "@/components/ItemForm";
 import { useTheme } from "@/hooks/useTheme";
 import { useFoodCategories } from "@/hooks/useFoodCategories";
 import { useAddItem } from "@/hooks/useAddItem";
 
-type EntryMode = "Manual" | "Scan" | "Photo";
+type EntryMode = "Manual" | "Scan";
 
-const ENTRY_MODES: EntryMode[] = ["Manual", "Scan", "Photo"];
+const ENTRY_MODES: EntryMode[] = ["Manual", "Scan"];
 
 export default function AddItemScreen() {
   const { colors, fonts } = useTheme();
@@ -53,38 +51,12 @@ export default function AddItemScreen() {
 
       {mode === "Manual" ? (
         <ManualForm tabBarHeight={tabBarHeight} />
-      ) : mode === "Scan" ? (
+      ) : (
         <View style={{ flex: 1, paddingBottom: tabBarHeight }}>
           {isFocused ? <BarcodeScanner /> : null}
         </View>
-      ) : (
-        <PhotoPlaceholder />
       )}
     </View>
-  );
-}
-
-function PhotoPlaceholder() {
-  const { colors } = useTheme();
-  return (
-    <EmptyState
-      icon={
-        <View
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: 28,
-            backgroundColor: colors.accentSoft,
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <FontAwesome name="camera" size={24} color={colors.accent} />
-        </View>
-      }
-      title="Snap your groceries"
-      message="Photo recognition is coming in Phase 5 — for now, scan a barcode or add items manually."
-    />
   );
 }
 

@@ -37,13 +37,6 @@ class Settings(BaseSettings):
             return ""
         return f"{self.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
 
-    # CORS — origins allowed to call this API (add Cloud Run URL in production)
-    allowed_origins: list[str] = [
-        "http://localhost:8081",
-        "http://localhost:19006",
-        "http://localhost:8000",
-    ]
-
     # Gemini (Phase 5)
     gemini_api_key: str = ""
 

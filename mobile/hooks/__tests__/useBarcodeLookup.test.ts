@@ -13,8 +13,14 @@ jest.mock("@/lib/supabase", () => ({
 
 import { useBarcodeLookup, isValidBarcode } from "@/hooks/useBarcodeLookup";
 
-function wrapper({ children }: { children: React.ReactNode }) {
-  const client = new QueryClient({
+// The hook sets its own gcTime (30 min), and per-query options override client
+// defaults, so a gcTime: 0 default cannot cancel its GC timer. Instead each
+// test gets a fresh client and afterEach calls client.clear(), which drops the
+// cache and its timers so they cannot outlive the test run.
+let client: QueryClient;
+
+function createTestClient() {
+  return new QueryClient({
     defaultOptions: {
       queries: {
         retry: false,
@@ -24,6 +30,9 @@ function wrapper({ children }: { children: React.ReactNode }) {
       },
     },
   });
+}
+
+function wrapper({ children }: { children: React.ReactNode }) {
   return React.createElement(QueryClientProvider, { client }, children);
 }
 
@@ -43,9 +52,11 @@ function mockFetchResponse(body: unknown, init: { ok?: boolean; status?: number 
 describe("useBarcodeLookup", () => {
   beforeEach(() => {
     mockGetSession.mockClear();
+    client = createTestClient();
   });
 
   afterEach(() => {
+    client.clear();
     global.fetch = originalFetch;
   });
 

@@ -76,7 +76,11 @@ import { useAuthStore } from "@/stores/auth";
 
 function wrapper({ children }: { children: React.ReactNode }) {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    // gcTime: 0 stops cache GC timers from keeping the Jest worker alive.
+    defaultOptions: {
+      queries: { retry: false, gcTime: 0 },
+      mutations: { retry: false, gcTime: 0 },
+    },
   });
   return React.createElement(QueryClientProvider, { client }, children);
 }

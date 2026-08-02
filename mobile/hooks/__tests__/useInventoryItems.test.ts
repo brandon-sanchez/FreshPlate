@@ -29,7 +29,8 @@ import {
 
 function wrapper({ children }: { children: React.ReactNode }) {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+    // gcTime: 0 stops cache GC timers from keeping the Jest worker alive.
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
   return React.createElement(QueryClientProvider, { client }, children);
 }

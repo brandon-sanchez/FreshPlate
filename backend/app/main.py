@@ -1,5 +1,4 @@
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.barcode import router as barcode_router
@@ -16,7 +15,6 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.debug else None,
     )
 
-    configure_cors(app)
     configure_exception_handlers(app)
 
     app.include_router(health_router)
@@ -45,17 +43,6 @@ def configure_exception_handlers(app: FastAPI) -> None:
             content={"error": str(exc.detail), "code": f"HTTP_{exc.status_code}"},
             headers=exc.headers,
         )
-
-
-def configure_cors(app: FastAPI) -> None:
-    """Add CORS middleware so the mobile app and web clients can call the API."""
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.allowed_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
 
 
 app = create_app()
