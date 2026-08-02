@@ -14,6 +14,7 @@ from app.ai.llm.errors import ProviderError
 from app.core.config import settings
 
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+GEMINI_TIMEOUT_MS = 25_000
 
 ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
 FakeResponse = BaseModel | Mapping[str, Any] | Exception
@@ -87,12 +88,15 @@ class GeminiProvider:
         }
         if system_instruction is not None:
             config_kwargs["system_instruction"] = system_instruction
+        http_options = types.HttpOptions(timeout=GEMINI_TIMEOUT_MS)
 
         try:
             response = await client.aio.models.generate_content(
                 model=self.model,
                 contents=prompt,
-                config=types.GenerateContentConfig(**config_kwargs),
+                config=types.GenerateContentConfig(
+                    http_options=http_options, **config_kwargs
+                ),
             )
         except Exception as exc:
             raise ProviderError(

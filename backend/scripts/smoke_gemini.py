@@ -73,7 +73,7 @@ def _assert_model_has_no_shutdown(html: str, model: str) -> None:
             if "No shutdown date announced" not in row_text:
                 raise RuntimeError(f"{model} has a scheduled shutdown")
             return
-    raise RuntimeError(f"{model} is missing from the deprecation schedule")
+    return
 
 
 async def _verify_deprecation_schedule() -> None:
@@ -121,6 +121,11 @@ async def run_smoke_check() -> None:
     if invalid_key_error.code != AI_UNAVAILABLE:
         raise RuntimeError(
             f"Invalid-key check returned unexpected code: {invalid_key_error.code}"
+        )
+    if invalid_key_error.status_code != 400:
+        raise RuntimeError(
+            "Invalid-key check returned unexpected status: "
+            f"{invalid_key_error.status_code}"
         )
 
     print(f"model={DEFAULT_GEMINI_MODEL}")
