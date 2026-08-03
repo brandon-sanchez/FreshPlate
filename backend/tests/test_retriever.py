@@ -18,9 +18,7 @@ class FakeEmbeddingModels:
         assert kwargs["contents"] == "cilantro"
         return SimpleNamespace(
             embeddings=[
-                SimpleNamespace(
-                    values=[1.0, *([0.0] * (EMBEDDING_DIMENSIONS - 1))]
-                )
+                SimpleNamespace(values=[1.0, *([0.0] * (EMBEDDING_DIMENSIONS - 1))])
             ]
         )
 
@@ -79,9 +77,7 @@ async def test_retriever_finds_coriander_leaves_for_a_cilantro_query() -> None:
     retriever = RecipeRetriever(
         EmbeddingClient(
             api_key="test-key",
-            client=SimpleNamespace(
-                aio=SimpleNamespace(models=FakeEmbeddingModels())
-            ),
+            client=SimpleNamespace(aio=SimpleNamespace(models=FakeEmbeddingModels())),
         ),
         SupabaseVectorStore(
             url="https://project.supabase.co",

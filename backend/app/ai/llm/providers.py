@@ -14,6 +14,8 @@ from app.ai.llm.errors import ProviderError, status_code_from_error
 from app.ai.llm.retry import PipelineDeadline, RetryPolicy
 from app.core.config import settings
 
+# Gemini Developer API pricing lists this model in the free tier. Keep the
+# model pin explicit so a future change does not accidentally add paid usage.
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 
 ResponseModel = TypeVar("ResponseModel", bound=BaseModel)

@@ -22,9 +22,19 @@ def test_recipe_embeddings_migration_defines_the_public_search_contract() -> Non
     assert "using hnsw (embedding extensions.vector_cosine_ops)" in sql
     assert "recipes.embedding <=> query_embedding <= 1 - match_threshold" in sql
     assert "alter table public.recipe_embeddings enable row level security" in sql
-    assert (
-        "for select to anon, authenticated using (true)" in sql
-    )
+    assert "for select to anon, authenticated using (true)" in sql
     assert "create or replace function public.match_recipe_embeddings" in sql
     assert "security invoker" in sql
     assert "grant execute on function public.match_recipe_embeddings" in sql
+
+
+def test_recipe_embedding_loader_migration_limits_writes_to_service_role() -> None:
+    migration_path = (
+        MIGRATION_PATH.parent / "20260803193045_recipe_embedding_loader_permissions.sql"
+    )
+    sql = re.sub(r"\s+", " ", migration_path.read_text(encoding="utf-8").lower())
+
+    assert (
+        "grant select, insert, update on public.recipe_embeddings to service_role"
+        in sql
+    )

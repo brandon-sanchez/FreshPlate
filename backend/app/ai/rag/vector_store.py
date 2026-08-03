@@ -40,12 +40,24 @@ class SupabaseVectorStore:
         url: str | None = None,
         anon_key: str | None = None,
         *,
+        publishable_key: str | None = None,
         http_client: Any | None = None,
     ) -> None:
+        if publishable_key is not None and anon_key is not None:
+            raise ValueError("Provide either publishable_key or anon_key, not both")
         self._url = settings.supabase_url if url is None else url
-        self._anon_key = (
-            settings.supabase_anon_key if anon_key is None else anon_key
-        )
+        if publishable_key is not None:
+            self._api_key = publishable_key
+            self._uses_legacy_jwt = False
+        elif anon_key is not None:
+            self._api_key = anon_key
+            self._uses_legacy_jwt = True
+        elif settings.supabase_publishable_key:
+            self._api_key = settings.supabase_publishable_key
+            self._uses_legacy_jwt = False
+        else:
+            self._api_key = settings.supabase_anon_key
+            self._uses_legacy_jwt = True
         self._http_client = http_client
 
     async def search(
@@ -62,8 +74,10 @@ class SupabaseVectorStore:
 
         if not self._url:
             raise VectorStoreError("Supabase URL is not configured")
-        if not self._anon_key:
-            raise VectorStoreError("Supabase anon key is not configured")
+        if not self._api_key:
+            raise VectorStoreError(
+                "Supabase publishable key or legacy anon key is not configured"
+            )
 
         active_deadline = deadline or PipelineDeadline.from_now()
         timeout = active_deadline.remaining_seconds
@@ -72,9 +86,10 @@ class SupabaseVectorStore:
 
         url = f"{self._url.rstrip('/')}/rest/v1/rpc/match_recipe_embeddings"
         headers = {
-            "apikey": self._anon_key,
-            "Authorization": f"Bearer {self._anon_key}",
+            "apikey": self._api_key,
         }
+        if self._uses_legacy_jwt:
+            headers["Authorization"] = f"Bearer {self._api_key}"
         payload = {
             "query_embedding": vector,
             "match_threshold": match_threshold,
@@ -131,9 +146,7 @@ class SupabaseVectorStore:
 
 def _validated_embedding(query_embedding: Sequence[float]) -> list[float]:
     if len(query_embedding) != EMBEDDING_DIMENSIONS:
-        raise ValueError(
-            f"Query embedding must have {EMBEDDING_DIMENSIONS} dimensions"
-        )
+        raise ValueError(f"Query embedding must have {EMBEDDING_DIMENSIONS} dimensions")
 
     try:
         vector = [float(value) for value in query_embedding]

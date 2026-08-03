@@ -79,3 +79,36 @@ async def test_vector_store_returns_ranked_recipe_rows_from_similarity_rpc() -> 
         "match_count": 2,
     }
     assert call["timeout"] == pytest.approx(5.0, rel=1e-4)
+
+
+@pytest.mark.asyncio
+async def test_vector_store_uses_publishable_key_without_jwt_bearer_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = httpx.Response(
+        200,
+        json=[],
+        request=httpx.Request(
+            "POST",
+            "https://project.supabase.co/rest/v1/rpc/match_recipe_embeddings",
+        ),
+    )
+    http_client = FakeHttpClient(response)
+    monkeypatch.setattr(
+        "app.ai.rag.vector_store.settings.supabase_publishable_key",
+        "sb_publishable_test-key",
+    )
+    monkeypatch.setattr("app.ai.rag.vector_store.settings.supabase_anon_key", "")
+    store = SupabaseVectorStore(
+        url="https://project.supabase.co",
+        http_client=http_client,
+    )
+
+    await store.search(
+        [1.0, *([0.0] * (EMBEDDING_DIMENSIONS - 1))],
+        deadline=PipelineDeadline(5.0),
+    )
+
+    assert http_client.calls[0]["headers"] == {
+        "apikey": "sb_publishable_test-key",
+    }

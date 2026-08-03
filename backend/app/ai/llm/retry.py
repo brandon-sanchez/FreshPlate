@@ -90,6 +90,7 @@ class RetryPolicy:
         jitter_seconds: float = DEFAULT_JITTER_SECONDS,
         sleep: Sleep | None = None,
         random_uniform: RandomUniform = random.uniform,
+        retry_rate_limits: bool = True,
     ) -> None:
         if max_attempts < 1:
             raise ValueError("Retry policy must allow at least one attempt")
@@ -107,6 +108,7 @@ class RetryPolicy:
         self._jitter_seconds = jitter_seconds
         self._sleep = sleep
         self._random_uniform = random_uniform
+        self._retry_rate_limits = retry_rate_limits
 
     async def run(
         self,
@@ -140,6 +142,8 @@ class RetryPolicy:
                     status_code=status_code_from_error(exc),
                 )
 
+            if not self._retry_rate_limits and _status_code_from_error(failure) == 429:
+                raise failure
             if not _is_retryable(failure):
                 raise failure
 
@@ -150,6 +154,8 @@ class RetryPolicy:
             delay = self._backoff_seconds[attempt]
             if self._jitter_seconds:
                 delay += self._random_uniform(0.0, self._jitter_seconds)
+            if failure.retry_after_seconds is not None:
+                delay = max(delay, failure.retry_after_seconds)
             if deadline.remaining_seconds <= delay:
                 raise _deadline_error(failure) from failure
 
@@ -160,7 +166,7 @@ class RetryPolicy:
 
 def _is_retryable(error: ProviderError) -> bool:
     """Return whether a provider error represents a transient failure."""
-    status_code = error.status_code
+    status_code = _status_code_from_error(error)
     if status_code is not None:
         return _is_retryable_status(status_code)
 
@@ -173,6 +179,20 @@ def _is_retryable(error: ProviderError) -> bool:
             return True
         cause = cause.__cause__ or getattr(cause, "cause", None)
     return False
+
+
+def _status_code_from_error(error: ProviderError) -> int | None:
+    status_code = error.status_code
+    if status_code is not None:
+        return status_code
+
+    cause = error.cause
+    while cause is not None:
+        status_code = status_code_from_error(cause)
+        if status_code is not None:
+            return status_code
+        cause = cause.__cause__ or getattr(cause, "cause", None)
+    return None
 
 
 def _is_retryable_status(status_code: int) -> bool:

@@ -9,9 +9,18 @@ import { Platform } from "react-native";
 // These come from your .env file. The "!" tells TypeScript "trust me, these exist."
 // EXPO_PUBLIC_ prefix makes them available in the app (Expo strips other env vars for security).
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+const supabasePublishableKey =
+  process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+if (!supabasePublishableKey) {
+  throw new Error(
+    "Missing EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY or " +
+      "EXPO_PUBLIC_SUPABASE_ANON_KEY",
+  );
+}
+
+export const supabase = createClient(supabaseUrl, supabasePublishableKey, {
   auth: {
     // AsyncStorage = React Native's key-value storage (like Python's shelve).
     // Lets Supabase save/restore the session so users stay logged in across app restarts.

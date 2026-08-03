@@ -63,6 +63,60 @@ async def test_retry_policy_retries_transient_failures_with_shared_deadline() ->
 
 
 @pytest.mark.asyncio
+async def test_retry_policy_honors_provider_retry_delay() -> None:
+    sleeps: list[float] = []
+    calls = 0
+
+    async def sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    async def operation(deadline: PipelineDeadline) -> str:
+        del deadline
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ProviderError(
+                "rate limited",
+                status_code=429,
+                retry_after_seconds=7.5,
+            )
+        return "ready"
+
+    result = await RetryPolicy(
+        max_attempts=2,
+        backoff_seconds=(1.0,),
+        jitter_seconds=0.0,
+        sleep=sleep,
+    ).run(operation, deadline=PipelineDeadline(25.0))
+
+    assert result == "ready"
+    assert sleeps == [7.5]
+
+
+@pytest.mark.asyncio
+async def test_retry_policy_can_defer_rate_limits_to_a_batch_loader() -> None:
+    calls = 0
+
+    async def sleep(delay: float) -> None:
+        del delay
+
+    async def operation(deadline: PipelineDeadline) -> None:
+        del deadline
+        nonlocal calls
+        calls += 1
+        raise ProviderError("rate limited", status_code=429)
+
+    with pytest.raises(ProviderError) as error:
+        await RetryPolicy(
+            retry_rate_limits=False,
+            sleep=sleep,
+        ).run(operation, deadline=PipelineDeadline(25.0))
+
+    assert error.value.status_code == 429
+    assert calls == 1
+
+
+@pytest.mark.asyncio
 async def test_retry_policy_does_not_retry_bad_request() -> None:
     calls = 0
     sleeps: list[float] = []

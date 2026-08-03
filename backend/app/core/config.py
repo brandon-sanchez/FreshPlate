@@ -21,7 +21,15 @@ class Settings(BaseSettings):
 
     # Supabase
     supabase_url: str = ""
+    # Preferred non-JWT key for low-privilege server-side Data API reads.
+    supabase_publishable_key: str = ""
+    # Legacy JWT key retained as a transition fallback.
     supabase_anon_key: str = ""
+    # Preferred non-JWT key for local corpus ingestion and other trusted jobs.
+    supabase_secret_key: str = ""
+    # Legacy JWT key retained as a transition fallback. Never expose either
+    # elevated key to mobile or other public clients.
+    supabase_service_role_key: str = ""
 
     # JWT verification — Supabase uses asymmetric (ES256) JWKS by default.
     # Expected audience claim for normal user tokens.

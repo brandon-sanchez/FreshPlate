@@ -3,18 +3,24 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from typing import Any
 
 import google.genai as genai
 from google.genai import types
 
-from app.ai.llm.errors import ProviderError, status_code_from_error
+from app.ai.llm.errors import (
+    ProviderError,
+    retry_after_seconds_from_error,
+    status_code_from_error,
+)
 from app.ai.llm.retry import PipelineDeadline, RetryPolicy
 from app.core.config import settings
 
 DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
 EMBEDDING_DIMENSIONS = 768
 DEFAULT_EMBEDDING_TASK = "RETRIEVAL_QUERY"
+DEFAULT_EMBEDDING_DOCUMENT_TASK = "RETRIEVAL_DOCUMENT"
 
 
 class EmbeddingClient:
@@ -42,7 +48,7 @@ class EmbeddingClient:
         """Return one normalized embedding under the caller's shared deadline."""
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Embedding text must not be empty")
-        if not task_type.strip():
+        if not isinstance(task_type, str) or not task_type.strip():
             raise ValueError("Embedding task type must not be empty")
 
         client = self._get_client()
@@ -54,6 +60,38 @@ class EmbeddingClient:
                 text,
                 task_type=task_type,
                 title=title,
+                deadline=shared_deadline,
+            )
+
+        return await self._retry_policy.run(
+            embed_once,
+            deadline=active_deadline,
+        )
+
+    async def embed_many(
+        self,
+        texts: Sequence[str],
+        *,
+        task_type: str = DEFAULT_EMBEDDING_DOCUMENT_TASK,
+        deadline: PipelineDeadline | None = None,
+    ) -> list[list[float]]:
+        """Return one normalized embedding per input in the original order."""
+        if not texts:
+            raise ValueError("Embedding texts must not be empty")
+        if any(not isinstance(text, str) or not text.strip() for text in texts):
+            raise ValueError("Embedding texts must not contain empty values")
+        if not isinstance(task_type, str) or not task_type.strip():
+            raise ValueError("Embedding task type must not be empty")
+
+        client = self._get_client()
+        active_deadline = deadline or PipelineDeadline.from_now()
+        contents = list(texts)
+
+        async def embed_once(shared_deadline: PipelineDeadline) -> list[list[float]]:
+            return await self._embed_many_once(
+                client,
+                contents,
+                task_type=task_type,
                 deadline=shared_deadline,
             )
 
@@ -99,31 +137,76 @@ class EmbeddingClient:
                 "Gemini embedding failed",
                 cause=exc,
                 status_code=status_code_from_error(exc),
+                retry_after_seconds=retry_after_seconds_from_error(exc),
             ) from exc
 
-        embeddings = getattr(response, "embeddings", None)
-        if not isinstance(embeddings, list) or len(embeddings) != 1:
-            raise ProviderError("Gemini returned no usable embedding")
+        return self._parse_embeddings(response, expected_count=1)[0]
 
-        values = getattr(embeddings[0], "values", None)
-        if not isinstance(values, list) or len(values) != EMBEDDING_DIMENSIONS:
-            raise ProviderError(
-                f"Gemini returned an embedding with the wrong dimension; "
-                f"expected {EMBEDDING_DIMENSIONS}"
-            )
+    async def _embed_many_once(
+        self,
+        client: Any,
+        texts: Sequence[str],
+        *,
+        task_type: str,
+        deadline: PipelineDeadline,
+    ) -> list[list[float]]:
+        """Make one bounded batch request and normalize each returned vector."""
+        timeout_ms = deadline.remaining_milliseconds
+        if timeout_ms <= 0:
+            raise ProviderError("LLM pipeline deadline exhausted")
 
+        http_options = types.HttpOptions(
+            timeout=timeout_ms,
+            retry_options=types.HttpRetryOptions(attempts=1),
+        )
         try:
-            vector = [float(value) for value in values]
-        except (TypeError, ValueError) as exc:
-            raise ProviderError("Gemini returned an invalid embedding") from exc
+            response = await client.aio.models.embed_content(
+                model=DEFAULT_EMBEDDING_MODEL,
+                contents=list(texts),
+                config=types.EmbedContentConfig(
+                    output_dimensionality=EMBEDDING_DIMENSIONS,
+                    task_type=task_type,
+                    http_options=http_options,
+                ),
+            )
+        except Exception as exc:
+            raise ProviderError(
+                "Gemini embedding failed",
+                cause=exc,
+                status_code=status_code_from_error(exc),
+                retry_after_seconds=retry_after_seconds_from_error(exc),
+            ) from exc
 
-        if not all(math.isfinite(value) for value in vector):
-            raise ProviderError("Gemini returned an invalid embedding")
+        return self._parse_embeddings(response, expected_count=len(texts))
 
-        norm = math.sqrt(sum(value * value for value in vector))
-        if norm <= 0:
-            raise ProviderError("Gemini returned a zero embedding")
-        return [value / norm for value in vector]
+    @staticmethod
+    def _parse_embeddings(response: Any, *, expected_count: int) -> list[list[float]]:
+        embeddings = getattr(response, "embeddings", None)
+        if not isinstance(embeddings, list) or len(embeddings) != expected_count:
+            raise ProviderError("Gemini returned an unexpected number of embeddings")
+
+        vectors: list[list[float]] = []
+        for embedding in embeddings:
+            values = getattr(embedding, "values", None)
+            if not isinstance(values, list) or len(values) != EMBEDDING_DIMENSIONS:
+                raise ProviderError(
+                    f"Gemini returned an embedding with the wrong dimension; "
+                    f"expected {EMBEDDING_DIMENSIONS}"
+                )
+
+            try:
+                vector = [float(value) for value in values]
+            except (TypeError, ValueError) as exc:
+                raise ProviderError("Gemini returned an invalid embedding") from exc
+
+            if not all(math.isfinite(value) for value in vector):
+                raise ProviderError("Gemini returned an invalid embedding")
+
+            norm = math.sqrt(sum(value * value for value in vector))
+            if norm <= 0:
+                raise ProviderError("Gemini returned a zero embedding")
+            vectors.append([value / norm for value in vector])
+        return vectors
 
     def _get_client(self) -> Any:
         if self._client is not None:

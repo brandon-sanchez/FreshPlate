@@ -17,26 +17,18 @@ def test_deprecation_check_accepts_current_model_without_shutdown() -> None:
     _assert_model_has_no_shutdown(html, "gemini-3.6-flash")
 
 
-@pytest.mark.parametrize(
-    ("html", "expects_error"),
-    [
-        (
-            "<tr><td><code>gemini-3.6-flash</code></td>"
-            "<td>October 1, 2026</td></tr>",
-            True,
-        ),
-        (
-            "<tr><td><code>gemini-2.0-flash</code></td>"
-            "<td>No shutdown date announced</td></tr>",
-            False,
-        ),
-    ],
-)
-def test_deprecation_check_rejects_scheduled_model_or_accepts_absent_model(
-    html: str, expects_error: bool
-) -> None:
-    if expects_error:
-        with pytest.raises(RuntimeError):
-            _assert_model_has_no_shutdown(html, "gemini-3.6-flash")
-    else:
+def test_deprecation_check_rejects_scheduled_model() -> None:
+    html = "<tr><td><code>gemini-3.6-flash</code></td><td>October 1, 2026</td></tr>"
+
+    with pytest.raises(RuntimeError, match="scheduled shutdown"):
+        _assert_model_has_no_shutdown(html, "gemini-3.6-flash")
+
+
+def test_deprecation_check_rejects_model_missing_from_schedule() -> None:
+    html = (
+        "<tr><td><code>gemini-2.0-flash</code></td>"
+        "<td>No shutdown date announced</td></tr>"
+    )
+
+    with pytest.raises(RuntimeError, match="not found"):
         _assert_model_has_no_shutdown(html, "gemini-3.6-flash")

@@ -4,6 +4,11 @@ venv/
 # Environment variables
 .env
 
+# Downloaded corpus files and resumability state
+.local/
+*.parquet
+*.zip
+
 # Python
 __pycache__/
 *.pyc

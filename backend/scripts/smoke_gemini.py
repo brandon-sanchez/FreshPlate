@@ -73,7 +73,7 @@ def _assert_model_has_no_shutdown(html: str, model: str) -> None:
             if "No shutdown date announced" not in row_text:
                 raise RuntimeError(f"{model} has a scheduled shutdown")
             return
-    return
+    raise RuntimeError(f"{model} was not found in the deprecation schedule")
 
 
 async def _verify_deprecation_schedule() -> None:

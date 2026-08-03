@@ -24,9 +24,7 @@ from jose.exceptions import ExpiredSignatureError, JWTError
 from app.core.config import settings
 
 _JWKS_CACHE_KEY = "jwks"
-_jwks_cache: TTLCache[str, dict[str, Any], float] = TTLCache[
-    str, dict[str, Any], float
-](
+_jwks_cache: TTLCache[str, dict[str, Any]] = TTLCache(
     maxsize=1,
     ttl=settings.jwks_cache_ttl_seconds,
 )
