@@ -6,7 +6,7 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
 PROMPTS_DIR = Path(__file__).parent

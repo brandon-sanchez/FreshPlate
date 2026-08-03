@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Protocol
 
 import pytest
 from pydantic import BaseModel
@@ -61,7 +61,15 @@ class FakeGeminiModels:
         return self.response
 
 
-def fake_gemini_client(models: FakeGeminiModels) -> SimpleNamespace:
+class GeminiModels(Protocol):
+    """The small async model surface shared by the Gemini test doubles."""
+
+    async def generate_content(self, **kwargs: Any) -> Any:
+        """Return one fake Gemini response or raise an upstream error."""
+        ...
+
+
+def fake_gemini_client(models: GeminiModels) -> SimpleNamespace:
     return SimpleNamespace(aio=SimpleNamespace(models=models))
 
 

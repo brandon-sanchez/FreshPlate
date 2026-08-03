@@ -43,6 +43,15 @@ class Settings(BaseSettings):
 
     # Gemini (Phase 5)
     gemini_api_key: str = ""
+
+    # LangSmith reads these environment variables directly when LangGraph
+    # tracing is enabled. Declaring them here keeps the application settings
+    # model compatible with the optional values in backend/.env.
+    langsmith_tracing: bool = False
+    langsmith_api_key: str = ""
+    langsmith_endpoint: str = ""
+    langsmith_project: str = ""
+
     # Shared server-side budget for the future recipe pipeline. This stays
     # below the mobile client's 30-second request abort window.
     ai_pipeline_budget_seconds: float = Field(default=25.0, gt=0, lt=30.0)
