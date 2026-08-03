@@ -14,6 +14,7 @@ from app.ai.llm.providers import (
     GeminiProvider,
     ProviderError,
 )
+from app.ai.llm.retry import PipelineDeadline, RetryPolicy
 
 
 class Greeting(BaseModel):
@@ -64,6 +65,28 @@ def fake_gemini_client(models: FakeGeminiModels) -> SimpleNamespace:
     return SimpleNamespace(aio=SimpleNamespace(models=models))
 
 
+class UpstreamError(RuntimeError):
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"upstream status {status_code}")
+        self.status_code = status_code
+
+
+class SequenceFakeGeminiModels:
+    def __init__(self, outcomes: list[Any], *, clock: Any | None = None) -> None:
+        self.outcomes = outcomes
+        self.clock = clock
+        self.calls: list[dict[str, Any]] = []
+
+    async def generate_content(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        if self.clock is not None:
+            self.clock.value += 0.5
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
 @pytest.mark.asyncio
 async def test_gemini_provider_requests_json_schema_and_validates_response() -> None:
     models = FakeGeminiModels(
@@ -108,6 +131,85 @@ async def test_gemini_provider_normalizes_upstream_failure() -> None:
 
     assert error.value.code == "AI_UNAVAILABLE"
     assert isinstance(error.value.__cause__, RuntimeError)
+
+
+@pytest.mark.asyncio
+async def test_gemini_provider_retries_transient_failures_once_per_sdk_call() -> None:
+    models = SequenceFakeGeminiModels(
+        [
+            UpstreamError(429),
+            UpstreamError(503),
+            SimpleNamespace(
+                text='{"answer":"Use the tomatoes first","confidence":0.9}'
+            ),
+        ]
+    )
+    sleeps: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    provider = GeminiProvider(
+        api_key="test-key",
+        client=fake_gemini_client(models),
+        retry_policy=RetryPolicy(
+            max_attempts=3,
+            sleep=sleep,
+            jitter_seconds=0.0,
+        ),
+    )
+
+    result = await provider.generate("Give me an answer", response_model=Greeting)
+
+    assert result == Greeting(answer="Use the tomatoes first", confidence=0.9)
+    assert len(models.calls) == 3
+    assert sleeps == [1.0, 2.0]
+    assert all(
+        call["config"].http_options.retry_options.attempts == 1 for call in models.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_gemini_provider_passes_shared_remaining_budget_to_each_attempt() -> None:
+    class Clock:
+        value = 100.0
+
+        def __call__(self) -> float:
+            return self.value
+
+    clock = Clock()
+    models = SequenceFakeGeminiModels(
+        [
+            UpstreamError(503),
+            SimpleNamespace(
+                text='{"answer":"Use the tomatoes first","confidence":0.9}'
+            ),
+        ],
+        clock=clock,
+    )
+    provider = GeminiProvider(
+        api_key="test-key",
+        client=fake_gemini_client(models),
+        retry_policy=RetryPolicy(
+            max_attempts=2,
+            backoff_seconds=(0.0,),
+            sleep=lambda delay: _completed_sleep(delay),
+            jitter_seconds=0.0,
+        ),
+    )
+
+    await provider.generate(
+        "Give me an answer",
+        response_model=Greeting,
+        deadline=PipelineDeadline(5.0, clock=clock),
+    )
+
+    timeouts = [call["config"].http_options.timeout for call in models.calls]
+    assert timeouts == [5000, 4500]
+
+
+async def _completed_sleep(delay: float) -> None:
+    del delay
 
 
 @pytest.mark.asyncio

@@ -10,11 +10,11 @@ import google.genai as genai
 from google.genai import types
 from pydantic import BaseModel, ValidationError
 
-from app.ai.llm.errors import ProviderError
+from app.ai.llm.errors import ProviderError, status_code_from_error
+from app.ai.llm.retry import PipelineDeadline, RetryPolicy
 from app.core.config import settings
 
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
-GEMINI_TIMEOUT_MS = 25_000
 
 ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
 FakeResponse = BaseModel | Mapping[str, Any] | Exception
@@ -32,9 +32,13 @@ class FakeProvider:
         *,
         response_model: type[ResponseModel],
         system_instruction: str | None = None,
+        deadline: PipelineDeadline | None = None,
     ) -> ResponseModel:
         """Return the next queued response, validated as the requested model."""
         del prompt, system_instruction
+
+        if deadline is not None and deadline.expired:
+            raise ProviderError("LLM pipeline deadline exhausted")
 
         if not self._responses:
             raise ProviderError("FakeProvider has no response configured")
@@ -64,9 +68,11 @@ class GeminiProvider:
         api_key: str | None = None,
         *,
         client: Any | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> None:
         self._api_key = settings.gemini_api_key if api_key is None else api_key
         self._client = client
+        self._retry_policy = retry_policy or RetryPolicy()
 
     @property
     def model(self) -> str:
@@ -79,16 +85,49 @@ class GeminiProvider:
         *,
         response_model: type[ResponseModel],
         system_instruction: str | None = None,
+        deadline: PipelineDeadline | None = None,
     ) -> ResponseModel:
         """Generate and validate one structured response from Gemini."""
         client = self._get_client()
+        active_deadline = deadline or PipelineDeadline.from_now()
+
+        async def generate_once(shared_deadline: PipelineDeadline) -> ResponseModel:
+            return await self._generate_once(
+                client,
+                prompt,
+                response_model=response_model,
+                system_instruction=system_instruction,
+                deadline=shared_deadline,
+            )
+
+        return await self._retry_policy.run(
+            generate_once,
+            deadline=active_deadline,
+        )
+
+    async def _generate_once(
+        self,
+        client: Any,
+        prompt: str,
+        *,
+        response_model: type[ResponseModel],
+        system_instruction: str | None,
+        deadline: PipelineDeadline,
+    ) -> ResponseModel:
+        """Make one SDK request using only the remaining shared budget."""
         config_kwargs: dict[str, Any] = {
             "response_mime_type": "application/json",
             "response_json_schema": response_model.model_json_schema(),
         }
         if system_instruction is not None:
             config_kwargs["system_instruction"] = system_instruction
-        http_options = types.HttpOptions(timeout=GEMINI_TIMEOUT_MS)
+        timeout_ms = deadline.remaining_milliseconds
+        if timeout_ms <= 0:
+            raise ProviderError("Gemini pipeline deadline exhausted")
+        http_options = types.HttpOptions(
+            timeout=timeout_ms,
+            retry_options=types.HttpRetryOptions(attempts=1),
+        )
 
         try:
             response = await client.aio.models.generate_content(
@@ -102,7 +141,7 @@ class GeminiProvider:
             raise ProviderError(
                 "Gemini generation failed",
                 cause=exc,
-                status_code=_status_code(exc),
+                status_code=status_code_from_error(exc),
             ) from exc
 
         try:
@@ -132,12 +171,3 @@ class GeminiProvider:
                 "Gemini client could not be created", cause=exc
             ) from exc
         return self._client
-
-
-def _status_code(error: BaseException) -> int | None:
-    """Extract a numeric upstream status without depending on SDK internals."""
-    for attribute in ("status_code", "code"):
-        value = getattr(error, attribute, None)
-        if isinstance(value, int):
-            return value
-    return None

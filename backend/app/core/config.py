@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -42,6 +43,9 @@ class Settings(BaseSettings):
 
     # Gemini (Phase 5)
     gemini_api_key: str = ""
+    # Shared server-side budget for the future recipe pipeline. This stays
+    # below the mobile client's 30-second request abort window.
+    ai_pipeline_budget_seconds: float = Field(default=25.0, gt=0, lt=30.0)
 
     # Server
     host: str = "0.0.0.0"

@@ -26,3 +26,20 @@ class ProviderError(RuntimeError):
         super().__init__(message)
         self.cause = cause
         self.status_code = status_code
+
+
+def status_code_from_error(error: BaseException | None) -> int | None:
+    """Extract a numeric status from an SDK or HTTP client exception."""
+    if error is None:
+        return None
+
+    for attribute in ("status_code", "code"):
+        value = getattr(error, attribute, None)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+
+    response = getattr(error, "response", None)
+    value = getattr(response, "status_code", None)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
