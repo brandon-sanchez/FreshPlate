@@ -142,6 +142,28 @@ async def test_retry_policy_retries_http_status_error_from_response() -> None:
 
 
 @pytest.mark.asyncio
+async def test_retry_policy_retries_any_five_hundred_status() -> None:
+    calls = 0
+
+    async def operation(deadline: PipelineDeadline) -> str:
+        del deadline
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ProviderError("upstream failure", status_code=599)
+        return "ready"
+
+    result = await RetryPolicy(
+        max_attempts=2,
+        backoff_seconds=(0.0,),
+        jitter_seconds=0.0,
+    ).run(operation, deadline=PipelineDeadline(25.0))
+
+    assert result == "ready"
+    assert calls == 2
+
+
+@pytest.mark.asyncio
 async def test_retry_policy_discards_success_after_deadline() -> None:
     clock = FakeClock()
     deadline = PipelineDeadline(2.5, clock=clock)

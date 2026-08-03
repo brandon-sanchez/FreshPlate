@@ -25,7 +25,7 @@ DEFAULT_RETRY_DELAYS_SECONDS = (1.0, 2.0, 4.0)
 # when a caller explicitly opts into a fourth attempt.
 DEFAULT_RETRY_ATTEMPTS = 3
 DEFAULT_JITTER_SECONDS = 0.25
-RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+RETRYABLE_STATUS_CODES = frozenset({429})
 
 
 class PipelineDeadline:
@@ -162,17 +162,22 @@ def _is_retryable(error: ProviderError) -> bool:
     """Return whether a provider error represents a transient failure."""
     status_code = error.status_code
     if status_code is not None:
-        return status_code in RETRYABLE_STATUS_CODES
+        return _is_retryable_status(status_code)
 
     cause = error.cause
     while cause is not None:
         status_code = status_code_from_error(cause)
         if status_code is not None:
-            return status_code in RETRYABLE_STATUS_CODES
+            return _is_retryable_status(status_code)
         if isinstance(cause, (TimeoutError, httpx.TimeoutException)):
             return True
         cause = cause.__cause__ or getattr(cause, "cause", None)
     return False
+
+
+def _is_retryable_status(status_code: int) -> bool:
+    """Retry rate limits and every server-side HTTP failure."""
+    return status_code in RETRYABLE_STATUS_CODES or 500 <= status_code < 600
 
 
 def _deadline_error(cause: ProviderError | None) -> ProviderError:
