@@ -1,15 +1,26 @@
-"""Deterministic inventory and retrieval nodes for the recipe graph."""
+"""Recipe graph nodes and their deterministic seams."""
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date, datetime
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
-from app.ai.agents.state import InventoryAnalysis, RetrievalResult, UsableItem
+from pydantic import ValidationError
+
+from app.ai.agents.models import Recipe, RecipeGenerationResponse, RecipeIngredient
+from app.ai.agents.state import (
+    GenerationResult,
+    InventoryAnalysis,
+    QualityResult,
+    RetrievalResult,
+    UsableItem,
+)
 from app.ai.llm.retry import PipelineDeadline
+from app.ai.prompts.loader import PromptTemplate, load_prompt
 from app.ai.rag.vector_store import (
     DEFAULT_MATCH_LIMIT,
     DEFAULT_MATCH_THRESHOLD,
@@ -17,7 +28,22 @@ from app.ai.rag.vector_store import (
 )
 
 EXPIRING_WITHIN_DAYS = 5
+MAX_QUALITY_RETRIES = 1
+DEFAULT_BATCH_CEILING = 5
 _QUERY_TERM_SEPARATOR = re.compile(r"[^\w]+", flags=re.UNICODE)
+
+
+class RecipeProviderPort(Protocol):
+    """The structured-generation seam required by the recipe graph."""
+
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        response_model: type[RecipeGenerationResponse],
+        system_instruction: str | None,
+        deadline: PipelineDeadline | None,
+    ) -> RecipeGenerationResponse: ...
 
 
 class RecipeRetrieverPort(Protocol):
@@ -134,6 +160,78 @@ async def retrieve_recipes(
     return {"retrieved_recipes": recipes}
 
 
+async def generate_recipes(
+    state: Mapping[str, Any],
+    provider: RecipeProviderPort,
+    *,
+    prompt: PromptTemplate | None = None,
+    deadline: PipelineDeadline | None = None,
+) -> GenerationResult:
+    """Generate grounded recipes and enforce the inventory amount contract."""
+    template = prompt or load_prompt("generate_recipes")
+    usable_items = _usable_items(state.get("usable_items", []))
+    active_deadline = deadline or _state_deadline(state)
+    response = await provider.generate(
+        _generation_prompt(state, usable_items),
+        response_model=RecipeGenerationResponse,
+        system_instruction=template.system,
+        deadline=active_deadline,
+    )
+    validated_response = RecipeGenerationResponse.model_validate(response)
+    inventory_by_id = {item["id"]: item for item in usable_items}
+    recipes = [
+        _cap_recipe_amounts(recipe, inventory_by_id)
+        for recipe in validated_response.recipes
+    ]
+    batch_ceiling = _batch_ceiling(state)
+    retry_count = _retry_count(state)
+    if state.get("quality_feedback"):
+        retry_count = min(retry_count + 1, MAX_QUALITY_RETRIES)
+    return {
+        "generated_recipes": recipes[:batch_ceiling],
+        "retry_count": retry_count,
+    }
+
+
+def check_quality(state: Mapping[str, Any]) -> QualityResult:
+    """Keep only complete recipes grounded in the analyzed inventory."""
+    usable_items = _usable_items(state.get("usable_items", []))
+    inventory_by_id = {item["id"]: item for item in usable_items}
+    generated = state.get("generated_recipes", [])
+    if not isinstance(generated, Sequence) or isinstance(generated, (str, bytes)):
+        raise ValueError("Recipe state generated_recipes must be a sequence")
+
+    valid_recipes: list[Recipe] = []
+    failures: list[str] = []
+    for index, raw_recipe in enumerate(generated, start=1):
+        try:
+            recipe = Recipe.model_validate(raw_recipe)
+        except (TypeError, ValidationError) as exc:
+            failures.append(f"Recipe {index} is incomplete: {_validation_message(exc)}")
+            continue
+
+        issues = _quality_issues(recipe, inventory_by_id)
+        if issues:
+            failures.append(f"Recipe '{recipe.title}': {'; '.join(issues)}")
+        else:
+            valid_recipes.append(recipe)
+
+    if not generated:
+        failures.append("No recipes were generated.")
+
+    return {
+        "valid_recipes": valid_recipes,
+        "quality_feedback": "\n".join(failures) if failures else None,
+    }
+
+
+def route_after_quality(state: Mapping[str, Any]) -> Literal["retry", "finish"]:
+    """Route one quality failure back through generation, then finish."""
+    if state.get("quality_feedback") and _retry_count(state) < MAX_QUALITY_RETRIES:
+        return "retry"
+    return "finish"
+
+
 def normalize_query_term(value: str) -> str:
     """Case-fold and whitespace-normalize one inventory name for retrieval."""
     if not isinstance(value, str):
@@ -191,3 +289,219 @@ def _unique_terms(terms: Iterable[str]) -> list[str]:
             seen.add(term)
             unique.append(term)
     return unique
+
+
+def _state_deadline(state: Mapping[str, Any]) -> PipelineDeadline | None:
+    deadline = state.get("deadline")
+    if deadline is None:
+        return None
+    if not isinstance(deadline, PipelineDeadline):
+        raise ValueError("Recipe state deadline must be a PipelineDeadline")
+    return deadline
+
+
+def _usable_items(raw_items: Any) -> list[UsableItem]:
+    if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes)):
+        raise ValueError("Recipe state usable_items must be a sequence")
+    items: list[UsableItem] = []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, Mapping):
+            raise ValueError("Recipe state usable_items must contain mappings")
+        item_id = _required_text(raw_item, "id")
+        name = _required_text(raw_item, "name")
+        unit = _required_text(raw_item, "unit")
+        quantity = raw_item.get("quantity")
+        parsed_quantity = _quantity(quantity)
+        if parsed_quantity <= 0:
+            raise ValueError("Usable inventory quantities must be greater than zero")
+        items.append(
+            {
+                "id": item_id,
+                "name": name,
+                "quantity": parsed_quantity,
+                "unit": unit,
+                "expiration_date": _expiration_date(raw_item.get("expiration_date")),
+                "days_until_expiration": _optional_int(
+                    raw_item.get("days_until_expiration")
+                ),
+                "is_expiring": bool(raw_item.get("is_expiring", False)),
+            }
+        )
+    return items
+
+
+def _generation_prompt(
+    state: Mapping[str, Any],
+    usable_items: Sequence[UsableItem],
+) -> str:
+    """Build the grounded user prompt for the versioned system instruction."""
+    lines = [
+        (
+            "Create up to the requested number of recipe suggestions from the "
+            "usable inventory."
+        ),
+        (
+            "Retrieved recipes are inspiration, not templates. Do not copy them "
+            "as templates."
+        ),
+        (
+            "Respect available amounts softly: scale servings or choose another "
+            "dish instead of assuming more inventory."
+        ),
+        (
+            "For tracked ingredients, use the supplied inventory_item_id and "
+            "express use_amount in that item's own unit."
+        ),
+        (
+            "Untracked staples may use a null inventory_item_id. Return only the "
+            "structured response requested by the caller."
+        ),
+        "",
+        "Usable inventory:",
+    ]
+    for item in usable_items:
+        urgency = "; expiring soon" if item["is_expiring"] else ""
+        lines.append(
+            f"- {item['id']}: {item['name']} - {item['quantity']} {item['unit']}"
+            f"{urgency}"
+        )
+
+    lines.extend(("", "Retrieved recipe inspiration:"))
+    retrieved_recipes = state.get("retrieved_recipes", [])
+    rendered_retrieval = False
+    if isinstance(retrieved_recipes, Sequence) and not isinstance(
+        retrieved_recipes, (str, bytes)
+    ):
+        for recipe in retrieved_recipes:
+            if isinstance(recipe, RetrievedRecipe):
+                title = recipe.title
+                content = recipe.content
+                similarity = recipe.similarity
+            elif isinstance(recipe, Mapping):
+                title = recipe.get("title", "Untitled")
+                content = recipe.get("content", "")
+                similarity = recipe.get("similarity", "unknown")
+            else:
+                continue
+            lines.append(f"- {title} ({similarity}): {content}")
+            rendered_retrieval = True
+    if not rendered_retrieval:
+        lines.append("- None")
+
+    preferences = state.get("preferences", {})
+    lines.extend(("", "Session preferences:"))
+    lines.append(_json_value(preferences))
+
+    exclude_titles = state.get("exclude_titles", [])
+    if isinstance(exclude_titles, Sequence) and not isinstance(
+        exclude_titles, (str, bytes)
+    ):
+        lines.extend(("", "Do not repeat these shown titles:"))
+        lines.append(", ".join(str(title) for title in exclude_titles) or "None")
+
+    lines.extend(("", f"Batch ceiling: {_batch_ceiling(state)}"))
+    feedback = state.get("quality_feedback")
+    if feedback:
+        lines.extend(("", "Quality feedback from the previous attempt:", str(feedback)))
+    return "\n".join(lines)
+
+
+def _cap_recipe_amounts(
+    recipe: Recipe,
+    inventory_by_id: Mapping[str, UsableItem],
+) -> Recipe:
+    ingredients: list[RecipeIngredient] = []
+    for ingredient in recipe.ingredients:
+        item_id = ingredient.inventory_item_id
+        item = inventory_by_id.get(item_id) if item_id is not None else None
+        if item is None or ingredient.use_amount is None:
+            ingredients.append(ingredient)
+            continue
+        ingredients.append(
+            ingredient.model_copy(
+                update={
+                    "use_amount": min(ingredient.use_amount, item["quantity"]),
+                }
+            )
+        )
+    return recipe.model_copy(update={"ingredients": ingredients})
+
+
+def _quality_issues(
+    recipe: Recipe,
+    inventory_by_id: Mapping[str, UsableItem],
+) -> list[str]:
+    issues: list[str] = []
+    grounded = False
+    for ingredient in recipe.ingredients:
+        if ingredient.use_amount is None:
+            issues.append(f"ingredient '{ingredient.name}' is missing use_amount")
+        elif not math.isfinite(ingredient.use_amount) or ingredient.use_amount <= 0:
+            issues.append(f"ingredient '{ingredient.name}' has an invalid use_amount")
+
+        item_id = ingredient.inventory_item_id
+        if item_id is None:
+            continue
+        item = inventory_by_id.get(item_id)
+        if item is None:
+            issues.append(
+                f"ingredient '{ingredient.name}' references missing inventory "
+                f"id '{item_id}'"
+            )
+            continue
+        grounded = True
+        if (
+            ingredient.use_amount is not None
+            and math.isfinite(ingredient.use_amount)
+            and ingredient.use_amount > item["quantity"]
+        ):
+            issues.append(
+                f"ingredient '{ingredient.name}' uses more than the available "
+                f"{item['quantity']}"
+            )
+        if ingredient.unit.casefold() != item["unit"].casefold():
+            issues.append(
+                f"ingredient '{ingredient.name}' must use inventory unit "
+                f"'{item['unit']}'"
+            )
+    if not grounded:
+        issues.append("recipe has no grounded inventory ingredients")
+    return issues
+
+
+def _batch_ceiling(state: Mapping[str, Any]) -> int:
+    value = state.get("batch_ceiling", DEFAULT_BATCH_CEILING)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError("Recipe batch_ceiling must be a non-negative integer")
+    return value
+
+
+def _retry_count(state: Mapping[str, Any]) -> int:
+    value = state.get("retry_count", 0)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError("Recipe retry_count must be a non-negative integer")
+    return value
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("Inventory days_until_expiration must be an integer")
+    return value
+
+
+def _json_value(value: Any) -> str:
+    try:
+        return json.dumps(value, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _validation_message(error: ValidationError | TypeError) -> str:
+    if isinstance(error, TypeError):
+        return str(error)
+    first_error = error.errors()[0]
+    location = ".".join(str(part) for part in first_error.get("loc", ()))
+    message = str(first_error.get("msg", "invalid value"))
+    return f"{location}: {message}" if location else message

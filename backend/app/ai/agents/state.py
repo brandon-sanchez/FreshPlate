@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from datetime import date
 from typing import Any, TypedDict
 
+from app.ai.agents.models import Recipe
+from app.ai.llm.retry import PipelineDeadline
 from app.ai.rag.vector_store import RetrievedRecipe
 
 
@@ -50,10 +52,34 @@ class RetrievalResult(TypedDict):
     retrieved_recipes: list[RetrievedRecipe]
 
 
+class GenerationResult(TypedDict):
+    """State update returned by ``generate_recipes``."""
+
+    generated_recipes: list[Recipe]
+    retry_count: int
+
+
+class QualityResult(TypedDict):
+    """State update returned by ``check_quality``."""
+
+    valid_recipes: list[Recipe]
+    quality_feedback: str | None
+
+
 class RecipeState(TypedDict, total=False):
-    """The fields written by the first two recipe graph nodes."""
+    """The shared state carried through the four-node recipe graph."""
 
     inventory: list[InventoryItem | Mapping[str, Any]]
+    preferences: Mapping[str, Any]
+    exclude_titles: list[str]
+    batch_ceiling: int
     usable_items: list[UsableItem]
     query_terms: list[str]
     retrieved_recipes: list[RetrievedRecipe]
+    generated_recipes: list[Recipe]
+    valid_recipes: list[Recipe]
+    quality_feedback: str | None
+    retry_count: int
+    errors: list[str]
+    metadata: dict[str, Any]
+    deadline: PipelineDeadline
