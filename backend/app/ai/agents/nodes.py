@@ -11,6 +11,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import ValidationError
 
+from app.ai.agents.limits import DEFAULT_BATCH_CEILING, MAX_BATCH_CEILING
 from app.ai.agents.models import Recipe, RecipeGenerationResponse, RecipeIngredient
 from app.ai.agents.state import (
     GenerationResult,
@@ -29,7 +30,6 @@ from app.ai.rag.vector_store import (
 
 EXPIRING_WITHIN_DAYS = 5
 MAX_QUALITY_RETRIES = 1
-DEFAULT_BATCH_CEILING = 5
 _QUERY_TERM_SEPARATOR = re.compile(r"[^\w]+", flags=re.UNICODE)
 
 
@@ -169,6 +169,7 @@ async def generate_recipes(
 ) -> GenerationResult:
     """Generate grounded recipes and enforce the inventory amount contract."""
     template = prompt or load_prompt("generate_recipes")
+    batch_ceiling = _batch_ceiling(state)
     usable_items = _usable_items(state.get("usable_items", []))
     active_deadline = deadline or _state_deadline(state)
     response = await provider.generate(
@@ -183,7 +184,6 @@ async def generate_recipes(
         _cap_recipe_amounts(recipe, inventory_by_id)
         for recipe in validated_response.recipes
     ]
-    batch_ceiling = _batch_ceiling(state)
     retry_count = _retry_count(state)
     if state.get("quality_feedback"):
         retry_count = min(retry_count + 1, MAX_QUALITY_RETRIES)
@@ -471,8 +471,16 @@ def _quality_issues(
 
 def _batch_ceiling(state: Mapping[str, Any]) -> int:
     value = state.get("batch_ceiling", DEFAULT_BATCH_CEILING)
-    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise ValueError("Recipe batch_ceiling must be a non-negative integer")
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or value < 0
+        or value > MAX_BATCH_CEILING
+    ):
+        raise ValueError(
+            "Recipe batch_ceiling must be an integer between 0 and "
+            f"{MAX_BATCH_CEILING}"
+        )
     return value
 
 
