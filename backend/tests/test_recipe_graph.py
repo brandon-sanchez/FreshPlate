@@ -389,6 +389,56 @@ async def test_graph_fail_softs_after_one_quality_retry() -> None:
 
 
 @pytest.mark.asyncio
+async def test_graph_honors_a_quality_retry_limit_above_the_default() -> None:
+    """The retry counter must stay truthful for limits above the default.
+
+    Regression: capping retry_count at MAX_QUALITY_RETRIES made any higher
+    configured limit retry until the deadline instead of stopping at the
+    caller's bound.
+    """
+    invalid_response = {
+        "recipes": [
+            _recipe(
+                _ingredient(
+                    "Unknown ingredient",
+                    inventory_item_id="missing",
+                    use_amount=1,
+                    unit="item",
+                )
+            )
+        ]
+    }
+    provider = RecordingProvider([invalid_response] * 3)
+    graph = build_recipe_graph(
+        provider,
+        RecordingRetriever(),
+        quality_retry_limit=2,
+    )
+
+    result = await graph.ainvoke(
+        {
+            "inventory": [
+                {
+                    "id": "tomatoes",
+                    "name": "Tomatoes",
+                    "quantity": 3,
+                    "unit": "item",
+                    "expiration_date": None,
+                }
+            ],
+            "preferences": {},
+            "exclude_titles": [],
+            "batch_ceiling": 1,
+            "deadline": PipelineDeadline(25.0),
+        }
+    )
+
+    assert result["valid_recipes"] == []
+    assert result["retry_count"] == 2
+    assert len(provider.calls) == 3
+
+
+@pytest.mark.asyncio
 async def test_graph_skips_quality_retry_below_the_20s_budget_floor() -> None:
     """One generation measures 16-24s, so a retry needs at least that budget.
 

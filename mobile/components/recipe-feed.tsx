@@ -164,9 +164,13 @@ const RecipeFeedCard = memo(function RecipeFeedCard({
   const entryScale = useRef(new Animated.Value(0.985)).current;
   const translateY = useRef(new Animated.Value(0)).current;
   const opacity = useRef(new Animated.Value(1)).current;
-  const entryDelay =
+  // Capture the mount-time stagger delay once: dismissing a card above
+  // shifts entryIndex, and a recomputed delay would replay the entry
+  // animation on cards that have already settled.
+  const entryDelay = useRef(
     Math.min(entryIndex, RECIPE_FEED_ENTRY_BATCH_SIZE - 1) *
-    RECIPE_FEED_ENTRY_STAGGER_MS;
+      RECIPE_FEED_ENTRY_STAGGER_MS,
+  ).current;
 
   useEffect(() => {
     entryOpacity.setValue(0);
@@ -194,7 +198,7 @@ const RecipeFeedCard = memo(function RecipeFeedCard({
     ]);
     animation.start();
     return () => animation.stop();
-  }, [entryIndex, entryOpacity, entryScale, entryTranslateY]);
+  }, [entryDelay, entryOpacity, entryScale, entryTranslateY]);
 
   const dismiss = () => {
     if (isDismissing) return;

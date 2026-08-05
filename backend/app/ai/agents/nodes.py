@@ -191,7 +191,10 @@ async def generate_recipes(
     ]
     retry_count = _retry_count(state)
     if state.get("quality_feedback"):
-        retry_count = min(retry_count + 1, MAX_QUALITY_RETRIES)
+        # The router bounds retries against the caller's configured limit,
+        # so the counter must stay truthful: capping it here would let a
+        # limit above the default retry forever.
+        retry_count = retry_count + 1
     return {
         "generated_recipes": recipes[:batch_ceiling],
         "retry_count": retry_count,

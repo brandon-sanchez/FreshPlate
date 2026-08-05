@@ -56,7 +56,13 @@ async function requestWithTimeout<T>(
     RECIPE_FEED_REQUEST_TIMEOUT_MS,
   );
   const abortParent = () => controller.abort();
-  parentSignal?.addEventListener("abort", abortParent, { once: true });
+  // An abort listener never fires for a signal that is already aborted,
+  // so an aborted caller must cancel the request before it starts.
+  if (parentSignal?.aborted) {
+    controller.abort();
+  } else {
+    parentSignal?.addEventListener("abort", abortParent, { once: true });
+  }
 
   try {
     return await request(controller.signal);
