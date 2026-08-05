@@ -108,4 +108,24 @@ describe("useRecipeSuggestions", () => {
       code: "AI_UNAVAILABLE",
     });
   });
+
+  it("forwards an abort signal so feed requests can honor the mobile deadline", async () => {
+    const controller = new AbortController();
+    const fetchSpy = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      text: () => Promise.resolve(JSON.stringify({ data: { recipes: [] } })),
+    });
+    global.fetch = fetchSpy as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useRecipeSuggestions(), { wrapper });
+    result.current.mutate({ request, signal: controller.signal });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(fetchSpy.mock.calls[0][1]).toEqual(
+      expect.objectContaining({ signal: controller.signal }),
+    );
+  });
 });

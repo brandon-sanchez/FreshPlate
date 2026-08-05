@@ -1,6 +1,7 @@
 import type { InventoryItem } from "@/hooks/useInventoryItems";
 import type {
   RecipeInventoryContext,
+  RecipeFeedSessionRequest,
   RecipePreferences,
   RecipeSuggestionRequest,
 } from "@/types/recipes";
@@ -43,5 +44,15 @@ export function buildRecipeSuggestionRequest(
     preferences,
     exclude_titles: [],
     batch_ceiling: 8,
+  };
+}
+
+export function buildRecipeFeedSessionRequest(
+  items: InventoryItem[],
+  preferences: RecipePreferences,
+): RecipeFeedSessionRequest {
+  return {
+    inventory: toRecipeInventoryContext(items),
+    preferences,
   };
 }

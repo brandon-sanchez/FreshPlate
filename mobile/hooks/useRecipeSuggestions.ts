@@ -5,12 +5,32 @@ import type {
   RecipeSuggestionsResponse,
 } from "@/types/recipes";
 
+export type RecipeSuggestionMutationInput = {
+  request: RecipeSuggestionRequest;
+  signal?: AbortSignal;
+};
+
+type RecipeSuggestionMutationValue =
+  | RecipeSuggestionRequest
+  | RecipeSuggestionMutationInput;
+
+function isMutationInput(
+  value: RecipeSuggestionMutationValue,
+): value is RecipeSuggestionMutationInput {
+  return "request" in value;
+}
+
 export function useRecipeSuggestions() {
   return useMutation({
-    mutationFn: (request: RecipeSuggestionRequest) =>
-      apiFetch<RecipeSuggestionsResponse>("/api/recipes/suggestions", {
+    mutationFn: (value: RecipeSuggestionMutationValue) => {
+      const request = isMutationInput(value) ? value.request : value;
+      const signal = isMutationInput(value) ? value.signal : undefined;
+
+      return apiFetch<RecipeSuggestionsResponse>("/api/recipes/suggestions", {
         method: "POST",
         body: JSON.stringify(request),
-      }),
+        signal,
+      });
+    },
   });
 }

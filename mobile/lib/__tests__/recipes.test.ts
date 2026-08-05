@@ -1,4 +1,5 @@
 import {
+  buildRecipeFeedSessionRequest,
   buildRecipeSuggestionRequest,
   recipeContextLabel,
   toRecipeInventoryContext,
@@ -54,6 +55,18 @@ describe("recipe request helpers", () => {
       preferences,
       exclude_titles: [],
       batch_ceiling: 8,
+    });
+    expect(buildRecipeFeedSessionRequest(items, preferences)).toEqual({
+      inventory: [
+        {
+          id: "spinach",
+          name: "Baby Spinach",
+          quantity: 1,
+          unit: "bag",
+          expiration_date: "2026-08-06",
+        },
+      ],
+      preferences,
     });
   });
 });

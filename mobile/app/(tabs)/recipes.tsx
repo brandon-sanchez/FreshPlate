@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -10,28 +10,25 @@ import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Toast from "react-native-toast-message";
 import { useTheme } from "@/hooks/useTheme";
 import { useInventoryItems } from "@/hooks/useInventoryItems";
-import { useRecipeSuggestions } from "@/hooks/useRecipeSuggestions";
+import { useRecipeFeed } from "@/hooks/useRecipeFeed";
 import {
-  buildRecipeSuggestionRequest,
+  buildRecipeFeedSessionRequest,
   countAnsweredPreferences,
   recipeContextLabel,
 } from "@/lib/recipes";
-import type {
-  RecipePreferences,
-  RecipeSuggestionRequest,
-} from "@/types/recipes";
-import RecipePreferenceFlow from "@/components/recipe-preference-flow";
+import type { RecipePreferences } from "@/types/recipes";
 import EmptyState from "@/components/EmptyState";
 import ErrorState from "@/components/ErrorState";
 import LoadingState from "@/components/LoadingState";
+import RecipeFeed from "@/components/recipe-feed";
+import RecipeGenerationLoader from "@/components/recipe-generation-loader";
+import RecipePreferenceFlow from "@/components/recipe-preference-flow";
 import {
   RecipeContextBar,
   RecipeScreenHeader,
 } from "@/components/recipe-screen-header";
-import RecipeSuggestionSummary from "@/components/recipe-suggestion-summary";
 
 export default function RecipesScreen() {
   const { colors, fonts } = useTheme();
@@ -39,30 +36,20 @@ export default function RecipesScreen() {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
   const inventory = useInventoryItems();
-  const suggestions = useRecipeSuggestions();
+  const feed = useRecipeFeed();
   const [preferences, setPreferences] = useState<RecipePreferences>({});
   const [flowOpen, setFlowOpen] = useState(false);
-  const [lastRequest, setLastRequest] = useState<RecipeSuggestionRequest | null>(null);
 
   const items = inventory.data ?? [];
 
-  useEffect(() => {
-    if (!suggestions.isError) return;
-    Toast.show({
-      type: "error",
-      text1: "Couldn't generate recipes",
-      text2: "Check your connection and try again.",
-    });
-  }, [suggestions.isError]);
-
-  const generate = (nextPreferences: RecipePreferences) => {
-    const request = buildRecipeSuggestionRequest(items, nextPreferences);
-    setPreferences(nextPreferences);
-    setLastRequest(request);
-    setFlowOpen(false);
-    suggestions.reset();
-    suggestions.mutate(request);
-  };
+  const generate = useCallback(
+    (nextPreferences: RecipePreferences) => {
+      setPreferences(nextPreferences);
+      setFlowOpen(false);
+      feed.start(buildRecipeFeedSessionRequest(items, nextPreferences));
+    },
+    [feed, items],
+  );
 
   if (inventory.isPending) {
     return (
@@ -106,13 +93,19 @@ export default function RecipesScreen() {
     );
   }
 
-  if (suggestions.isPending) {
+  if (feed.status === "loading" || feed.isBootstrapping) {
     return (
       <View
-        style={[styles.stateContainer, { backgroundColor: colors.bg, paddingTop: insets.top }]}
+        style={[
+          styles.stateContainer,
+          {
+            backgroundColor: colors.bg,
+            paddingTop: insets.top,
+            paddingBottom: tabBarHeight,
+          },
+        ]}
       >
-        <RecipeScreenHeader subtitle="Finding ideas from your kitchen" />
-        <LoadingState label="Finding recipes..." />
+        <RecipeGenerationLoader />
       </View>
     );
   }
@@ -150,7 +143,7 @@ export default function RecipesScreen() {
     );
   }
 
-  if (suggestions.isError) {
+  if (feed.status === "error") {
     return (
       <View
         style={[styles.stateContainer, { backgroundColor: colors.bg, paddingTop: insets.top }]}
@@ -159,16 +152,32 @@ export default function RecipesScreen() {
         <ErrorState
           title="We couldn't generate recipes"
           message="The AI kitchen is unavailable right now. Your answers are still here to try again."
-          onRetry={() => {
-            if (lastRequest) suggestions.mutate(lastRequest);
-          }}
+          onRetry={feed.retry}
         />
       </View>
     );
   }
 
-  const recipes = suggestions.data?.data.recipes ?? [];
-  const hasGenerated = suggestions.data !== undefined;
+  if (feed.status === "ready") {
+    return (
+      <RecipeFeed
+        recipes={feed.recipes}
+        itemCount={items.length}
+        preferences={preferences}
+        isPrefetching={feed.isPrefetching}
+        prefetchError={feed.prefetchError}
+        isExhausted={feed.isExhausted}
+        topInset={insets.top}
+        bottomInset={tabBarHeight + 28}
+        onAsk={() => setFlowOpen(true)}
+        onDismiss={feed.dismiss}
+        onNearEnd={feed.maybePrefetch}
+        onRetryMore={feed.retryPrefetch}
+        onAddItems={() => router.push("/(tabs)/inventory")}
+        onEditAnswers={() => setFlowOpen(true)}
+      />
+    );
+  }
 
   return (
     <ScrollView
@@ -179,13 +188,7 @@ export default function RecipesScreen() {
       }}
       contentInsetAdjustmentBehavior="automatic"
     >
-      <RecipeScreenHeader
-        subtitle={
-          hasGenerated
-            ? "Generated for this moment"
-            : "AI picks from your kitchen"
-        }
-      />
+      <RecipeScreenHeader subtitle="AI picks from your kitchen" />
 
       <RecipeContextBar
         itemCount={items.length}
@@ -193,26 +196,22 @@ export default function RecipesScreen() {
         onAsk={() => setFlowOpen(true)}
       />
 
-      {hasGenerated ? (
-        <RecipeSuggestionSummary recipes={recipes} />
-      ) : (
-        <View
-          style={[
-            styles.promptCard,
-            { backgroundColor: colors.surface, borderColor: colors.border },
-          ]}
-        >
-          <View style={[styles.promptIcon, { backgroundColor: colors.accentSoft }]}>
-            <FontAwesome name="magic" size={24} color={colors.accent} />
-          </View>
-          <Text style={[styles.promptTitle, { color: colors.text, fontFamily: fonts.display }]}>
-            What sounds good?
-          </Text>
-          <Text style={[styles.promptText, { color: colors.textMuted, fontFamily: fonts.body }]}>
-            Answer a few quick questions or generate from your inventory alone.
-          </Text>
+      <View
+        style={[
+          styles.promptCard,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+        ]}
+      >
+        <View style={[styles.promptIcon, { backgroundColor: colors.accentSoft }]}>
+          <FontAwesome name="magic" size={24} color={colors.accent} />
         </View>
-      )}
+        <Text style={[styles.promptTitle, { color: colors.text, fontFamily: fonts.display }]}>
+          What sounds good?
+        </Text>
+        <Text style={[styles.promptText, { color: colors.textMuted, fontFamily: fonts.body }]}>
+          Answer a few quick questions or generate from your inventory alone.
+        </Text>
+      </View>
 
       <View style={styles.buttonStack}>
         <Pressable
@@ -222,7 +221,7 @@ export default function RecipesScreen() {
         >
           <FontAwesome name="magic" size={15} color={colors.accentInk} />
           <Text style={[styles.primaryActionText, { color: colors.accentInk, fontFamily: fonts.bodyStrong }]}>
-            {hasGenerated ? "Generate another batch" : "Generate from my fridge"}
+            Generate from my fridge
           </Text>
         </Pressable>
         <Pressable

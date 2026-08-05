@@ -28,6 +28,11 @@ export type RecipeSuggestionRequest = {
   batch_ceiling: number;
 };
 
+export type RecipeFeedSessionRequest = {
+  inventory: RecipeInventoryContext[];
+  preferences: RecipePreferences;
+};
+
 export type RecipeIngredient = {
   name: string;
   inventory_item_id: string | null;
@@ -49,5 +54,16 @@ export type RecipeSuggestion = {
 export type RecipeSuggestionsResponse = {
   data: {
     recipes: RecipeSuggestion[];
+  };
+};
+
+export type RecipeFeedResponse = {
+  data: {
+    session_id: string;
+    recipes: RecipeSuggestion[];
+    next_cursor: string | null;
+    has_more: boolean;
+    ready_count: number;
+    empty_reason: string | null;
   };
 };
