@@ -18,6 +18,11 @@ from app.core.config import settings
 # model pin explicit so a future change does not accidentally add paid usage.
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 
+# Gemini rejects any HTTP deadline below 10 seconds with a non-retryable
+# 400 INVALID_ARGUMENT ("Minimum allowed deadline is 10s"). Starting such a
+# request can only fail, so the provider treats it as deadline exhaustion.
+GEMINI_MIN_DEADLINE_SECONDS = 10.0
+
 ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
 FakeResponse = BaseModel | Mapping[str, Any] | Exception
 
@@ -123,9 +128,9 @@ class GeminiProvider:
         }
         if system_instruction is not None:
             config_kwargs["system_instruction"] = system_instruction
-        timeout_ms = deadline.remaining_milliseconds
-        if timeout_ms <= 0:
+        if deadline.remaining_seconds < GEMINI_MIN_DEADLINE_SECONDS:
             raise ProviderError("Gemini pipeline deadline exhausted")
+        timeout_ms = deadline.remaining_milliseconds
         http_options = types.HttpOptions(
             timeout=timeout_ms,
             retry_options=types.HttpRetryOptions(attempts=1),

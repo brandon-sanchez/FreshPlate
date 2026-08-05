@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import random
 import time
@@ -13,6 +14,8 @@ import httpx
 
 from app.ai.llm.errors import ProviderError, status_code_from_error
 from app.core.config import settings
+
+logger = logging.getLogger("freshplate.llm.retry")
 
 Response = TypeVar("Response")
 Clock = Callable[[], float]
@@ -142,6 +145,17 @@ class RetryPolicy:
                     status_code=status_code_from_error(exc),
                 )
 
+            logger.warning(
+                "LLM attempt %s/%s failed status=%s retry_after=%s "
+                "remaining=%.2fs retryable=%s cause=%r",
+                attempt + 1,
+                self._max_attempts,
+                _status_code_from_error(failure),
+                failure.retry_after_seconds,
+                deadline.remaining_seconds,
+                _is_retryable(failure),
+                failure.cause,
+            )
             if not self._retry_rate_limits and _status_code_from_error(failure) == 429:
                 raise failure
             if not _is_retryable(failure):

@@ -60,14 +60,16 @@ class Settings(BaseSettings):
     langsmith_endpoint: str = ""
     langsmith_project: str = ""
 
-    # Shared server-side budget for the future recipe pipeline. This stays
-    # below the mobile client's 30-second request abort window.
+
     ai_pipeline_budget_seconds: float = Field(default=25.0, gt=0, lt=30.0)
+    recipe_feed_initial_budget_seconds: float = Field(default=30.0, gt=0, lt=35.0)
+    recipe_feed_page_budget_seconds: float = Field(default=30.0, gt=0, lt=35.0)
+    recipe_feed_store_timeout_seconds: float = Field(default=2.0, gt=0, lt=5.0)
 
     # Server
     host: str = "0.0.0.0"
     port: int = 8000
 
 
-# Singleton — import this everywhere
+# Singleton
 settings = Settings()

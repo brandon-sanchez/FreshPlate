@@ -30,6 +30,8 @@ from app.ai.rag.vector_store import (
 
 EXPIRING_WITHIN_DAYS = 5
 MAX_QUALITY_RETRIES = 1
+QUALITY_RETRY_MIN_BUDGET_SECONDS = 20.0
+GENERATION_DOCS_CEILING = 5
 _QUERY_TERM_SEPARATOR = re.compile(r"[^\w]+", flags=re.UNICODE)
 
 
@@ -181,7 +183,10 @@ async def generate_recipes(
     validated_response = RecipeGenerationResponse.model_validate(response)
     inventory_by_id = {item["id"]: item for item in usable_items}
     recipes = [
-        _cap_recipe_amounts(recipe, inventory_by_id)
+        _cap_recipe_amounts(
+            _untrack_unit_mismatches(recipe, inventory_by_id),
+            inventory_by_id,
+        )
         for recipe in validated_response.recipes
     ]
     retry_count = _retry_count(state)
@@ -225,9 +230,22 @@ def check_quality(state: Mapping[str, Any]) -> QualityResult:
     }
 
 
-def route_after_quality(state: Mapping[str, Any]) -> Literal["retry", "finish"]:
-    """Route one quality failure back through generation, then finish."""
-    if state.get("quality_feedback") and _retry_count(state) < MAX_QUALITY_RETRIES:
+def route_after_quality(
+    state: Mapping[str, Any],
+    *,
+    quality_retry_limit: int = MAX_QUALITY_RETRIES,
+    retry_only_when_no_valid: bool = False,
+) -> Literal["retry", "finish"]:
+    """Route quality failures while respecting the caller's retry budget."""
+    if retry_only_when_no_valid and state.get("valid_recipes"):
+        return "finish"
+    if state.get("quality_feedback") and _retry_count(state) < quality_retry_limit:
+        deadline = _state_deadline(state)
+        if (
+            deadline is not None
+            and deadline.remaining_seconds < QUALITY_RETRY_MIN_BUDGET_SECONDS
+        ):
+            return "finish"
         return "retry"
     return "finish"
 
@@ -356,6 +374,11 @@ def _generation_prompt(
             "Untracked staples may use a null inventory_item_id. Return only the "
             "structured response requested by the caller."
         ),
+        (
+            "Use the full batch ceiling when distinct grounded recipes are "
+            "possible. Return fewer only when no additional grounded recipe "
+            "can be made from this inventory."
+        ),
         "",
         "Usable inventory:",
     ]
@@ -372,7 +395,7 @@ def _generation_prompt(
     if isinstance(retrieved_recipes, Sequence) and not isinstance(
         retrieved_recipes, (str, bytes)
     ):
-        for recipe in retrieved_recipes:
+        for recipe in retrieved_recipes[:GENERATION_DOCS_CEILING]:
             if isinstance(recipe, RetrievedRecipe):
                 title = recipe.title
                 content = recipe.content
@@ -404,6 +427,36 @@ def _generation_prompt(
     if feedback:
         lines.extend(("", "Quality feedback from the previous attempt:", str(feedback)))
     return "\n".join(lines)
+
+
+def _untrack_unit_mismatches(
+    recipe: Recipe,
+    inventory_by_id: Mapping[str, UsableItem],
+) -> Recipe:
+    """Demote unit-mismatched inventory links to untracked staples.
+
+    Barcode-sourced inventory often carries packaging units such as
+    "Container (14 servings)" that no sensible recipe cooks in, so the
+    model legitimately writes kitchen units instead. A mismatched link
+    would make the cook-flow deduction meaningless, but it does not make
+    the recipe wrong - so only the link is dropped. Grounding is then
+    judged on the ingredients whose units match the inventory.
+    """
+    ingredients: list[RecipeIngredient] = []
+    changed = False
+    for ingredient in recipe.ingredients:
+        item_id = ingredient.inventory_item_id
+        item = inventory_by_id.get(item_id) if item_id is not None else None
+        if item is not None and ingredient.unit.casefold() != item["unit"].casefold():
+            ingredients.append(
+                ingredient.model_copy(update={"inventory_item_id": None})
+            )
+            changed = True
+        else:
+            ingredients.append(ingredient)
+    if not changed:
+        return recipe
+    return recipe.model_copy(update={"ingredients": ingredients})
 
 
 def _cap_recipe_amounts(
@@ -458,11 +511,6 @@ def _quality_issues(
             issues.append(
                 f"ingredient '{ingredient.name}' uses more than the available "
                 f"{item['quantity']}"
-            )
-        if ingredient.unit.casefold() != item["unit"].casefold():
-            issues.append(
-                f"ingredient '{ingredient.name}' must use inventory unit "
-                f"'{item['unit']}'"
             )
     if not grounded:
         issues.append("recipe has no grounded inventory ingredients")

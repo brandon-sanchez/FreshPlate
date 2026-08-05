@@ -211,6 +211,76 @@ def test_check_quality_rejects_incomplete_staple_amounts() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_recipes_untracks_unit_mismatched_inventory_links() -> None:
+    """A packaging-unit mismatch drops the link, never the recipe (#45).
+
+    Barcode-scanned inventory carries units like "Container (14 servings)"
+    that no recipe cooks in. The mismatched ingredient becomes an untracked
+    staple and the recipe stays valid, grounded by unit-consistent items.
+    """
+    butter_item = _usable_item(
+        "butter-spread",
+        name="Butter with Olive Oil & Sea Salt Spread",
+        quantity=1.0,
+        unit="Container (14 servings)",
+    )
+    provider = RecordingProvider(
+        [
+            {
+                "recipes": [
+                    _recipe(
+                        _ingredient(
+                            "Tomatoes",
+                            inventory_item_id="tomatoes",
+                            use_amount=2,
+                            unit="item",
+                        ),
+                        _ingredient(
+                            "Butter spread",
+                            inventory_item_id="butter-spread",
+                            use_amount=1,
+                            unit="tbsp",
+                        ),
+                    )
+                ]
+            }
+        ]
+    )
+
+    result = await generate_recipes(
+        {
+            "usable_items": [_usable_item(), butter_item],
+            "retrieved_recipes": [],
+            "preferences": {},
+            "exclude_titles": [],
+            "batch_ceiling": 2,
+            "retry_count": 0,
+        },
+        provider,
+        prompt=load_prompt("generate_recipes"),
+        deadline=PipelineDeadline(5.0),
+    )
+
+    generated = result["generated_recipes"][0]
+    tracked, untracked = generated.ingredients
+    assert tracked.inventory_item_id == "tomatoes"
+    assert untracked.inventory_item_id is None
+    assert untracked.unit == "tbsp"
+    assert untracked.use_amount == 1
+
+    quality = check_quality(
+        {
+            "usable_items": [_usable_item(), butter_item],
+            "generated_recipes": [generated],
+        }
+    )
+    assert [recipe.title for recipe in quality["valid_recipes"]] == [
+        generated.title
+    ]
+    assert quality["quality_feedback"] is None
+
+
+@pytest.mark.asyncio
 async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() -> None:
     bad_response = {
         "recipes": [
@@ -241,7 +311,7 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
     provider = RecordingProvider([bad_response, good_response])
     retriever = RecordingRetriever()
     prompt = load_prompt("generate_recipes")
-    deadline = PipelineDeadline(5.0)
+    deadline = PipelineDeadline(25.0)
     graph = build_recipe_graph(provider, retriever, prompt=prompt)
 
     result = await graph.ainvoke(
@@ -275,7 +345,7 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
     assert provider.calls[1]["deadline"] is deadline
     assert retriever.calls[0]["deadline"] is deadline
     assert result["metadata"]["prompt_name"] == "generate_recipes"
-    assert result["metadata"]["prompt_version"] == 1
+    assert result["metadata"]["prompt_version"] == 2
     assert result["metadata"]["request_id"] == "request-123"
 
 
@@ -316,3 +386,49 @@ async def test_graph_fail_softs_after_one_quality_retry() -> None:
     assert result["valid_recipes"] == []
     assert result["retry_count"] == 1
     assert len(provider.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_graph_skips_quality_retry_below_the_20s_budget_floor() -> None:
+    """One generation measures 16-24s, so a retry needs at least that budget.
+
+    Regression for the #42 fix: a zero-valid generation late in the budget
+    must finish honestly instead of firing a retry that can only time out
+    or trip Gemini's 10-second minimum HTTP deadline.
+    """
+    invalid_response = {
+        "recipes": [
+            _recipe(
+                _ingredient(
+                    "Unknown ingredient",
+                    inventory_item_id="missing",
+                    use_amount=1,
+                    unit="item",
+                )
+            )
+        ]
+    }
+    provider = RecordingProvider([invalid_response, invalid_response])
+    graph = build_recipe_graph(provider, RecordingRetriever())
+
+    result = await graph.ainvoke(
+        {
+            "inventory": [
+                {
+                    "id": "tomatoes",
+                    "name": "Tomatoes",
+                    "quantity": 3,
+                    "unit": "item",
+                    "expiration_date": None,
+                }
+            ],
+            "preferences": {},
+            "exclude_titles": [],
+            "batch_ceiling": 1,
+            "deadline": PipelineDeadline(15.0),
+        }
+    )
+
+    assert result["valid_recipes"] == []
+    assert result["retry_count"] == 0
+    assert len(provider.calls) == 1

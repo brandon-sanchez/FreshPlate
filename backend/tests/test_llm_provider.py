@@ -209,11 +209,36 @@ async def test_gemini_provider_passes_shared_remaining_budget_to_each_attempt() 
     await provider.generate(
         "Give me an answer",
         response_model=Greeting,
-        deadline=PipelineDeadline(5.0, clock=clock),
+        deadline=PipelineDeadline(30.0, clock=clock),
     )
 
     timeouts = [call["config"].http_options.timeout for call in models.calls]
-    assert timeouts == [5000, 4500]
+    assert timeouts == [30000, 29500]
+
+
+@pytest.mark.asyncio
+async def test_gemini_provider_never_starts_an_attempt_below_the_10s_floor() -> None:
+    """Gemini rejects HTTP deadlines under 10s with a non-retryable 400.
+
+    The provider must treat that budget as exhausted instead of sending a
+    request that can only fail (wayfinder ticket #42 fix).
+    """
+    models = FakeGeminiModels(
+        response=SimpleNamespace(
+            text='{"answer":"Use the tomatoes first","confidence":0.9}'
+        )
+    )
+    provider = GeminiProvider(api_key="test-key", client=fake_gemini_client(models))
+
+    with pytest.raises(ProviderError) as error:
+        await provider.generate(
+            "Give me an answer",
+            response_model=Greeting,
+            deadline=PipelineDeadline(9.0),
+        )
+
+    assert error.value.code == "AI_UNAVAILABLE"
+    assert models.calls == []
 
 
 async def _completed_sleep(delay: float) -> None:
