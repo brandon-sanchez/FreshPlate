@@ -175,13 +175,11 @@ describe("RecipeFeed", () => {
       <RecipeFeed {...defaultProps} recipes={[baseRecipe]} />,
     );
     const layout = (height: number) =>
-      fireEvent(getByTestId("recipe-feed-list"), "layout", {
+      fireEvent(getByTestId("recipe-feed-viewport"), "layout", {
         nativeEvent: { layout: { x: 0, y: 0, width: 390, height } },
       });
     layout(650);
-    expect(
-      getByTestId("recipe-feed-list").props.snapToInterval,
-    ).toBeGreaterThan(0);
+    expect(getByTestId("recipe-carousel")).toBeTruthy();
     layout(420);
     expect(
       getByTestId("recipe-feed-list").props.snapToInterval,

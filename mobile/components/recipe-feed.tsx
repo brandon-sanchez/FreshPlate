@@ -1,11 +1,4 @@
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated as NativeAnimated,
   FlatList,
@@ -15,16 +8,9 @@ import {
   useWindowDimensions,
   type ViewToken,
 } from "react-native";
-import Animated, {
-  Easing,
-  LinearTransition,
-  useAnimatedScrollHandler,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-  type SharedValue,
-} from "react-native-reanimated";
+import Animated, { Easing, LinearTransition } from "react-native-reanimated";
 import Feather from "@expo/vector-icons/Feather";
+import RecipeCarousel from "@/components/recipe-carousel";
 import RecipeActionButton from "@/components/recipe-action-button";
 import RecipeIngredientsSheet from "@/components/recipe-ingredients-sheet";
 import { RecipeActivity, RecipePressable } from "@/components/recipe-motion";
@@ -76,18 +62,18 @@ export default function RecipeFeed({
   const { colors } = useTheme();
   const { width, height, fontScale } = useWindowDimensions();
   const reducedMotion = useReducedMotion();
-  const cardHeight = Math.round(
+  const fullCardHeight = Math.round(
     Math.min(530, Math.max(480, height * 0.53)) +
       Math.max(0, fontScale - 1) * 240,
   );
-  const stride = cardHeight + 20;
   const [listHeight, setListHeight] = useState(0);
-  const cardFitsViewport = listHeight - bottomInset >= cardHeight + 16;
-  const fanEnabled = fontScale <= 1.3 && cardFitsViewport;
-  const scrollY = useSharedValue(0);
-  useEffect(() => {
-    scrollY.value = 0;
-  }, [fontScale, scrollY]);
+  const stackCardHeight = Math.round(
+    Math.min(440, Math.max(420, height * 0.45)) +
+      Math.max(0, fontScale - 1) * 240,
+  );
+  const stackEnabled = fontScale <= 1.2 && listHeight >= stackCardHeight + 100;
+  const cardHeight = stackEnabled ? stackCardHeight : fullCardHeight;
+  const stride = cardHeight + 20;
   const listRef = useRef<FlatList<RecipeSuggestion>>(null);
   const [revealedIds, setRevealedIds] = useState(new Set<string>());
   const [ingredientRecipe, setIngredientRecipe] =
@@ -119,9 +105,14 @@ export default function RecipeFeed({
       });
     },
   ).current;
-  const onScroll = useAnimatedScrollHandler((event) => {
-    scrollY.value = Math.max(0, event.contentOffset.y);
-  });
+  const reportActiveRecipe = useCallback(
+    (index: number) => {
+      const recipeIndex = Math.min(index, recipes.length - 1);
+      lastVisibleIndexRef.current = recipeIndex;
+      onNearEnd(recipeIndex);
+    },
+    [onNearEnd, recipes.length],
+  );
   const dismissRecipe = useCallback(
     (recipeId: string) => {
       const index = recipesRef.current.findIndex(
@@ -133,18 +124,16 @@ export default function RecipeFeed({
     [onDismiss],
   );
   const renderItem = useCallback(
-    ({ item, index }: { item: RecipeSuggestion; index: number }) => (
-      <RecipeFanCard
+    ({ item }: { item: RecipeSuggestion; index: number }) => (
+      <RecipeCard
         recipe={item}
-        index={index}
-        scrollY={scrollY}
         stride={stride}
         cardHeight={cardHeight}
         cardWidth={width - 48}
         reducedMotion={reducedMotion}
-        fanEnabled={fanEnabled}
         largeText={fontScale > 1.2}
-        revealed={revealedIds.has(item.recipe_id)}
+        compact={stackEnabled}
+        revealed={stackEnabled || revealedIds.has(item.recipe_id)}
         animatedIds={animatedIds}
         onDismiss={dismissRecipe}
         onIngredients={setIngredientRecipe}
@@ -154,17 +143,20 @@ export default function RecipeFeed({
       animatedIds,
       cardHeight,
       dismissRecipe,
-      fanEnabled,
+      stackEnabled,
       fontScale,
       reducedMotion,
       revealedIds,
-      scrollY,
       stride,
       width,
     ],
   );
   const footer = isPrefetching ? (
-    <RecipeSkeletonCard cardHeight={cardHeight} reducedMotion={reducedMotion} />
+    <RecipeSkeletonCard
+      cardHeight={cardHeight}
+      reducedMotion={reducedMotion}
+      compact={stackEnabled}
+    />
   ) : prefetchError ? (
     <View style={styles.ending}>
       <Text style={[styles.message, { color: colors.textMuted }]}>
@@ -190,47 +182,86 @@ export default function RecipeFeed({
       key={fontScale}
       style={{ flex: 1, backgroundColor: colors.bg, paddingTop: topInset + 8 }}
     >
-      <RecipeScreenHeader subtitle="A little inspiration, from your kitchen" />
+      <RecipeScreenHeader />
       <RecipeContextBar
         itemCount={itemCount}
         preferences={preferences}
         onAsk={onAsk}
       />
-      <Animated.FlatList
-        ref={listRef}
-        data={recipes}
-        keyExtractor={(recipe) => recipe.recipe_id}
-        renderItem={renderItem}
-        ListFooterComponent={footer}
-        extraData={revealedIds}
-        itemLayoutAnimation={reducedMotion ? undefined : replacementTransition}
+      <View
+        testID="recipe-feed-viewport"
+        style={{ flex: 1, marginBottom: bottomInset + 8 }}
         onLayout={(event) => setListHeight(event.nativeEvent.layout.height)}
-        onScroll={onScroll}
-        scrollEventThrottle={16}
-        onEndReached={() => onNearEnd(lastVisibleIndexRef.current)}
-        onEndReachedThreshold={2}
-        onViewableItemsChanged={onViewableItemsChanged}
-        viewabilityConfig={viewabilityConfig}
-        initialNumToRender={4}
-        maxToRenderPerBatch={4}
-        windowSize={7}
-        updateCellsBatchingPeriod={16}
-        getItemLayout={(_, index) => ({
-          index,
-          length: stride,
-          offset: stride * index,
-        })}
-        snapToInterval={fanEnabled ? stride : undefined}
-        decelerationRate={fanEnabled ? "fast" : "normal"}
-        removeClippedSubviews={false}
-        showsVerticalScrollIndicator={false}
-        contentInsetAdjustmentBehavior="never"
-        contentContainerStyle={{
-          paddingTop: 8,
-          paddingBottom: bottomInset + 20,
-        }}
-        testID="recipe-feed-list"
-      />
+      >
+        {stackEnabled ? (
+          <RecipeCarousel
+            cardHeight={cardHeight}
+            reducedMotion={reducedMotion}
+            onActiveIndexChange={reportActiveRecipe}
+            items={[
+              ...recipes.map((recipe, index) => ({
+                id: recipe.recipe_id,
+                isRecipe: true,
+                content: renderItem({ item: recipe, index }),
+              })),
+              ...(footer
+                ? [
+                    {
+                      id: "recipe-feed-tail",
+                      isRecipe: false,
+                      content: (
+                        <View
+                          style={{
+                            height: cardHeight,
+                            justifyContent: "center",
+                            ...(!isPrefetching && {
+                              marginHorizontal: 24,
+                              borderRadius: 24,
+                              backgroundColor: colors.surface,
+                            }),
+                          }}
+                        >
+                          {footer}
+                        </View>
+                      ),
+                    },
+                  ]
+                : []),
+            ]}
+          />
+        ) : (
+          <Animated.FlatList
+            ref={listRef}
+            data={recipes}
+            keyExtractor={(recipe) => recipe.recipe_id}
+            renderItem={renderItem}
+            ListFooterComponent={footer}
+            extraData={revealedIds}
+            itemLayoutAnimation={
+              reducedMotion ? undefined : replacementTransition
+            }
+            onEndReached={() => onNearEnd(lastVisibleIndexRef.current)}
+            onEndReachedThreshold={2}
+            onViewableItemsChanged={onViewableItemsChanged}
+            viewabilityConfig={viewabilityConfig}
+            initialNumToRender={4}
+            maxToRenderPerBatch={4}
+            windowSize={7}
+            updateCellsBatchingPeriod={16}
+            getItemLayout={(_, index) => ({
+              index,
+              length: stride,
+              offset: stride * index,
+            })}
+            decelerationRate="normal"
+            removeClippedSubviews={false}
+            showsVerticalScrollIndicator={false}
+            contentInsetAdjustmentBehavior="never"
+            contentContainerStyle={{ paddingTop: 8, paddingBottom: 20 }}
+            testID="recipe-feed-list"
+          />
+        )}
+      </View>
       <RecipeIngredientsSheet
         recipe={ingredientRecipe}
         onClose={() => setIngredientRecipe(null)}
@@ -239,30 +270,26 @@ export default function RecipeFeed({
   );
 }
 
-const RecipeFanCard = memo(function RecipeFanCard({
+const RecipeCard = memo(function RecipeCard({
   recipe,
-  index,
-  scrollY,
   stride,
   cardHeight,
   cardWidth,
   reducedMotion,
-  fanEnabled,
   largeText,
+  compact,
   revealed,
   animatedIds,
   onDismiss,
   onIngredients,
 }: {
   recipe: RecipeSuggestion;
-  index: number;
-  scrollY: SharedValue<number>;
   stride: number;
   cardHeight: number;
   cardWidth: number;
   reducedMotion: boolean;
-  fanEnabled: boolean;
   largeText: boolean;
+  compact: boolean;
   revealed: boolean;
   animatedIds: Set<string>;
   onDismiss: (recipeId: string) => void;
@@ -282,36 +309,6 @@ const RecipeFanCard = memo(function RecipeFanCard({
   ).current;
   const opacity = useRef(new NativeAnimated.Value(1)).current;
   const dismissY = useRef(new NativeAnimated.Value(0)).current;
-  const fanIndex = useSharedValue(index);
-  useLayoutEffect(() => {
-    fanIndex.value = reducedMotion
-      ? index
-      : withTiming(index, {
-          duration: 360,
-          easing: Easing.inOut(Easing.cubic),
-        });
-  }, [fanIndex, index, reducedMotion]);
-  const fanStyle = useAnimatedStyle(() => {
-    // Transpose Card Fan Carousel's arc onto the vertical scroll axis. The
-    // first two cards stay flat; the fan grows without changing cursor order.
-    const progress =
-      reducedMotion || !fanEnabled
-        ? 0
-        : Math.min(1, Math.max(0, (scrollY.value / stride - 1) / 1.5));
-    const position = Math.max(
-      -2,
-      Math.min(2, fanIndex.value - scrollY.value / stride),
-    );
-    const distance = Math.abs(position);
-    return {
-      transform: [
-        { translateX: progress * distance * distance * 19 },
-        { translateY: -progress * position * distance * 19 },
-        { rotate: progress * position * 7 + "deg" },
-        { scale: 1 - progress * Math.min(distance, 1.8) * 0.065 },
-      ],
-    };
-  }, [fanEnabled, index, reducedMotion, stride]);
   useEffect(() => {
     if (reducedMotion) {
       entryOpacity.setValue(1);
@@ -385,7 +382,7 @@ const RecipeFanCard = memo(function RecipeFanCard({
   };
   return (
     <View style={{ height: stride, paddingHorizontal: 24 }}>
-      <Animated.View style={fanStyle}>
+      <View>
         <NativeAnimated.View
           testID={"recipe-card-" + recipe.recipe_id}
           style={{ opacity: entryOpacity, transform: [{ translateY: entryY }] }}
@@ -404,7 +401,11 @@ const RecipeFanCard = memo(function RecipeFanCard({
           >
             <View
               accessibilityLabel="Recipe image placeholder"
-              style={[styles.artwork, { backgroundColor: colors.accentSoft }]}
+              style={[
+                styles.artwork,
+                compact && { height: 104 },
+                { backgroundColor: colors.accentSoft },
+              ]}
             >
               <Feather
                 name="image"
@@ -425,14 +426,16 @@ const RecipeFanCard = memo(function RecipeFanCard({
                 </Text>
               </View>
             </View>
-            <View style={styles.cardContent}>
+            <View
+              style={[styles.cardContent, compact && { padding: 16, gap: 8 }]}
+            >
               <Text
                 selectable
                 numberOfLines={3}
                 style={{
                   fontFamily: fonts.display,
-                  fontSize: 24,
-                  lineHeight: 28,
+                  fontSize: compact ? 22 : 24,
+                  lineHeight: compact ? 26 : 28,
                   letterSpacing: -0.5,
                   color: colors.text,
                 }}
@@ -573,7 +576,7 @@ const RecipeFanCard = memo(function RecipeFanCard({
             </View>
           </NativeAnimated.View>
         </NativeAnimated.View>
-      </Animated.View>
+      </View>
     </View>
   );
 });
@@ -581,9 +584,11 @@ const RecipeFanCard = memo(function RecipeFanCard({
 function RecipeSkeletonCard({
   cardHeight,
   reducedMotion,
+  compact,
 }: {
   cardHeight: number;
   reducedMotion: boolean;
+  compact: boolean;
 }) {
   const { colors, fonts } = useTheme();
   const opacity = useRef(new NativeAnimated.Value(0.55)).current;
@@ -620,38 +625,41 @@ function RecipeSkeletonCard({
       style={{ paddingHorizontal: 24 }}
     >
       <View
-        style={{
-          flexDirection: "row",
-          justifyContent: "center",
-          alignItems: "center",
-          gap: 8,
-          paddingVertical: 16,
-        }}
-      >
-        <RecipeActivity reducedMotion={reducedMotion} />
-        <Text
-          style={{
-            color: colors.textMuted,
-            fontFamily: fonts.body,
-            fontSize: 13,
-          }}
-        >
-          Finding a few more ideas
-        </Text>
-      </View>
-      <NativeAnimated.View
-        testID="recipe-feed-skeleton"
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
         style={[
           styles.card,
-          { height: cardHeight, backgroundColor: colors.surface, opacity },
+          { height: cardHeight, backgroundColor: colors.surface },
         ]}
       >
         <View
-          style={[styles.artwork, { backgroundColor: colors.surfaceAlt }]}
-        />
-        <View style={styles.cardContent}>
+          style={[
+            styles.artwork,
+            compact && { height: 104 },
+            { backgroundColor: colors.surfaceAlt },
+          ]}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <RecipeActivity reducedMotion={reducedMotion} />
+            <Text
+              style={{
+                color: colors.textMuted,
+                fontFamily: fonts.body,
+                fontSize: 13,
+              }}
+            >
+              Finding a few more ideas
+            </Text>
+          </View>
+        </View>
+        <NativeAnimated.View
+          testID="recipe-feed-skeleton"
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={[
+            styles.cardContent,
+            compact && { padding: 16, gap: 8 },
+            { opacity },
+          ]}
+        >
           {(["85%", "62%", "45%", "90%", "70%"] as const).map(
             (lineWidth, index) => (
               <View
@@ -675,8 +683,8 @@ function RecipeSkeletonCard({
               backgroundColor: colors.surfaceAlt,
             }}
           />
-        </View>
-      </NativeAnimated.View>
+        </NativeAnimated.View>
+      </View>
     </View>
   );
 }

@@ -5,7 +5,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { countAnsweredPreferences, recipeContextLabel } from "@/lib/recipes";
 import type { RecipePreferences } from "@/types/recipes";
 
-export function RecipeScreenHeader({ subtitle }: { subtitle: string }) {
+export function RecipeScreenHeader({ subtitle }: { subtitle?: string }) {
   const { colors, fonts } = useTheme();
 
   return (
@@ -18,14 +18,16 @@ export function RecipeScreenHeader({ subtitle }: { subtitle: string }) {
       >
         Recipes
       </Text>
-      <Text
-        style={[
-          styles.screenSubtitle,
-          { color: colors.textMuted, fontFamily: fonts.body },
-        ]}
-      >
-        {subtitle}
-      </Text>
+      {subtitle && (
+        <Text
+          style={[
+            styles.screenSubtitle,
+            { color: colors.textMuted, fontFamily: fonts.body },
+          ]}
+        >
+          {subtitle}
+        </Text>
+      )}
     </View>
   );
 }
