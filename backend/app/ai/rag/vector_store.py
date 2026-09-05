@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, ValidationError
 from app.ai.llm.errors import ProviderError, status_code_from_error
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.rag.embeddings import EMBEDDING_DIMENSIONS
-from app.core.config import settings
+from app.core.config import settings, validate_supabase_url
 
 DEFAULT_MATCH_LIMIT = 5
 MAX_MATCH_LIMIT = 200
@@ -45,7 +45,7 @@ class SupabaseVectorStore:
     ) -> None:
         if publishable_key is not None and anon_key is not None:
             raise ValueError("Provide either publishable_key or anon_key, not both")
-        self._url = settings.supabase_url if url is None else url
+        self._url = validate_supabase_url(settings.supabase_url if url is None else url)
         if publishable_key is not None:
             self._api_key = publishable_key
             self._uses_legacy_jwt = False

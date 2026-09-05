@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.ai.llm.errors import ProviderError
@@ -86,7 +87,7 @@ class SlowZeroValidProvider:
 
 
 class UnusedStore:
-    async def create_session(self, session):
+    async def create_session(self, session, *, recipes=()):
         raise AssertionError("store should not be reached")
 
     async def get_session(self, user_id, session_id):
@@ -164,3 +165,101 @@ def test_zero_valid_generation_late_in_budget_skips_the_quality_retry(
     assert response.json()["data"]["recipes"] == []
     assert response.json()["data"]["empty_reason"] == "INVENTORY_UNSUPPORTED"
     assert response.json()["data"]["has_more"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_request", [False, True])
+async def test_refill_deadline_observes_provider_failure_during_cancellation(
+    signing_key,
+    patch_jwks,
+    monkeypatch,
+    cancel_request,
+) -> None:
+    import gc
+    from types import SimpleNamespace
+
+    import httpx
+
+    from app.ai.llm.providers import FakeProvider, GeminiProvider
+    from tests.test_recipe_feed import (
+        InMemoryRecipeFeedStore,
+        StubRetriever,
+        _auth_headers,
+        _install_dependencies,
+        _inventory,
+        _recipe,
+    )
+
+    class ReadTimeoutDuringCleanup:
+        calls = 0
+
+        def __init__(self):
+            self.started = asyncio.Event()
+
+        async def generate_content(self, **kwargs):
+            self.calls += 1
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError as exc:
+                raise httpx.ReadTimeout(
+                    "Read timed out while the request ended"
+                ) from exc
+
+    patch_jwks([signing_key])
+    monkeypatch.setattr(
+        settings, "recipe_feed_page_budget_seconds", 25 if cancel_request else 0.03
+    )
+    monkeypatch.setattr("app.ai.llm.providers.GEMINI_MIN_DEADLINE_SECONDS", 0)
+    store = InMemoryRecipeFeedStore()
+    app = create_app()
+    _install_dependencies(
+        app,
+        FakeProvider([{"recipes": [_recipe("Initial")]}]),
+        StubRetriever(),
+        store,
+    )
+    models = ReadTimeoutDuringCleanup()
+    provider = GeminiProvider(
+        api_key="test",
+        client=SimpleNamespace(aio=SimpleNamespace(models=models)),
+    )
+    loop = asyncio.get_running_loop()
+    unobserved = []
+    previous = loop.get_exception_handler()
+    loop.set_exception_handler(lambda loop, context: unobserved.append(context))
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            first = await client.post(
+                "/api/recipes/sessions",
+                headers=_auth_headers(signing_key),
+                json={"inventory": _inventory()},
+            )
+            assert first.status_code == 200
+            app.dependency_overrides[get_recipe_provider] = lambda: provider
+            session_id = first.json()["data"]["session_id"]
+            request = asyncio.create_task(
+                client.post(
+                    f"/api/recipes/sessions/{session_id}/pages",
+                    headers=_auth_headers(signing_key),
+                    json={"cursor": "1"},
+                )
+            )
+            if cancel_request:
+                await models.started.wait()
+                request.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await request
+            else:
+                response = await request
+                assert response.status_code == 503
+                assert response.json()["code"] == "AI_UNAVAILABLE"
+        assert models.calls == 1
+        gc.collect()
+        await asyncio.sleep(0)
+        assert unobserved == []
+    finally:
+        loop.set_exception_handler(previous)

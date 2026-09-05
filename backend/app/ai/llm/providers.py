@@ -10,7 +10,11 @@ import google.genai as genai
 from google.genai import types
 from pydantic import BaseModel, ValidationError
 
-from app.ai.llm.errors import ProviderError, status_code_from_error
+from app.ai.llm.errors import (
+    ProviderError,
+    retry_after_seconds_from_error,
+    status_code_from_error,
+)
 from app.ai.llm.retry import PipelineDeadline, RetryPolicy
 from app.core.config import settings
 
@@ -149,6 +153,7 @@ class GeminiProvider:
                 "Gemini generation failed",
                 cause=exc,
                 status_code=status_code_from_error(exc),
+                retry_after_seconds=retry_after_seconds_from_error(exc),
             ) from exc
 
         try:

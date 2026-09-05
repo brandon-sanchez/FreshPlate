@@ -1,6 +1,10 @@
+from contextlib import asynccontextmanager
+
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from app.ai.prompts.loader import load_prompt
 from app.api.barcode import router as barcode_router
 from app.api.health import router as health_router
 from app.api.me import router as me_router
@@ -8,10 +12,20 @@ from app.api.recipes import router as recipes_router
 from app.core.config import settings
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Reuse Supabase HTTP connections and close them when the app shuts down."""
+    load_prompt("generate_recipes")
+    async with httpx.AsyncClient() as client:
+        app.state.supabase_http_client = client
+        yield
+
+
 def create_app() -> FastAPI:
     """Application factory — creates and configures the FastAPI instance."""
     app = FastAPI(
         title=settings.app_name,
+        lifespan=lifespan,
         docs_url="/docs" if settings.debug else None,
         redoc_url="/redoc" if settings.debug else None,
     )

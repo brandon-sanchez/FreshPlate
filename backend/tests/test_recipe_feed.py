@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -18,7 +19,7 @@ from app.api.recipes import (
     get_recipe_retriever,
 )
 from app.main import create_app
-from app.services.recipe_feed_store import RecipeFeedSession
+from app.services.recipe_feed_store import RecipeFeedSession, RecipeFeedStoreError
 from tests.conftest import SigningKey
 
 
@@ -83,9 +84,11 @@ class InMemoryRecipeFeedStore:
         self.sessions: dict[UUID, RecipeFeedSession] = {}
         self.items: dict[UUID, list[Any]] = {}
 
-    async def create_session(self, session: RecipeFeedSession) -> None:
+    async def create_session(
+        self, session: RecipeFeedSession, *, recipes: Sequence[Any] = ()
+    ) -> None:
         self.sessions[session.id] = session
-        self.items[session.id] = []
+        self.items[session.id] = list(recipes)
 
     async def get_session(
         self, user_id: str, session_id: UUID
@@ -108,43 +111,81 @@ class InMemoryRecipeFeedStore:
             return []
         return self.items[session_id][start_position : start_position + limit]
 
-    async def append_candidates(
+    async def claim_refill(
         self,
-        user_id: str,
-        session_id: UUID,
+        user_id,
+        session_id,
         *,
-        start_position: int,
-        recipes: Sequence[Any],
-    ) -> None:
+        expected_generation_runs,
+        claim_id,
+    ) -> RecipeFeedSession:
         session = await self.get_session(user_id, session_id)
-        if session is None:
-            raise AssertionError("session not found")
-        del start_position
-        self.items[session_id].extend(recipes)
+        assert session is not None
+        if (
+            session.refill_claim_expires_at is not None
+            and session.refill_claim_expires_at > datetime.now(timezone.utc)
+        ) or session.generation_runs != expected_generation_runs:
+            return session
+        if (
+            not session.has_more
+            or not session.usable_items
+            or session.generation_runs >= 6
+        ):
+            updates = {
+                "has_more": False,
+                "refill_claim_id": None,
+                "refill_claim_expires_at": None,
+            }
+        else:
+            updates = {
+                "generation_runs": session.generation_runs + 1,
+                "refill_claim_id": claim_id,
+                "refill_claim_expires_at": datetime.now(timezone.utc)
+                + timedelta(seconds=45),
+            }
+        self.sessions[session_id] = session.model_copy(update=updates)
+        return self.sessions[session_id]
 
-    async def update_session(
+    async def finalize_refill(
         self,
-        user_id: str,
-        session_id: UUID,
+        user_id,
+        session_id,
         *,
-        exclude_titles: list[str],
-        candidate_count: int,
-        generation_runs: int,
-        retrieval_cursor: int,
-        has_more: bool,
-    ) -> None:
+        claim_id,
+        recipes,
+        exclude_titles,
+        retrieval_cursor,
+    ) -> RecipeFeedSession:
         session = await self.get_session(user_id, session_id)
-        if session is None:
-            raise AssertionError("session not found")
+        assert session is not None
+        if session.completed_refill_claim_id == claim_id:
+            return session
+        if session.refill_claim_id != claim_id:
+            raise RecipeFeedStoreError("Stale refill claim")
+        self.items[session_id].extend(recipes)
         self.sessions[session_id] = session.model_copy(
             update={
+                "candidate_count": session.candidate_count + len(recipes),
                 "exclude_titles": exclude_titles,
-                "candidate_count": candidate_count,
-                "generation_runs": generation_runs,
                 "retrieval_cursor": retrieval_cursor,
-                "has_more": has_more,
+                "has_more": bool(recipes) and session.generation_runs < 6,
+                "completed_refill_claim_id": claim_id,
+                "refill_claim_id": None,
+                "refill_claim_expires_at": None,
             }
         )
+        return self.sessions[session_id]
+
+    async def release_refill(self, user_id, session_id, *, claim_id):
+        session = await self.get_session(user_id, session_id)
+        if session and session.refill_claim_id == claim_id:
+            self.sessions[session_id] = session.model_copy(
+                update={
+                    "refill_claim_id": None,
+                    "refill_claim_expires_at": None,
+                    "has_more": session.has_more and session.generation_runs < 6,
+                }
+            )
 
 
 def _install_dependencies(
@@ -400,11 +441,7 @@ def test_feed_stops_generating_at_the_six_run_session_cap(
     """The session cap guards tail quality: six runs, then honest exhaustion."""
     patch_jwks([signing_key])
     responses = [
-        {
-            "recipes": [
-                _recipe(f"Run {run} recipe {index}") for index in range(1, 6)
-            ]
-        }
+        {"recipes": [_recipe(f"Run {run} recipe {index}") for index in range(1, 6)]}
         for run in range(1, 8)
     ]
     provider = FakeProvider(responses)
@@ -588,19 +625,173 @@ def test_feed_page_does_not_cross_user_session_boundaries(
 ) -> None:
     patch_jwks([signing_key])
     app = create_app()
-    _install_dependencies(
-        app,
-        FakeProvider([]),
-        StubRetriever(),
-        InMemoryRecipeFeedStore(),
-    )
-
+    provider = FakeProvider([{"recipes": [_recipe("Private recipe")]}])
+    _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
     with TestClient(app) as client:
-        response = client.post(
-            "/api/recipes/sessions/00000000-0000-0000-0000-000000000099/pages",
+        first = client.post(
+            "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
-            json={"cursor": "0"},
+            json={"inventory": _inventory()},
         )
-
+        assert first.status_code == 200
+        session_id = first.json()["data"]["session_id"]
+        owner = client.post(
+            f"/api/recipes/sessions/{session_id}/pages",
+            headers=_auth_headers(signing_key),
+            json={"cursor": "0", "limit": 1},
+        )
+        response = client.post(
+            f"/api/recipes/sessions/{session_id}/pages",
+            headers={
+                "Authorization": "Bearer "
+                + signing_key.sign(sub="00000000-0000-0000-0000-000000000002")
+            },
+            json={"cursor": "0", "limit": 1},
+        )
+    assert owner.status_code == 200
+    assert owner.json()["data"]["recipes"][0]["title"] == "Private recipe"
     assert response.status_code == 404
     assert response.json()["code"] == "RECIPE_FEED_NOT_FOUND"
+
+
+def test_feed_keeps_items_without_a_searchable_name(signing_key, patch_jwks) -> None:
+    patch_jwks([signing_key])
+    provider = PromptRecordingProvider([{"recipes": [_recipe("Spinach dinner")]}])
+    retriever = StubRetriever()
+    store = InMemoryRecipeFeedStore()
+    app = create_app()
+    _install_dependencies(app, provider, retriever, store)
+    inventory = [*_inventory(), {"id": "emoji", "name": "🥦!!!", "quantity": 1}]
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"inventory": inventory},
+        )
+    assert response.status_code == 200
+    assert retriever.calls == ["baby spinach tomatoes"]
+    assert "🥦!!!" in provider.prompts[0]
+    session = next(iter(store.sessions.values()))
+    assert any(item["id"] == "emoji" for item in session.usable_items)
+
+
+def test_early_exhaustion_is_persisted(signing_key, patch_jwks) -> None:
+    patch_jwks([signing_key])
+    store = InMemoryRecipeFeedStore()
+    app = create_app()
+    _install_dependencies(
+        app, FakeProvider([{"recipes": [_recipe("Dinner")]}]), StubRetriever(), store
+    )
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"inventory": _inventory()},
+        )
+        session_id = UUID(first.json()["data"]["session_id"])
+        store.sessions[session_id] = store.sessions[session_id].model_copy(
+            update={"usable_items": []}
+        )
+        response = client.post(
+            f"/api/recipes/sessions/{session_id}/pages",
+            headers=_auth_headers(signing_key),
+            json={"cursor": "1"},
+        )
+    assert response.json()["data"]["has_more"] is False
+    assert store.sessions[session_id].has_more is False
+
+
+@pytest.mark.asyncio
+async def test_concurrent_refills_share_the_last_generation_run(
+    signing_key,
+    patch_jwks,
+) -> None:
+    import asyncio
+
+    import httpx
+
+    patch_jwks([signing_key])
+
+    class SlowProvider(PromptRecordingProvider):
+        async def generate(self, *args, **kwargs):
+            await asyncio.sleep(0.1)
+            return await super().generate(*args, **kwargs)
+
+    store = InMemoryRecipeFeedStore()
+    provider = SlowProvider(
+        [
+            {"recipes": [_recipe("Initial")]},
+            {"recipes": [_recipe("Last run")]},
+            {"recipes": [_recipe("Over budget")]},
+        ]
+    )
+    app = create_app()
+    _install_dependencies(app, provider, StubRetriever(), store)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        first = await client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"inventory": _inventory()},
+        )
+        session_id = UUID(first.json()["data"]["session_id"])
+        store.sessions[session_id] = store.sessions[session_id].model_copy(
+            update={"generation_runs": 5}
+        )
+        pages = await asyncio.gather(
+            *[
+                client.post(
+                    f"/api/recipes/sessions/{session_id}/pages",
+                    headers=_auth_headers(signing_key),
+                    json={"cursor": "1"},
+                )
+                for _ in range(2)
+            ]
+        )
+    assert len(provider.prompts) == 2
+    assert all(page.status_code == 200 for page in pages)
+    assert pages[0].json() == pages[1].json()
+    assert store.sessions[session_id].generation_runs == 6
+    assert (
+        len(store.items[session_id]) == store.sessions[session_id].candidate_count == 2
+    )
+
+
+def test_failed_refill_can_retry_without_refunding_its_run(signing_key, patch_jwks):
+    from app.ai.llm.errors import ProviderError
+
+    patch_jwks([signing_key])
+    store = InMemoryRecipeFeedStore()
+    provider = FakeProvider(
+        [
+            {"recipes": [_recipe("Initial")]},
+            ProviderError("Unavailable"),
+            {"recipes": [_recipe("Retry")]},
+        ]
+    )
+    app = create_app()
+    _install_dependencies(app, provider, StubRetriever(), store)
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"inventory": _inventory()},
+        )
+        session_id = UUID(first.json()["data"]["session_id"])
+        failure = client.post(
+            f"/api/recipes/sessions/{session_id}/pages",
+            headers=_auth_headers(signing_key),
+            json={"cursor": "1"},
+        )
+        assert failure.status_code == 503
+        assert store.sessions[session_id].generation_runs == 2
+        assert store.sessions[session_id].refill_claim_id is None
+        retry = client.post(
+            f"/api/recipes/sessions/{session_id}/pages",
+            headers=_auth_headers(signing_key),
+            json={"cursor": "1"},
+        )
+    assert retry.status_code == 200
+    assert retry.json()["data"]["recipes"][0]["title"] == "Retry"
+    assert store.sessions[session_id].generation_runs == 3

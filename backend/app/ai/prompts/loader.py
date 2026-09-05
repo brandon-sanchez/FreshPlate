@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from functools import lru_cache
 from pathlib import Path
 
 import yaml  # type: ignore[import-untyped]
@@ -37,7 +38,12 @@ def load_prompt(name: str) -> PromptTemplate:
     selection stays a deliberate code change rather than runtime configuration.
     """
     _validate_prompt_name(name)
-    candidates = _prompt_candidates(name)
+    return _load_prompt_cached(name, PROMPTS_DIR)
+
+
+@lru_cache(maxsize=32)
+def _load_prompt_cached(name: str, directory: Path) -> PromptTemplate:
+    candidates = _prompt_candidates(name, directory)
     if not candidates:
         raise PromptLoadError(f"Prompt '{name}' was not found")
     if len(candidates) > 1:
@@ -66,11 +72,11 @@ def load_prompt(name: str) -> PromptTemplate:
     return prompt
 
 
-def _prompt_candidates(name: str) -> list[Path]:
-    exact = PROMPTS_DIR / f"{name}.yaml"
+def _prompt_candidates(name: str, directory: Path) -> list[Path]:
+    exact = directory / f"{name}.yaml"
     versioned = sorted(
         path
-        for path in PROMPTS_DIR.glob(f"{name}_v*.yaml")
+        for path in directory.glob(f"{name}_v*.yaml")
         if _VERSION_SUFFIX_PATTERN.search(path.stem)
     )
     return [path for path in [exact, *versioned] if path.is_file()]

@@ -269,3 +269,34 @@ async def test_gemini_provider_rejects_missing_api_key() -> None:
         await provider.generate("Give me an answer", response_model=Greeting)
 
     assert error.value.code == "AI_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_generation_obeys_provider_retry_after() -> None:
+    import httpx
+
+    response = httpx.Response(
+        429,
+        headers={"Retry-After": "7"},
+        request=httpx.Request("POST", "https://gemini.test/generate"),
+    )
+    models = SequenceFakeGeminiModels(
+        [
+            httpx.HTTPStatusError(
+                "limited", request=response.request, response=response
+            ),
+            SimpleNamespace(text='{"answer":"Dinner","confidence":1}'),
+        ]
+    )
+    sleeps = []
+
+    async def sleep(delay):
+        sleeps.append(delay)
+
+    provider = GeminiProvider(
+        api_key="test",
+        client=fake_gemini_client(models),
+        retry_policy=RetryPolicy(max_attempts=2, sleep=sleep, jitter_seconds=0),
+    )
+    await provider.generate("Dinner", response_model=Greeting)
+    assert sleeps == [7.0]

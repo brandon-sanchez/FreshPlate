@@ -11,15 +11,17 @@ returns non-200, fails at transport, or exceeds the 35s client timeout.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
+from contextlib import asynccontextmanager
+from datetime import date, timedelta
 
+import httpx
 import pytest
-from fastapi.testclient import TestClient
 
 from app.api.recipes import get_recipe_feed_store
-from app.core.config import settings
 from app.main import create_app
 from app.services.recipe_feed_store import SupabaseRecipeFeedStore
 
@@ -36,56 +38,108 @@ RESULTS_PATH = os.environ.get("FEED_REPRO_OUT", "")
 PAYLOAD = {
     "inventory": [
         {
-            "id": "itm-01", "name": "Chicken breast", "quantity": 2, "unit": "lb",
-            "expiration_date": "2026-08-06",
+            "id": "itm-01",
+            "name": "Chicken breast",
+            "quantity": 2,
+            "unit": "lb",
+            "expiration_date": (date.today() + timedelta(days=2)).isoformat(),
         },
         {
-            "id": "itm-02", "name": "Broccoli", "quantity": 1, "unit": "head",
-            "expiration_date": "2026-08-07",
+            "id": "itm-02",
+            "name": "Broccoli",
+            "quantity": 1,
+            "unit": "head",
+            "expiration_date": (date.today() + timedelta(days=3)).isoformat(),
         },
         {
-            "id": "itm-03", "name": "Cheddar cheese", "quantity": 8, "unit": "oz",
-            "expiration_date": "2026-08-20",
+            "id": "itm-03",
+            "name": "Cheddar cheese",
+            "quantity": 8,
+            "unit": "oz",
+            "expiration_date": (date.today() + timedelta(days=16)).isoformat(),
         },
         {
-            "id": "itm-04", "name": "Eggs", "quantity": 10, "unit": "item",
-            "expiration_date": "2026-08-18",
+            "id": "itm-04",
+            "name": "Eggs",
+            "quantity": 10,
+            "unit": "item",
+            "expiration_date": (date.today() + timedelta(days=14)).isoformat(),
         },
         {
-            "id": "itm-05", "name": "Milk", "quantity": 1, "unit": "quart",
-            "expiration_date": "2026-08-08",
+            "id": "itm-05",
+            "name": "Milk",
+            "quantity": 1,
+            "unit": "quart",
+            "expiration_date": (date.today() + timedelta(days=4)).isoformat(),
         },
         {
-            "id": "itm-06", "name": "Rice", "quantity": 2, "unit": "lb",
+            "id": "itm-06",
+            "name": "Rice",
+            "quantity": 2,
+            "unit": "lb",
             "expiration_date": None,
         },
         {
-            "id": "itm-07", "name": "Onion", "quantity": 3, "unit": "item",
+            "id": "itm-07",
+            "name": "Onion",
+            "quantity": 3,
+            "unit": "item",
             "expiration_date": None,
         },
         {
-            "id": "itm-08", "name": "Garlic", "quantity": 1, "unit": "bulb",
+            "id": "itm-08",
+            "name": "Garlic",
+            "quantity": 1,
+            "unit": "bulb",
             "expiration_date": None,
         },
         {
-            "id": "itm-09", "name": "Bell pepper", "quantity": 2, "unit": "item",
-            "expiration_date": "2026-08-09",
+            "id": "itm-09",
+            "name": "Bell pepper",
+            "quantity": 2,
+            "unit": "item",
+            "expiration_date": (date.today() + timedelta(days=5)).isoformat(),
         },
         {
-            "id": "itm-10", "name": "Tortillas", "quantity": 8, "unit": "item",
-            "expiration_date": "2026-08-15",
+            "id": "itm-10",
+            "name": "Tortillas",
+            "quantity": 8,
+            "unit": "item",
+            "expiration_date": (date.today() + timedelta(days=11)).isoformat(),
         },
     ],
     "preferences": {"meal": "dinner", "time": "under 30 minutes"},
 }
 
 
+@asynccontextmanager
+async def _live_client(app):
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            yield client
+
+
+async def _post_with_deadline(client, path, **kwargs):
+    """Cancel the in-process request at the same deadline as the mobile client."""
+    return await asyncio.wait_for(client.post(path, **kwargs), timeout=CLIENT_TIMEOUT_S)
+
+
+class BackendDiagnosticStore(SupabaseRecipeFeedStore):
+    """Use backend credentials for live reads when Auth is mocked in-process."""
+
+    async def _request(self, *args, **kwargs):
+        kwargs["trusted"] = True
+        return await super()._request(*args, **kwargs)
+
+
 def _service_store() -> SupabaseRecipeFeedStore:
-    token = settings.supabase_secret_key or settings.supabase_service_role_key
-    return SupabaseRecipeFeedStore(token, anon_key=token)
+    return BackendDiagnosticStore("")
 
 
-def test_feed_burst_loop_mirrors_app_prefetch(signing_key, patch_jwks) -> None:
+@pytest.mark.asyncio
+async def test_feed_burst_loop_mirrors_app_prefetch(signing_key, patch_jwks) -> None:
     """Mirror the app: session POST, then eager page fetches to the pool target.
 
     The mobile hook fires a page request immediately after the first render
@@ -99,12 +153,13 @@ def test_feed_burst_loop_mirrors_app_prefetch(signing_key, patch_jwks) -> None:
 
     bursts = int(os.environ.get("FEED_REPRO_BURSTS", "4"))
     rows: list[dict] = []
-    with TestClient(app) as client:
+    async with _live_client(app) as client:
         for burst in range(bursts):
             started = time.monotonic()
             row: dict = {"burst": burst, "kind": "session"}
             try:
-                response = client.post(
+                response = await _post_with_deadline(
+                    client,
                     "/api/recipes/sessions",
                     json=PAYLOAD,
                     headers={"Authorization": f"Bearer {token}"},
@@ -133,15 +188,14 @@ def test_feed_burst_loop_mirrors_app_prefetch(signing_key, patch_jwks) -> None:
                         "burst": burst,
                         "kind": f"page-{pages}",
                     }
-                    page_response = client.post(
+                    page_response = await _post_with_deadline(
+                        client,
                         f"/api/recipes/sessions/{data['session_id']}/pages",
                         json={"cursor": cursor, "limit": 5},
                         headers={"Authorization": f"Bearer {token}"},
                     )
                     page_row["status"] = page_response.status_code
-                    page_row["latency_s"] = round(
-                        time.monotonic() - page_started, 2
-                    )
+                    page_row["latency_s"] = round(time.monotonic() - page_started, 2)
                     page_body = page_response.json()
                     if page_response.status_code == 200:
                         page_data = page_body["data"]
@@ -175,7 +229,6 @@ def test_feed_burst_loop_mirrors_app_prefetch(signing_key, patch_jwks) -> None:
 
 def test_store_probe_creates_and_reads_session() -> None:
     """Isolate the persistence seam: one create + read against live Supabase."""
-    import asyncio
     from uuid import uuid4
 
     from app.services.recipe_feed_store import (
@@ -205,7 +258,8 @@ def test_store_probe_creates_and_reads_session() -> None:
     print(f"STORE-PROBE ok, fetched: {fetched is not None}")
 
 
-def test_feed_session_loop_never_ends_in_error(signing_key, patch_jwks) -> None:
+@pytest.mark.asyncio
+async def test_feed_session_loop_never_ends_in_error(signing_key, patch_jwks) -> None:
     patch_jwks([signing_key])
     token = signing_key.sign(sub=TEST_USER_ID)
 
@@ -213,12 +267,13 @@ def test_feed_session_loop_never_ends_in_error(signing_key, patch_jwks) -> None:
     app.dependency_overrides[get_recipe_feed_store] = _service_store
 
     rows: list[dict] = []
-    with TestClient(app) as client:
+    async with _live_client(app) as client:
         for index in range(RUNS):
             started = time.monotonic()
             row: dict = {"run": index}
             try:
-                response = client.post(
+                response = await _post_with_deadline(
+                    client,
                     "/api/recipes/sessions",
                     json=PAYLOAD,
                     headers={"Authorization": f"Bearer {token}"},

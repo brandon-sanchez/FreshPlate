@@ -113,8 +113,6 @@ def analyze_inventory(
             "is_expiring": is_expiring,
         }
         normalized_name = normalize_query_term(name)
-        if not normalized_name:
-            raise ValueError(f"Inventory item '{item_id}' has no searchable name")
 
         priority = 0 if is_expiring else 1
         days_priority = (

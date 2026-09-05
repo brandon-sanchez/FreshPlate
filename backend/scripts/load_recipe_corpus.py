@@ -302,7 +302,8 @@ def _require_runtime_settings() -> None:
             ),
             (
                 "SUPABASE_SECRET_KEY",
-                settings.supabase_secret_key or settings.supabase_service_role_key,
+                settings.supabase_secret_key.get_secret_value()
+                or settings.supabase_service_role_key.get_secret_value(),
             ),
         )
         if not value

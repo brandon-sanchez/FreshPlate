@@ -70,18 +70,23 @@ def get_recipe_provider() -> RecipeProviderPort:
     return GeminiProvider()
 
 
-def get_recipe_retriever() -> RecipeRetrieverPort:
+def get_recipe_retriever(request: Request) -> RecipeRetrieverPort:
     """Create the production embedding and vector-search seam."""
-    return RecipeRetriever(EmbeddingClient(), SupabaseVectorStore())
+    return RecipeRetriever(
+        EmbeddingClient(),
+        SupabaseVectorStore(http_client=request.app.state.supabase_http_client),
+    )
 
 
 def get_recipe_feed_store(request: Request) -> RecipeFeedStore:
-    """Create a user-token-backed store for one authenticated request."""
+    """Bind user-scoped reads and trusted writes to the shared HTTP client."""
     authorization = request.headers.get("authorization", "")
     scheme, _, token = authorization.partition(" ")
     if scheme.casefold() != "bearer" or not token.strip():
         raise _feed_unavailable()
-    return SupabaseRecipeFeedStore(token)
+    return SupabaseRecipeFeedStore(
+        token, http_client=request.app.state.supabase_http_client
+    )
 
 
 @router.post("/suggestions", response_model=RecipeSuggestionsResponse)
@@ -168,25 +173,14 @@ async def post_recipe_feed_session(
         )
         session = session.model_copy(
             update={
-                "exclude_titles": _unique_titles(
-                    [recipe.title for recipe in recipes]
-                )
+                "exclude_titles": _unique_titles([recipe.title for recipe in recipes])
             }
         )
         if not recipes:
             session = session.model_copy(update={"has_more": False})
         await _within_recipe_deadline(
             deadline,
-            lambda: store.create_session(session),
-        )
-        await _within_recipe_deadline(
-            deadline,
-            lambda: store.append_candidates(
-                _user_id,
-                session.id,
-                start_position=0,
-                recipes=recipes,
-            ),
+            lambda: store.create_session(session, recipes=recipes),
         )
     except asyncio.CancelledError:
         raise
@@ -288,12 +282,63 @@ async def _refill_recipe_feed_session(
     deadline: PipelineDeadline,
 ) -> tuple[RecipeFeedSession, bool]:
     """Generate one tail batch using the session's cached retrieval context."""
-    if (
-        not session.usable_items
-        or session.generation_runs >= RECIPE_FEED_MAX_GENERATION_RUNS
-    ):
-        return session.model_copy(update={"has_more": False}), False
+    original_count = session.candidate_count
+    claim_id = uuid4()
+    claimed = await _within_recipe_deadline(
+        deadline,
+        lambda: store.claim_refill(
+            user_id,
+            session.id,
+            expected_generation_runs=session.generation_runs,
+            claim_id=claim_id,
+        ),
+    )
+    if claimed.refill_claim_id != claim_id:
+        # Another request owns the tail. Read its committed pool once it finishes
+        # so duplicate cursor requests return the same stable recipe ids.
+        while claimed.refill_claim_id is not None:
+            await _within_recipe_deadline(deadline, lambda: asyncio.sleep(0.2))
+            current = await _within_recipe_deadline(
+                deadline, lambda: store.get_session(user_id, session.id)
+            )
+            if current is None:
+                raise _feed_not_found()
+            claimed = current
+        return claimed, claimed.candidate_count > original_count
+    try:
+        return await _generate_claimed_recipe_refill(
+            claimed,
+            user_id,
+            store,
+            provider,
+            deadline,
+            claim_id,
+        )
+    except Exception:
+        # Cleanup is conditional on the claim, so a lost finalize response cannot
+        # undo a committed batch. Cancellation and exhausted budgets use expiry.
+        if deadline.remaining_seconds > 0:
+            try:
+                await _within_recipe_deadline(
+                    deadline,
+                    lambda: store.release_refill(
+                        user_id, session.id, claim_id=claim_id
+                    ),
+                )
+            except (RecipeFeedStoreError, TimeoutError):
+                logger.warning("Recipe feed claim will recover after lease expiry")
+        raise
 
+
+async def _generate_claimed_recipe_refill(
+    session: RecipeFeedSession,
+    user_id: str,
+    store: RecipeFeedStore,
+    provider: RecipeProviderPort,
+    deadline: PipelineDeadline,
+    claim_id: UUID,
+) -> tuple[RecipeFeedSession, bool]:
+    """Generate and finalize the batch owned by one database reservation."""
     inventory = [
         RecipeInventoryContext.model_validate(item) for item in session.inventory
     ]
@@ -333,52 +378,26 @@ async def _refill_recipe_feed_session(
         for recipe in generated
         if _normalize_title(recipe.title) not in existing_titles
     ]
-    next_generation_runs = session.generation_runs + 1
     next_exclusions = _unique_titles(
         [*session.exclude_titles, *(recipe.title for recipe in recipes)]
     )
-    next_count = session.candidate_count + len(recipes)
     next_retrieval_cursor = min(
         session.retrieval_cursor + GENERATION_DOCS_CEILING,
         len(session.retrieved_recipes),
     )
 
-    next_has_more = (
-        bool(recipes) and next_generation_runs < RECIPE_FEED_MAX_GENERATION_RUNS
-    )
-    await _within_recipe_deadline(
+    persisted = await _within_recipe_deadline(
         deadline,
-        lambda: store.append_candidates(
+        lambda: store.finalize_refill(
             user_id,
             session.id,
-            start_position=session.candidate_count,
+            claim_id=claim_id,
             recipes=recipes,
-        ),
-    )
-    await _within_recipe_deadline(
-        deadline,
-        lambda: store.update_session(
-            user_id,
-            session.id,
             exclude_titles=next_exclusions,
-            candidate_count=next_count,
-            generation_runs=next_generation_runs,
             retrieval_cursor=next_retrieval_cursor,
-            has_more=next_has_more,
         ),
     )
-    return (
-        session.model_copy(
-            update={
-                "exclude_titles": next_exclusions,
-                "candidate_count": next_count,
-                "generation_runs": next_generation_runs,
-                "retrieval_cursor": next_retrieval_cursor,
-                "has_more": next_has_more,
-            }
-        ),
-        bool(recipes),
-    )
+    return persisted, bool(recipes)
 
 
 async def _invoke_recipe_graph(
@@ -428,9 +447,8 @@ def _initial_recipe_state(
         "batch_ceiling": payload.batch_ceiling,
         "retry_count": 0,
         "metadata": {},
-        "deadline": deadline or PipelineDeadline.from_now(
-            settings.ai_pipeline_budget_seconds
-        ),
+        "deadline": deadline
+        or PipelineDeadline.from_now(settings.ai_pipeline_budget_seconds),
     }
 
 
@@ -511,9 +529,11 @@ def _build_suggestions(
 
     raw_inventory = result.get("usable_items", [])
     raw_recipes = result.get("valid_recipes", [])
-    if not _is_sequence_of_mappings_or_models(raw_inventory) or not isinstance(
-        raw_recipes, Sequence
-    ) or isinstance(raw_recipes, (str, bytes)):
+    if (
+        not _is_sequence_of_mappings_or_models(raw_inventory)
+        or not isinstance(raw_recipes, Sequence)
+        or isinstance(raw_recipes, (str, bytes))
+    ):
         raise ValueError("Recipe graph returned an invalid recipe state")
 
     excluded_titles = {

@@ -10,7 +10,7 @@ from uuid import UUID
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.core.config import settings
+from app.core.config import settings, validate_supabase_url
 from app.models.recipes import RecipeSuggestion
 
 RECIPE_FEED_SESSIONS_TABLE = "recipe_feed_sessions"
@@ -37,6 +37,9 @@ class RecipeFeedSession(BaseModel):
     candidate_count: int = Field(default=0, ge=0)
     generation_runs: int = Field(default=0, ge=0)
     has_more: bool = True
+    refill_claim_id: UUID | None = None
+    refill_claim_expires_at: datetime | None = None
+    completed_refill_claim_id: UUID | None = None
     created_at: datetime | None = None
     expires_at: datetime | None = None
 
@@ -44,7 +47,9 @@ class RecipeFeedSession(BaseModel):
 class RecipeFeedStore(Protocol):
     """Persistence seam used by the API and replaced by fakes in tests."""
 
-    async def create_session(self, session: RecipeFeedSession) -> None: ...
+    async def create_session(
+        self, session: RecipeFeedSession, *, recipes: Sequence[RecipeSuggestion] = ()
+    ) -> None: ...
 
     async def get_session(
         self,
@@ -61,34 +66,39 @@ class RecipeFeedStore(Protocol):
         limit: int,
     ) -> list[RecipeSuggestion]: ...
 
-    async def append_candidates(
+    async def claim_refill(
         self,
         user_id: str,
         session_id: UUID,
         *,
-        start_position: int,
-        recipes: Sequence[RecipeSuggestion],
-    ) -> None: ...
+        expected_generation_runs: int,
+        claim_id: UUID,
+    ) -> RecipeFeedSession: ...
 
-    async def update_session(
+    async def finalize_refill(
         self,
         user_id: str,
         session_id: UUID,
         *,
+        claim_id: UUID,
+        recipes: Sequence[RecipeSuggestion],
         exclude_titles: list[str],
-        candidate_count: int,
-        generation_runs: int,
         retrieval_cursor: int,
-        has_more: bool,
+    ) -> RecipeFeedSession: ...
+    async def release_refill(
+        self,
+        user_id: str,
+        session_id: UUID,
+        *,
+        claim_id: UUID,
     ) -> None: ...
 
 
 class SupabaseRecipeFeedStore:
-    """Persist feed state through PostgREST with the caller's JWT.
+    """Use caller JWTs for reads and backend credentials for atomic writes.
 
-    The publishable or legacy anon key identifies the project. The user's
-    bearer token is forwarded separately so Supabase RLS scopes every request
-    to the authenticated user instead of relying on a runtime service key.
+    Every mutation RPC receives the user id verified by FastAPI authentication.
+    Client roles cannot execute these RPCs or mutate the underlying feed tables.
     """
 
     def __init__(
@@ -98,6 +108,8 @@ class SupabaseRecipeFeedStore:
         anon_key: str | None = None,
         *,
         publishable_key: str | None = None,
+        secret_key: str | None = None,
+        service_role_key: str | None = None,
         http_client: Any | None = None,
     ) -> None:
         if publishable_key is not None and anon_key is not None:
@@ -111,24 +123,35 @@ class SupabaseRecipeFeedStore:
             self._api_key = settings.supabase_publishable_key
         else:
             self._api_key = settings.supabase_anon_key
+        if secret_key is not None and service_role_key is not None:
+            raise ValueError("Provide either secret_key or service_role_key, not both")
+        if secret_key is not None:
+            self._write_key = secret_key
+            self._write_uses_legacy_jwt = False
+        elif service_role_key is not None:
+            self._write_key = service_role_key
+            self._write_uses_legacy_jwt = True
+        elif settings.supabase_secret_key.get_secret_value():
+            self._write_key = settings.supabase_secret_key.get_secret_value()
+            self._write_uses_legacy_jwt = False
+        else:
+            self._write_key = settings.supabase_service_role_key.get_secret_value()
+            self._write_uses_legacy_jwt = True
         self._user_token = user_token.strip()
         self._http_client = http_client
 
-    async def create_session(self, session: RecipeFeedSession) -> None:
-        rows = await self._request(
-            "POST",
-            RECIPE_FEED_SESSIONS_TABLE,
-            json=[session.model_dump(mode="json", exclude_none=True)],
-            prefer="return=representation",
+    async def create_session(
+        self, session: RecipeFeedSession, *, recipes: Sequence[RecipeSuggestion] = ()
+    ) -> None:
+        """Commit the initial session and its candidate pool in one transaction."""
+        persisted = await self._session_rpc(
+            "create_recipe_feed_session",
+            {
+                "p_user_id": session.user_id,
+                "p_session": session.model_dump(mode="json", exclude_none=True),
+                "p_recipes": [recipe.model_dump(mode="json") for recipe in recipes],
+            },
         )
-        if not rows:
-            raise RecipeFeedStoreError("Recipe feed session was not persisted")
-        try:
-            persisted = RecipeFeedSession.model_validate(rows[0])
-        except (TypeError, ValidationError) as exc:
-            raise RecipeFeedStoreError(
-                "Recipe feed session returned invalid data"
-            ) from exc
         if persisted.id != session.id or persisted.user_id != session.user_id:
             raise RecipeFeedStoreError("Recipe feed session identity changed")
 
@@ -185,64 +208,79 @@ class SupabaseRecipeFeedStore:
             ) from exc
         return recipes
 
-    async def append_candidates(
+    async def claim_refill(
         self,
         user_id: str,
         session_id: UUID,
         *,
-        start_position: int,
-        recipes: Sequence[RecipeSuggestion],
-    ) -> None:
-        if not recipes:
-            return
-        if start_position < 0:
-            raise ValueError("Recipe feed candidate position must not be negative")
-        rows = [
+        expected_generation_runs: int,
+        claim_id: UUID,
+    ) -> RecipeFeedSession:
+        """Reserve a bounded generation run or return the current session."""
+        return await self._session_rpc(
+            "claim_recipe_feed_refill",
             {
-                "id": str(recipe.recipe_id),
-                "user_id": user_id,
-                "session_id": str(session_id),
-                "position": start_position + index,
-                "recipe": recipe.model_dump(mode="json"),
-            }
-            for index, recipe in enumerate(recipes)
-        ]
-        await self._request(
-            "POST",
-            f"{RECIPE_FEED_ITEMS_TABLE}?on_conflict=session_id,position",
-            json=rows,
-            prefer="resolution=merge-duplicates,return=minimal",
+                "p_user_id": user_id,
+                "p_session_id": str(session_id),
+                "p_expected_generation_runs": expected_generation_runs,
+                "p_claim_id": str(claim_id),
+            },
         )
 
-    async def update_session(
+    async def finalize_refill(
         self,
         user_id: str,
         session_id: UUID,
         *,
+        claim_id: UUID,
+        recipes: Sequence[RecipeSuggestion],
         exclude_titles: list[str],
-        candidate_count: int,
-        generation_runs: int,
         retrieval_cursor: int,
-        has_more: bool,
-    ) -> None:
-        rows = await self._request(
-            "PATCH",
-            RECIPE_FEED_SESSIONS_TABLE,
-            params={
-                "id": f"eq.{session_id}",
-                "user_id": f"eq.{user_id}",
+    ) -> RecipeFeedSession:
+        """Atomically append candidates and advance only the claimed session."""
+        return await self._session_rpc(
+            "finalize_recipe_feed_refill",
+            {
+                "p_user_id": user_id,
+                "p_session_id": str(session_id),
+                "p_claim_id": str(claim_id),
+                "p_recipes": [recipe.model_dump(mode="json") for recipe in recipes],
+                "p_exclude_titles": exclude_titles,
+                "p_retrieval_cursor": retrieval_cursor,
             },
-            json={
-                "exclude_titles": exclude_titles,
-                "candidate_count": candidate_count,
-                "generation_runs": generation_runs,
-                "retrieval_cursor": retrieval_cursor,
-                "has_more": has_more,
-            },
-            prefer="return=representation",
         )
-        if not rows:
-            raise RecipeFeedStoreError("Recipe feed session could not be updated")
+
+    async def release_refill(
+        self,
+        user_id: str,
+        session_id: UUID,
+        *,
+        claim_id: UUID,
+    ) -> None:
+        """Permit a retry after a known failure without refunding its run."""
+        await self._request(
+            "POST",
+            "rpc/release_recipe_feed_refill",
+            trusted=True,
+            json={
+                "p_user_id": user_id,
+                "p_session_id": str(session_id),
+                "p_claim_id": str(claim_id),
+            },
+        )
+
+    async def _session_rpc(
+        self,
+        name: str,
+        payload: dict[str, Any],
+    ) -> RecipeFeedSession:
+        rows = await self._request("POST", f"rpc/{name}", json=payload, trusted=True)
+        if len(rows) != 1:
+            raise RecipeFeedStoreError("Recipe feed session could not be persisted")
+        try:
+            return RecipeFeedSession.model_validate(rows[0])
+        except (TypeError, ValidationError) as exc:
+            raise RecipeFeedStoreError("Recipe feed RPC returned invalid data") from exc
 
     async def _request(
         self,
@@ -251,26 +289,30 @@ class SupabaseRecipeFeedStore:
         *,
         params: Mapping[str, str] | None = None,
         json: Any | None = None,
-        prefer: str | None = None,
+        trusted: bool = False,
     ) -> list[dict[str, Any]]:
         if not self._url:
             raise RecipeFeedStoreError("Supabase URL is not configured")
-        if not self._api_key:
-            raise RecipeFeedStoreError(
-                "Supabase publishable key or legacy anon key is not configured"
-            )
-        if not self._user_token:
-            raise RecipeFeedStoreError("Recipe feed user token is not configured")
-
-        headers = {
-            "apikey": self._api_key,
-            "Authorization": f"Bearer {self._user_token}",
-            "Accept": "application/json",
-        }
+        try:
+            validate_supabase_url(self._url)
+        except ValueError as exc:
+            raise RecipeFeedStoreError("Supabase URL must use a secure origin") from exc
+        if trusted:
+            if not self._write_key:
+                raise RecipeFeedStoreError("Supabase backend key is not configured")
+            headers = {"apikey": self._write_key}
+            if self._write_uses_legacy_jwt:
+                headers["Authorization"] = f"Bearer {self._write_key}"
+        else:
+            if not self._api_key or not self._user_token:
+                raise RecipeFeedStoreError("Recipe feed read credentials are missing")
+            headers = {
+                "apikey": self._api_key,
+                "Authorization": f"Bearer {self._user_token}",
+            }
+        headers["Accept"] = "application/json"
         if json is not None:
             headers["Content-Type"] = "application/json"
-        if prefer is not None:
-            headers["Prefer"] = prefer
         url = f"{self._url.rstrip('/')}/rest/v1/{table_path}"
 
         try:
@@ -284,6 +326,7 @@ class SupabaseRecipeFeedStore:
                         headers=headers,
                         params=params,
                         json=json,
+                        timeout=settings.recipe_feed_store_timeout_seconds,
                     )
             else:
                 response = await self._http_client.request(
@@ -292,6 +335,7 @@ class SupabaseRecipeFeedStore:
                     headers=headers,
                     params=params,
                     json=json,
+                    timeout=settings.recipe_feed_store_timeout_seconds,
                 )
             response.raise_for_status()
         except httpx.TimeoutException as exc:

@@ -121,6 +121,8 @@ class RetryPolicy:
     ) -> Response:
         """Run an operation until it succeeds, is non-retryable, or times out."""
         last_failure: ProviderError | None = None
+        task = asyncio.current_task()
+        initial_cancellations = task.cancelling() if task is not None else 0
 
         for attempt in range(self._max_attempts):
             remaining = deadline.remaining_seconds
@@ -128,7 +130,12 @@ class RetryPolicy:
                 raise _deadline_error(last_failure) from last_failure
 
             try:
-                result = await asyncio.wait_for(operation(deadline), timeout=remaining)
+                # Keep provider work in this task so cancellation observes its
+                # result even when transport cleanup raises a different error.
+                async with asyncio.timeout(remaining):
+                    result = await operation(deadline)
+                if task is not None and task.cancelling() > initial_cancellations:
+                    raise asyncio.CancelledError
                 if deadline.expired:
                     raise _deadline_error(last_failure) from last_failure
                 return result
@@ -144,6 +151,9 @@ class RetryPolicy:
                     cause=exc,
                     status_code=status_code_from_error(exc),
                 )
+
+            if task is not None and task.cancelling() > initial_cancellations:
+                raise asyncio.CancelledError from failure
 
             logger.warning(
                 "LLM attempt %s/%s failed status=%s retry_after=%s "

@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic import SecretStr
 
 from app.ai.rag.corpus_store import SupabaseCorpusStore
 from app.ai.rag.embeddings import EMBEDDING_DIMENSIONS
@@ -79,10 +80,10 @@ async def test_corpus_store_uses_secret_key_without_jwt_bearer_header(
     http_client = FakeHttpClient(response)
     monkeypatch.setattr(
         "app.ai.rag.corpus_store.settings.supabase_secret_key",
-        "sb_secret_test-key",
+        SecretStr("sb_secret_test-key"),
     )
     monkeypatch.setattr(
-        "app.ai.rag.corpus_store.settings.supabase_service_role_key", ""
+        "app.ai.rag.corpus_store.settings.supabase_service_role_key", SecretStr("")
     )
     store = SupabaseCorpusStore(
         url="https://project.supabase.co",

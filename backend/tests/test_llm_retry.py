@@ -299,3 +299,47 @@ async def test_retry_policy_propagates_in_flight_cancellation() -> None:
         )
 
     assert calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+async def test_cancelled_attempt_observes_cleanup_result(cleanup_fails) -> None:
+    import gc
+
+    started = asyncio.Event()
+    completed = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    unobserved = []
+    previous = loop.get_exception_handler()
+    loop.set_exception_handler(lambda loop, context: unobserved.append(context))
+
+    async def operation(deadline):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError as exc:
+            if cleanup_fails:
+                raise ProviderError(
+                    "Provider timed out during cleanup", cause=exc
+                ) from exc
+            return "Completed after cancellation"
+        finally:
+            completed.set()
+
+    try:
+        task = asyncio.create_task(
+            RetryPolicy().run(
+                operation,
+                deadline=PipelineDeadline(25),
+            )
+        )
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert completed.is_set()
+        gc.collect()
+        await asyncio.sleep(0)
+        assert unobserved == []
+    finally:
+        loop.set_exception_handler(previous)

@@ -67,18 +67,16 @@ class FakeHttpClient:
 
 
 @pytest.mark.asyncio
-async def test_store_forwards_user_jwt_and_persists_stable_positions() -> None:
+async def test_store_uses_scoped_reads_and_backend_only_atomic_writes() -> None:
     session_id = UUID("00000000-0000-0000-0000-000000000020")
+    claim_id = UUID("00000000-0000-0000-0000-000000000021")
     row = _session_row(session_id)
     client = FakeHttpClient(
         [
-            httpx.Response(201, json=[row]),
             httpx.Response(200, json=[row]),
-            httpx.Response(
-                200,
-                json=[{"position": 0, "recipe": _recipe().model_dump(mode="json")}],
-            ),
-            httpx.Response(204),
+            httpx.Response(200, json=[row]),
+            httpx.Response(200, json=[{"recipe": _recipe().model_dump(mode="json")}]),
+            httpx.Response(200, json=[{**row, "refill_claim_id": str(claim_id)}]),
             httpx.Response(200, json=[row]),
         ]
     )
@@ -86,39 +84,96 @@ async def test_store_forwards_user_jwt_and_persists_stable_positions() -> None:
         "user-jwt",
         url="https://project.supabase.co",
         publishable_key="publishable-key",
+        secret_key="backend-secret",
         http_client=client,
     )
     session = RecipeFeedSession.model_validate(row)
-
-    await store.create_session(session)
+    await store.create_session(session, recipes=[_recipe()])
     assert await store.get_session(session.user_id, session.id) == session
     assert await store.list_candidates(
-        session.user_id,
-        session.id,
-        start_position=0,
-        limit=5,
+        session.user_id, session.id, start_position=0, limit=5
     ) == [_recipe()]
-    await store.append_candidates(
+    claimed = await store.claim_refill(
         session.user_id,
         session.id,
-        start_position=1,
+        expected_generation_runs=1,
+        claim_id=claim_id,
+    )
+    assert claimed.refill_claim_id == claim_id
+    await store.finalize_refill(
+        session.user_id,
+        session.id,
+        claim_id=claim_id,
         recipes=[_recipe("Spinach Soup")],
-    )
-    await store.update_session(
-        session.user_id,
-        session.id,
         exclude_titles=["Spinach Pasta"],
-        candidate_count=2,
-        generation_runs=2,
         retrieval_cursor=5,
-        has_more=True,
     )
+    for index in (0, 3, 4):
+        assert client.calls[index]["headers"]["apikey"] == "backend-secret"
+        assert "Authorization" not in client.calls[index]["headers"]
+        assert client.calls[index]["json"]["p_user_id"] == session.user_id
+    for index in (1, 2):
+        assert client.calls[index]["headers"]["apikey"] == "publishable-key"
+        assert client.calls[index]["headers"]["Authorization"] == "Bearer user-jwt"
+        assert client.calls[index]["params"]["user_id"] == f"eq.{session.user_id}"
+    assert client.calls[0]["url"].endswith("/rpc/create_recipe_feed_session")
+    assert client.calls[0]["json"]["p_recipes"] == [_recipe().model_dump(mode="json")]
+    assert client.calls[3]["url"].endswith("/rpc/claim_recipe_feed_refill")
+    assert client.calls[4]["url"].endswith("/rpc/finalize_recipe_feed_refill")
+    assert client.calls[4]["json"]["p_claim_id"] == str(claim_id)
 
-    assert len(client.calls) == 5
-    for call in client.calls:
-        assert call["headers"]["apikey"] == "publishable-key"
-        assert call["headers"]["Authorization"] == "Bearer user-jwt"
-    append_call = client.calls[3]
-    assert "on_conflict=session_id,position" in append_call["url"]
-    assert append_call["json"][0]["position"] == 1
-    assert append_call["json"][0]["user_id"] == session.user_id
+
+@pytest.mark.asyncio
+async def test_store_legacy_backend_key_is_not_the_user_jwt() -> None:
+    row = _session_row(UUID("00000000-0000-0000-0000-000000000020"))
+    client = FakeHttpClient([httpx.Response(200, json=[row])])
+    store = SupabaseRecipeFeedStore(
+        "user-jwt",
+        url="https://project.supabase.co",
+        anon_key="anon-key",
+        service_role_key="service-jwt",
+        http_client=client,
+    )
+    await store.create_session(RecipeFeedSession.model_validate(row))
+    assert client.calls[0]["headers"]["apikey"] == "service-jwt"
+    assert client.calls[0]["headers"]["Authorization"] == "Bearer service-jwt"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://project.supabase.co",
+        "http://localhost.evil.test",
+        "ftp://127.0.0.1",
+    ],
+)
+async def test_store_rejects_insecure_origins_before_transmitting_credentials(
+    url,
+) -> None:
+    from app.services.recipe_feed_store import RecipeFeedStoreError
+
+    client = FakeHttpClient([])
+    store = SupabaseRecipeFeedStore(
+        "user-jwt",
+        url=url,
+        anon_key="anon-key",
+        secret_key="backend-secret",
+        http_client=client,
+    )
+    with pytest.raises(RecipeFeedStoreError, match="secure origin"):
+        await store.get_session("user", UUID(int=1))
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_store_allows_loopback_http_for_local_supabase() -> None:
+    client = FakeHttpClient([httpx.Response(200, json=[])])
+    store = SupabaseRecipeFeedStore(
+        "local-jwt",
+        url="http://127.0.0.1:54321",
+        anon_key="local-anon",
+        http_client=client,
+    )
+    assert await store.get_session("user", UUID(int=1)) is None
+    assert client.calls[0]["url"].startswith("http://127.0.0.1:54321/")

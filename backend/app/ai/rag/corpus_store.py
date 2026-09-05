@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.ai.rag.corpus import MAX_CORPUS_BATCH_SIZE
 from app.ai.rag.embeddings import EMBEDDING_DIMENSIONS
-from app.core.config import settings
+from app.core.config import settings, validate_supabase_url
 
 CORPUS_TABLE = "recipe_embeddings"
 MAX_UPSERT_BATCH_SIZE = MAX_CORPUS_BATCH_SIZE
@@ -61,18 +61,18 @@ class SupabaseCorpusStore:
     ) -> None:
         if secret_key is not None and service_role_key is not None:
             raise ValueError("Provide either secret_key or service_role_key, not both")
-        self._url = settings.supabase_url if url is None else url
+        self._url = validate_supabase_url(settings.supabase_url if url is None else url)
         if secret_key is not None:
             self._api_key = secret_key
             self._uses_legacy_jwt = False
         elif service_role_key is not None:
             self._api_key = service_role_key
             self._uses_legacy_jwt = True
-        elif settings.supabase_secret_key:
-            self._api_key = settings.supabase_secret_key
+        elif settings.supabase_secret_key.get_secret_value():
+            self._api_key = settings.supabase_secret_key.get_secret_value()
             self._uses_legacy_jwt = False
         else:
-            self._api_key = settings.supabase_service_role_key
+            self._api_key = settings.supabase_service_role_key.get_secret_value()
             self._uses_legacy_jwt = True
         self._http_client = http_client
 
