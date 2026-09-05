@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import { useTheme } from "@/hooks/useTheme";
+import { useReducedMotion } from "@/hooks/useReducedMotion";
+import { RecipeActivity } from "@/components/recipe-motion";
 
 const GENERATION_STEPS = [
   "Checking what is ready in your kitchen",
@@ -13,6 +15,7 @@ const GENERATION_STEP_INTERVAL_MS = 6500;
 
 export default function RecipeGenerationLoader() {
   const { colors, fonts } = useTheme();
+  const reducedMotion = useReducedMotion();
   const [stepIndex, setStepIndex] = useState(0);
 
   useEffect(() => {
@@ -40,6 +43,7 @@ export default function RecipeGenerationLoader() {
       <Text style={[styles.step, { color: colors.textMuted, fontFamily: fonts.body }]}>
         {GENERATION_STEPS[stepIndex]}
       </Text>
+      <RecipeActivity reducedMotion={reducedMotion} />
       <View style={styles.progressRow} accessibilityLabel="Recipe generation progress">
         {GENERATION_STEPS.map((label, index) => (
           <View

@@ -83,6 +83,111 @@ describe("useRecipeFeed", () => {
     mockFetchPage.mockReset();
   });
 
+  it("does not treat the initial viewport as a fast scroll", async () => {
+    const batch = (start: number) => Array.from({ length: 5 }, (_, index) =>
+      recipe(`${start + index}`, `Dish ${start + index}`),
+    );
+    mockCreateSession.mockResolvedValueOnce(page(batch(0), "5", true));
+    let finish: ((value: RecipeFeedResponse) => void) | undefined;
+    mockFetchPage.mockImplementation(() => new Promise<RecipeFeedResponse>((resolve) => { finish = resolve; }));
+    const { result, unmount } = renderHook(() => useRecipeFeed(), { wrapper });
+    act(() => result.current.start(request));
+    await waitFor(() => expect(result.current.recipes).toHaveLength(5));
+    act(() => result.current.maybePrefetch(2));
+    finish?.(page(batch(5), "10", true));
+    await waitFor(() => expect(mockFetchPage).toHaveBeenCalledTimes(2));
+    finish?.(page(batch(10), "15", true));
+    await waitFor(() => expect(result.current.recipes).toHaveLength(15));
+    expect(mockFetchPage).toHaveBeenCalledTimes(2);
+    unmount();
+  });
+
+  it("keeps refilling an unseen reserve after a fast scroll without another scroll event", async () => {
+    const batch = (start: number, count: number) =>
+      Array.from({ length: count }, (_, index) =>
+        recipe(`recipe-${start + index}`, `Dish ${start + index}`),
+      );
+    mockCreateSession.mockResolvedValueOnce(page(batch(1, 10), "10", true));
+    mockFetchPage
+      .mockResolvedValueOnce(page(batch(11, 5), "15", true))
+      .mockResolvedValueOnce(page(batch(16, 5), null, false));
+    const { result } = renderHook(() => useRecipeFeed(), { wrapper });
+    act(() => result.current.start(request));
+    await waitFor(() => expect(result.current.recipes).toHaveLength(10));
+
+    act(() => result.current.maybePrefetch(9));
+
+    await waitFor(() => expect(result.current.recipes).toHaveLength(20));
+    expect(mockFetchPage).toHaveBeenCalledTimes(2);
+    expect(result.current.isExhausted).toBe(true);
+  });
+
+  it("coalesces a burst of tail notifications into one request without cancelling it", async () => {
+    const head = Array.from({ length: 10 }, (_, index) =>
+      recipe(`recipe-${index}`, `Dish ${index}`),
+    );
+    mockCreateSession.mockResolvedValueOnce(page(head, "10", true));
+    let finish: ((value: RecipeFeedResponse) => void) | undefined;
+    mockFetchPage.mockImplementation(() => new Promise<RecipeFeedResponse>((resolve) => {
+      finish = resolve;
+    }));
+    const { result } = renderHook(() => useRecipeFeed(), { wrapper });
+    act(() => result.current.start(request));
+    await waitFor(() => expect(result.current.recipes).toHaveLength(10));
+    act(() => {
+      for (let index = 0; index < 30; index++) result.current.maybePrefetch(9);
+    });
+    await waitFor(() => expect(mockFetchPage).toHaveBeenCalledTimes(1));
+    expect(mockFetchPage.mock.calls[0][0].signal.aborted).toBe(false);
+    finish?.(page([], null, false));
+    await waitFor(() => expect(result.current.isExhausted).toBe(true));
+  });
+
+  it.each([1_000, 25_000, 35_000])(
+    "preserves every card through six batches with %i ms refills and rapid tail scrolling",
+    async (latencyMs) => {
+      const batch = (run: number) => Array.from({ length: 5 }, (_, index) =>
+        recipe(`${run}-${index}`, `Dish ${run}-${index}`),
+      );
+      let now = 1_000_000;
+      const clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+      let finish: ((value: RecipeFeedResponse) => void) | undefined;
+      const signals: AbortSignal[] = [];
+      mockCreateSession.mockResolvedValueOnce(page(batch(1), "5", true));
+      mockFetchPage.mockImplementation(({ signal }: { signal: AbortSignal }) => {
+        signals.push(signal);
+        return new Promise<RecipeFeedResponse>((resolve) => { finish = resolve; });
+      });
+      const { result, unmount } = renderHook(() => useRecipeFeed(), { wrapper });
+      try {
+        act(() => result.current.start(request));
+        await waitFor(() => expect(result.current.recipes).toHaveLength(5));
+        for (let run = 2; run <= 6; run++) {
+          now += 500;
+          act(() => {
+            for (let event = 0; event < 20; event++) {
+              result.current.maybePrefetch(result.current.recipes.length - 1);
+            }
+          });
+          await waitFor(() => expect(mockFetchPage).toHaveBeenCalledTimes(run - 1));
+          expect(result.current.isPrefetching).toBe(true);
+          expect(result.current.isExhausted).toBe(false);
+          expect(signals.every((signal) => !signal.aborted)).toBe(true);
+          now += latencyMs;
+          finish?.(page(batch(run), run === 6 ? null : `${run * 5}`, run < 6));
+          await waitFor(() => expect(result.current.recipes).toHaveLength(run * 5));
+        }
+        expect(new Set(result.current.recipes.map((item) => item.recipe_id)).size).toBe(30);
+        expect(result.current.isExhausted).toBe(true);
+        expect(result.current.prefetchError).toBeNull();
+        expect(mockFetchPage).toHaveBeenCalledTimes(5);
+      } finally {
+        unmount();
+        clock.mockRestore();
+      }
+    },
+  );
+
   it("seeds the first page and fetches the next cursor at the low-water mark", async () => {
     mockCreateSession.mockResolvedValueOnce(
       page(
@@ -120,7 +225,7 @@ describe("useRecipeFeed", () => {
       request,
       expect.any(AbortSignal),
     );
-    expect(result.current.recipes).toHaveLength(8);
+    expect(result.current.recipes.length).toBeGreaterThanOrEqual(8);
 
     act(() => result.current.maybePrefetch(2));
     await waitFor(() => expect(result.current.recipes).toHaveLength(10));

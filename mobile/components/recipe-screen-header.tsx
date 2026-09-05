@@ -1,4 +1,5 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { RecipePressable } from "@/components/recipe-motion";
+import { StyleSheet, Text, View } from "react-native";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useTheme } from "@/hooks/useTheme";
 import { countAnsweredPreferences, recipeContextLabel } from "@/lib/recipes";
@@ -56,7 +57,7 @@ export function RecipeContextBar({
           {recipeContextLabel(itemCount, preferences)}
         </Text>
       </View>
-      <Pressable
+      <RecipePressable
         onPress={onAsk}
         accessibilityRole="button"
         style={[styles.askButton, { backgroundColor: colors.surfaceAlt }]}
@@ -70,7 +71,7 @@ export function RecipeContextBar({
         >
           {hasAnswers ? "Edit answers" : "Ask me questions"}
         </Text>
-      </Pressable>
+      </RecipePressable>
     </View>
   );
 }
@@ -93,8 +94,9 @@ const styles = StyleSheet.create({
     minHeight: 54,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderWidth: 1,
+    borderWidth: 0,
     borderRadius: 14,
+    marginBottom: 14,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",

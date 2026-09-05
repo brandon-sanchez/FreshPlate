@@ -1,6 +1,11 @@
 import React from "react";
-import { act, fireEvent, render } from "@testing-library/react-native";
+import { act, cleanup, fireEvent, render } from "@testing-library/react-native";
 import type { RecipeSuggestion } from "@/types/recipes";
+
+const mockReducedMotion = jest.fn(() => false);
+jest.mock("@/hooks/useReducedMotion", () => ({
+  useReducedMotion: () => mockReducedMotion(),
+}));
 
 jest.mock("@expo/vector-icons/Feather", () => {
   const MockIcon = () => null;
@@ -42,6 +47,52 @@ const defaultProps = {
 };
 
 describe("RecipeFeed", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    mockReducedMotion.mockReturnValue(false);
+  });
+
+  afterEach(() => {
+    cleanup();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it("does not count offscreen cards as consumed when the list nears its end", () => {
+    const onNearEnd = jest.fn();
+    const { getByTestId } = render(
+      <RecipeFeed {...defaultProps} onNearEnd={onNearEnd}
+        recipes={Array.from({ length: 5 }, (_, index) => ({ ...baseRecipe, recipe_id: `${index}` }))} />,
+    );
+    fireEvent(getByTestId("recipe-feed-list"), "viewableItemsChanged", {
+      viewableItems: [{ index: 0 }, { index: 1 }],
+    });
+    fireEvent(getByTestId("recipe-feed-list"), "endReached");
+    expect(onNearEnd).toHaveBeenLastCalledWith(1);
+  });
+
+  it("starts an unseen card in its entry pose rather than flashing it fully visible", () => {
+    const { getByTestId } = render(<RecipeFeed {...defaultProps} recipes={[baseRecipe]} />);
+    expect(getByTestId("recipe-card-recipe-1")).toHaveStyle({ opacity: 0.45 });
+  });
+
+  it("dismisses immediately with reduced motion enabled", () => {
+    mockReducedMotion.mockReturnValue(true);
+    const onDismiss = jest.fn();
+    const { getByTestId } = render(
+      <RecipeFeed {...defaultProps} onDismiss={onDismiss} recipes={[baseRecipe]} />,
+    );
+    fireEvent.press(getByTestId("recipe-card-not-this-recipe-1"));
+    expect(onDismiss).toHaveBeenCalledWith("recipe-1");
+  });
+  it("shows an honest loading tail while existing recipes stay scrollable", () => {
+    const { getByTestId, getByText, queryByText } = render(
+      <RecipeFeed {...defaultProps} isPrefetching recipes={[baseRecipe]} />,
+    );
+    expect(getByTestId("recipe-feed-loading")).toBeTruthy();
+    expect(getByText("Spinach Pasta")).toBeTruthy();
+    expect(queryByText("That's all for now")).toBeNull();
+  });
   it("renders the generated card contract", () => {
     const { getByText } = render(
       <RecipeFeed {...defaultProps} recipes={[baseRecipe]} />,
@@ -84,7 +135,6 @@ describe("RecipeFeed", () => {
   });
 
   it("dismisses a card after the slide-up animation", () => {
-    jest.useFakeTimers();
     const onDismiss = jest.fn();
     const { getByTestId } = render(
       <RecipeFeed
@@ -98,7 +148,6 @@ describe("RecipeFeed", () => {
     act(() => jest.advanceTimersByTime(220));
 
     expect(onDismiss).toHaveBeenCalledWith("recipe-1");
-    jest.useRealTimers();
   });
 
   it("offers add-items and edit-answers actions at honest exhaustion", () => {

@@ -2,13 +2,15 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
   FlatList,
-  Pressable,
+  LayoutAnimation,
   StyleSheet,
   Text,
   View,
   type ViewToken,
 } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
+import { RecipeActivity, RecipePressable } from "@/components/recipe-motion";
+import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
 import type {
   RecipePreferences,
@@ -17,7 +19,7 @@ import type {
 import { RecipeContextBar, RecipeScreenHeader } from "@/components/recipe-screen-header";
 
 const RECIPE_FEED_ENTRY_BATCH_SIZE = 8;
-const RECIPE_FEED_ENTRY_STAGGER_MS = 65;
+const RECIPE_FEED_ENTRY_STAGGER_MS = 35;
 
 type RecipeFeedProps = {
   recipes: RecipeSuggestion[];
@@ -53,53 +55,62 @@ export default function RecipeFeed({
   onEditAnswers,
 }: RecipeFeedProps) {
   const { colors } = useTheme();
-  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60 }).current;
+  const reducedMotion = useReducedMotion();
+  const [revealedIds, setRevealedIds] = useState(new Set<string>());
+  const animatedIds = useRef(new Set<string>()).current;
+  const recipesRef = useRef(recipes);
+  const lastVisibleIndexRef = useRef(-1);
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 10 }).current;
   const onNearEndRef = useRef(onNearEnd);
   useEffect(() => {
     onNearEndRef.current = onNearEnd;
-  }, [onNearEnd]);
+    recipesRef.current = recipes;
+  }, [onNearEnd, recipes]);
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
       const indexes = viewableItems
         .map((item) => item.index)
         .filter((index): index is number => index !== null);
-      if (indexes.length > 0) onNearEndRef.current(Math.max(...indexes));
+      if (indexes.length > 0) {
+        lastVisibleIndexRef.current = Math.max(...indexes);
+        onNearEndRef.current(lastVisibleIndexRef.current);
+        setRevealedIds((previous) => {
+          const next = new Set(previous);
+          for (const index of indexes) {
+            const recipe = recipesRef.current[index];
+            if (recipe) next.add(recipe.recipe_id);
+          }
+          return next.size === previous.size ? previous : next;
+        });
+      }
     },
   ).current;
+  const dismissRecipe = useCallback((recipeId: string) => {
+    const index = recipesRef.current.findIndex((recipe) => recipe.recipe_id === recipeId);
+    onDismiss(recipeId);
+    onNearEndRef.current(index);
+  }, [onDismiss]);
   const renderItem = useCallback(
     ({ item, index }: { item: RecipeSuggestion; index: number }) => (
       <RecipeFeedCard
         recipe={item}
-        entryIndex={index % RECIPE_FEED_ENTRY_BATCH_SIZE}
-        onDismiss={(recipeId) => {
-          onDismiss(recipeId);
-          onNearEnd(index);
-        }}
+        entryIndex={index % 3}
+        revealed={revealedIds.has(item.recipe_id)}
+        animatedIds={animatedIds}
+        reducedMotion={reducedMotion}
+        onDismiss={dismissRecipe}
       />
     ),
-    [onDismiss, onNearEnd],
+    [animatedIds, dismissRecipe, reducedMotion, revealedIds],
   );
 
-  // The skeleton card is reserved for the dismissal-burst edge: every card
-  // was consumed while a refill run is still in flight. Ordinary scrolling
-  // near the end shows no buffering UI because prefetch stays ahead of it.
-  const showSkeleton = isPrefetching && recipes.length === 0;
-  const footer = showSkeleton ? (
-    <RecipeSkeletonCard />
+  const footer = isPrefetching ? (
+    <RecipeLoadingTail reducedMotion={reducedMotion} />
   ) : prefetchError ? (
-    <RecipeFeedMoreError
-      hasRecipes={recipes.length > 0}
-      onRetry={onRetryMore}
-    />
+    <RecipeFeedMoreError hasRecipes={recipes.length > 0} onRetry={onRetryMore} />
   ) : isExhausted && recipes.length > 0 ? (
-    <RecipeFeedTerminator
-      hasRecipes
-      onAddItems={onAddItems}
-      onEditAnswers={onEditAnswers}
-    />
-  ) : (
-    <View style={styles.footerSpace} />
-  );
+    <RecipeFeedTerminator hasRecipes onAddItems={onAddItems} onEditAnswers={onEditAnswers} />
+  ) : <View style={styles.footerSpace} />;
 
   return (
     <FlatList
@@ -127,14 +138,17 @@ export default function RecipeFeed({
         ) : null
       }
       ListFooterComponent={footer}
+      extraData={revealedIds}
+      onEndReached={() => onNearEnd(lastVisibleIndexRef.current)}
+      onEndReachedThreshold={2}
       onViewableItemsChanged={onViewableItemsChanged}
       viewabilityConfig={viewabilityConfig}
       initialNumToRender={RECIPE_FEED_ENTRY_BATCH_SIZE}
       maxToRenderPerBatch={RECIPE_FEED_ENTRY_BATCH_SIZE}
       updateCellsBatchingPeriod={16}
       windowSize={9}
-      contentInsetAdjustmentBehavior="automatic"
-      style={{ backgroundColor: colors.bg }}
+      contentInsetAdjustmentBehavior="never"
+      style={{ flex: 1, backgroundColor: colors.bg }}
       contentContainerStyle={{
         paddingTop: topInset + 12,
         paddingBottom: bottomInset,
@@ -151,58 +165,70 @@ function FeedSeparator() {
 const RecipeFeedCard = memo(function RecipeFeedCard({
   recipe,
   entryIndex,
+  revealed,
+  animatedIds,
+  reducedMotion,
   onDismiss,
 }: {
   recipe: RecipeSuggestion;
   entryIndex: number;
+  revealed: boolean;
+  animatedIds: Set<string>;
+  reducedMotion: boolean;
   onDismiss: (recipeId: string) => void;
 }) {
   const { colors, fonts } = useTheme();
   const [isDismissing, setIsDismissing] = useState(false);
-  const entryOpacity = useRef(new Animated.Value(0)).current;
-  const entryTranslateY = useRef(new Animated.Value(16)).current;
-  const entryScale = useRef(new Animated.Value(0.985)).current;
+  const startsAtRest = useRef(reducedMotion || animatedIds.has(recipe.recipe_id)).current;
+  const entryOpacity = useRef(new Animated.Value(startsAtRest ? 1 : 0.45)).current;
+  const entryTranslateY = useRef(new Animated.Value(startsAtRest ? 0 : 22)).current;
+  const entryScale = useRef(new Animated.Value(startsAtRest ? 1 : 0.985)).current;
   const translateY = useRef(new Animated.Value(0)).current;
   const opacity = useRef(new Animated.Value(1)).current;
-  // Capture the mount-time stagger delay once: dismissing a card above
-  // shifts entryIndex, and a recomputed delay would replay the entry
-  // animation on cards that have already settled.
-  const entryDelay = useRef(
-    Math.min(entryIndex, RECIPE_FEED_ENTRY_BATCH_SIZE - 1) *
-      RECIPE_FEED_ENTRY_STAGGER_MS,
-  ).current;
+  const entryDelay = useRef(entryIndex * RECIPE_FEED_ENTRY_STAGGER_MS).current;
 
   useEffect(() => {
-    entryOpacity.setValue(0);
-    entryTranslateY.setValue(16);
-    entryScale.setValue(0.985);
+    // FlatList mounts offscreen cells ahead of the viewport. Reveal only when
+    // first seen, and remember IDs across virtualization and list growth.
+    if (reducedMotion) {
+      entryOpacity.setValue(1);
+      entryTranslateY.setValue(0);
+      entryScale.setValue(1);
+      if (revealed) animatedIds.add(recipe.recipe_id);
+      return;
+    }
+    if (!revealed || animatedIds.has(recipe.recipe_id)) return;
+    animatedIds.add(recipe.recipe_id);
     const animation = Animated.parallel([
       Animated.timing(entryOpacity, {
-        toValue: 1,
-        duration: 280,
-        delay: entryDelay,
-        useNativeDriver: true,
+        toValue: 1, duration: 260, delay: entryDelay,
+        useNativeDriver: true, isInteraction: false,
       }),
-      Animated.timing(entryTranslateY, {
-        toValue: 0,
-        duration: 360,
-        delay: entryDelay,
-        useNativeDriver: true,
+      Animated.spring(entryTranslateY, {
+        toValue: 0, stiffness: 240, damping: 26, mass: 0.7,
+        delay: entryDelay, useNativeDriver: true, isInteraction: false,
       }),
       Animated.timing(entryScale, {
-        toValue: 1,
-        duration: 360,
-        delay: entryDelay,
-        useNativeDriver: true,
+        toValue: 1, duration: 320, delay: entryDelay,
+        useNativeDriver: true, isInteraction: false,
       }),
     ]);
     animation.start();
-    return () => animation.stop();
-  }, [entryDelay, entryOpacity, entryScale, entryTranslateY]);
+    return () => {
+      animation.stop();
+      entryOpacity.setValue(1);
+      entryTranslateY.setValue(0);
+      entryScale.setValue(1);
+    };
+  }, [animatedIds, entryDelay, entryOpacity, entryScale, entryTranslateY, recipe.recipe_id, reducedMotion, revealed]);
 
   const dismiss = () => {
     if (isDismissing) return;
     setIsDismissing(true);
+    if (reducedMotion) {
+      onDismiss(recipe.recipe_id);
+      return;
+    }
     Animated.parallel([
       Animated.timing(translateY, {
         toValue: -26,
@@ -215,7 +241,10 @@ const RecipeFeedCard = memo(function RecipeFeedCard({
         useNativeDriver: true,
       }),
     ]).start(({ finished }) => {
-      if (finished) onDismiss(recipe.recipe_id);
+      if (finished) {
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        onDismiss(recipe.recipe_id);
+      }
     });
   };
 
@@ -276,7 +305,7 @@ const RecipeFeedCard = memo(function RecipeFeedCard({
       </View>
 
       <View style={[styles.actionRow, { borderTopColor: colors.border }]}>
-        <Pressable
+        <RecipePressable
           onPress={dismiss}
           disabled={isDismissing}
           testID={`recipe-card-not-this-${recipe.recipe_id}`}
@@ -288,26 +317,26 @@ const RecipeFeedCard = memo(function RecipeFeedCard({
           <Text style={[styles.dismissText, { color: colors.textMuted, fontFamily: fonts.bodyStrong }]}>
             Not this
           </Text>
-        </Pressable>
+        </RecipePressable>
       </View>
       </Animated.View>
     </Animated.View>
   );
 });
 
-function RecipeSkeletonCard() {
-  const { colors } = useTheme();
-
+function RecipeLoadingTail({ reducedMotion }: { reducedMotion: boolean }) {
+  const { colors, fonts } = useTheme();
   return (
-    <View
-      testID="recipe-feed-skeleton"
-      accessibilityLabel="Loading more recipes"
-      style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
-    >
-      <View style={[styles.skeletonLabel, { backgroundColor: colors.surfaceAlt }]} />
-      <View style={[styles.skeletonTitle, { backgroundColor: colors.surfaceAlt }]} />
-      <View style={[styles.skeletonLine, { backgroundColor: colors.surfaceAlt }]} />
-      <View style={[styles.skeletonLineShort, { backgroundColor: colors.surfaceAlt }]} />
+    <View testID="recipe-feed-loading" accessibilityRole="progressbar"
+      accessibilityLabel="Finding more recipes" accessibilityState={{ busy: true }}
+      style={[styles.loadingTail, { borderColor: colors.border }]}>
+      <RecipeActivity reducedMotion={reducedMotion} />
+      <Text style={{ color: colors.textMuted, fontFamily: fonts.body, fontSize: 13 }}>
+        Finding a few more ideas
+      </Text>
+      <Text style={{ color: colors.textMuted, fontFamily: fonts.body, fontSize: 12 }}>
+        You can keep browsing above
+      </Text>
     </View>
   );
 }
@@ -331,7 +360,7 @@ function RecipeFeedMoreError({
           ? "We couldn't load more recipes right now."
           : "We couldn't load recipes right now."}
       </Text>
-      <Pressable
+      <RecipePressable
         onPress={onRetry}
         testID="recipe-feed-more-retry"
         accessibilityRole="button"
@@ -340,7 +369,7 @@ function RecipeFeedMoreError({
         <Text style={[styles.retryText, { color: colors.text, fontFamily: fonts.bodyStrong }]}>
           Try again
         </Text>
-      </Pressable>
+      </RecipePressable>
     </View>
   );
 }
@@ -369,11 +398,11 @@ function RecipeFeedTerminator({
       </Text>
       <Text style={[styles.terminatorText, { color: colors.textMuted, fontFamily: fonts.body }]}>
         {hasRecipes
-          ? "You've explored all the recipes your kitchen could reasonably make."
+          ? "You've explored this set of recipe ideas. Add ingredients or edit your answers for a fresh set."
           : "Your inventory can't support a coherent recipe yet. Try adding an item or changing the answers for this session."}
       </Text>
       <View style={styles.terminatorActions}>
-        <Pressable
+        <RecipePressable
           onPress={onAddItems}
           testID="recipe-feed-add-items"
           accessibilityRole="button"
@@ -382,8 +411,8 @@ function RecipeFeedTerminator({
           <Text style={[styles.primaryTerminatorText, { color: colors.accentInk, fontFamily: fonts.bodyStrong }]}>
             Add items
           </Text>
-        </Pressable>
-        <Pressable
+        </RecipePressable>
+        <RecipePressable
           onPress={onEditAnswers}
           testID="recipe-feed-edit-answers"
           accessibilityRole="button"
@@ -392,7 +421,7 @@ function RecipeFeedTerminator({
           <Text style={[styles.secondaryTerminatorText, { color: colors.text, fontFamily: fonts.bodyStrong }]}>
             Edit answers
           </Text>
-        </Pressable>
+        </RecipePressable>
       </View>
     </View>
   );
@@ -400,23 +429,29 @@ function RecipeFeedTerminator({
 
 const styles = StyleSheet.create({
   separator: {
-    height: 10,
+    height: 14,
   },
+  loadingTail: { marginHorizontal: 24, marginTop: 18, minHeight: 126, alignItems: "center", justifyContent: "center", gap: 7, borderTopWidth: StyleSheet.hairlineWidth },
   footerSpace: {
     height: 24,
   },
   card: {
     marginHorizontal: 16,
     padding: 18,
-    borderWidth: 1,
-    borderRadius: 18,
-    overflow: "hidden",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 20,
+    shadowColor: "#000",
+    shadowOpacity: 0.045,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   cardTopRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
     minHeight: 28,
+    flexWrap: "wrap",
   },
   generatedPill: {
     minHeight: 26,
@@ -466,10 +501,12 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     marginTop: 18,
     paddingTop: 14,
+    alignItems: "flex-start",
   },
   dismissButton: {
     minHeight: 44,
-    borderRadius: 11,
+    paddingHorizontal: 16,
+    borderRadius: 100,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -477,29 +514,6 @@ const styles = StyleSheet.create({
   },
   dismissText: {
     fontSize: 12,
-  },
-  skeletonLabel: {
-    width: 86,
-    height: 24,
-    borderRadius: 100,
-  },
-  skeletonTitle: {
-    width: "78%",
-    height: 26,
-    borderRadius: 7,
-    marginTop: 18,
-  },
-  skeletonLine: {
-    width: "55%",
-    height: 13,
-    borderRadius: 5,
-    marginTop: 14,
-  },
-  skeletonLineShort: {
-    width: "35%",
-    height: 13,
-    borderRadius: 5,
-    marginTop: 8,
   },
   moreError: {
     marginHorizontal: 16,
@@ -525,7 +539,8 @@ const styles = StyleSheet.create({
   },
   terminator: {
     marginHorizontal: 16,
-    padding: 20,
+    marginTop: 18,
+    padding: 24,
     borderWidth: 1,
     borderRadius: 18,
     alignItems: "center",

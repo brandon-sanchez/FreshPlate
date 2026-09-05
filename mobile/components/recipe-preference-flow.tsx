@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import {
-  Pressable,
+
   ScrollView,
   StyleSheet,
   Text,
@@ -8,6 +8,7 @@ import {
   View,
 } from "react-native";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
+import { RecipePressable } from "@/components/recipe-motion";
 import { useTheme } from "@/hooks/useTheme";
 import type {
   RecipePreferenceKey,
@@ -146,7 +147,7 @@ export default function RecipePreferenceFlow({
             Recipe guide
           </Text>
         </View>
-        <Pressable
+        <RecipePressable
           onPress={onCancel}
           testID="recipe-preference-cancel"
           accessibilityRole="button"
@@ -155,7 +156,7 @@ export default function RecipePreferenceFlow({
           style={styles.closeButton}
         >
           <FontAwesome name="close" size={18} color={colors.textMuted} />
-        </Pressable>
+        </RecipePressable>
       </View>
 
       <View style={styles.progressRow} accessibilityLabel="Question progress">
@@ -220,7 +221,7 @@ export default function RecipePreferenceFlow({
           {current.options?.map((option, index) => {
             const selected = answers[current.key] === option;
             return (
-              <Pressable
+              <RecipePressable
                 key={option}
                 onPress={() => selectOption(option)}
                 testID={`recipe-preference-option-${current.key}-${index}`}
@@ -248,14 +249,14 @@ export default function RecipePreferenceFlow({
                 {selected ? (
                   <FontAwesome name="check" size={14} color={colors.accent} />
                 ) : null}
-              </Pressable>
+              </RecipePressable>
             );
           })}
         </View>
       )}
 
       <View style={styles.actions}>
-        <Pressable
+        <RecipePressable
           onPress={stepIndex > 0 ? () => setStepIndex((previous) => previous - 1) : onCancel}
           testID={stepIndex > 0 ? "recipe-preference-back" : "recipe-preference-cancel-footer"}
           accessibilityRole="button"
@@ -264,8 +265,8 @@ export default function RecipePreferenceFlow({
           <Text style={{ color: colors.textMuted, fontFamily: fonts.bodyStrong }}>
             {stepIndex > 0 ? "Back" : "Cancel"}
           </Text>
-        </Pressable>
-        <Pressable
+        </RecipePressable>
+        <RecipePressable
           onPress={skipQuestion}
           testID="recipe-preference-skip-question"
           accessibilityRole="button"
@@ -274,9 +275,9 @@ export default function RecipePreferenceFlow({
           <Text style={{ color: colors.textMuted, fontFamily: fonts.bodyStrong }}>
             Skip this
           </Text>
-        </Pressable>
+        </RecipePressable>
         {current.freeText ? (
-          <Pressable
+          <RecipePressable
             onPress={submitFreeText}
             testID="recipe-preference-next"
             accessibilityRole="button"
@@ -285,11 +286,11 @@ export default function RecipePreferenceFlow({
             <Text style={{ color: colors.accentInk, fontFamily: fonts.bodyStrong }}>
               Generate recipes
             </Text>
-          </Pressable>
+          </RecipePressable>
         ) : null}
       </View>
 
-      <Pressable
+      <RecipePressable
         onPress={() => onComplete(draftAnswers)}
         testID="recipe-preference-skip-flow"
         accessibilityRole="button"
@@ -298,7 +299,7 @@ export default function RecipePreferenceFlow({
         <Text style={{ color: colors.textMuted, fontFamily: fonts.body }}>
           Skip remaining questions and generate
         </Text>
-      </Pressable>
+      </RecipePressable>
     </ScrollView>
   );
 }
