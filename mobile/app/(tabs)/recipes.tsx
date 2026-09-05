@@ -1,12 +1,15 @@
 import { useCallback, useState } from "react";
 import {
-  Pressable,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
+import Feather from "@expo/vector-icons/Feather";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -25,10 +28,10 @@ import LoadingState from "@/components/LoadingState";
 import RecipeFeed from "@/components/recipe-feed";
 import RecipeGenerationLoader from "@/components/recipe-generation-loader";
 import RecipePreferenceFlow from "@/components/recipe-preference-flow";
-import {
-  RecipeContextBar,
-  RecipeScreenHeader,
-} from "@/components/recipe-screen-header";
+import RecipeActionButton from "@/components/recipe-action-button";
+import RecipeContextComposer from "@/components/recipe-context-composer";
+import { RecipePressable } from "@/components/recipe-motion";
+import { RecipeScreenHeader } from "@/components/recipe-screen-header";
 
 export default function RecipesScreen() {
   const { colors, fonts } = useTheme();
@@ -44,9 +47,16 @@ export default function RecipesScreen() {
 
   const generate = useCallback(
     (nextPreferences: RecipePreferences) => {
-      setPreferences(nextPreferences);
+      Keyboard.dismiss();
+      const normalizedPreferences = { ...nextPreferences };
+      if (normalizedPreferences.occasion?.trim()) {
+        normalizedPreferences.occasion = normalizedPreferences.occasion.trim();
+      } else {
+        delete normalizedPreferences.occasion;
+      }
+      setPreferences(normalizedPreferences);
       setFlowOpen(false);
-      feed.start(buildRecipeFeedSessionRequest(items, nextPreferences));
+      feed.start(buildRecipeFeedSessionRequest(items, normalizedPreferences));
     },
     [feed, items],
   );
@@ -54,7 +64,10 @@ export default function RecipesScreen() {
   if (inventory.isPending) {
     return (
       <View
-        style={[styles.stateContainer, { backgroundColor: colors.bg, paddingTop: insets.top }]}
+        style={[
+          styles.stateContainer,
+          { backgroundColor: colors.bg, paddingTop: insets.top },
+        ]}
       >
         <LoadingState label="Loading your fridge..." />
       </View>
@@ -64,7 +77,10 @@ export default function RecipesScreen() {
   if (inventory.isError) {
     return (
       <View
-        style={[styles.stateContainer, { backgroundColor: colors.bg, paddingTop: insets.top }]}
+        style={[
+          styles.stateContainer,
+          { backgroundColor: colors.bg, paddingTop: insets.top },
+        ]}
       >
         <ErrorState onRetry={() => inventory.refetch()} />
       </View>
@@ -73,7 +89,8 @@ export default function RecipesScreen() {
 
   if (flowOpen) {
     return (
-      <View
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={[
           styles.stateContainer,
           {
@@ -83,13 +100,13 @@ export default function RecipesScreen() {
           },
         ]}
       >
-        <RecipeScreenHeader subtitle="Shape this session's suggestions" />
+        <RecipeScreenHeader subtitle="Find something that feels right" />
         <RecipePreferenceFlow
           initialPreferences={preferences}
           onComplete={generate}
           onCancel={() => setFlowOpen(false)}
         />
-      </View>
+      </KeyboardAvoidingView>
     );
   }
 
@@ -146,9 +163,14 @@ export default function RecipesScreen() {
   if (feed.status === "error") {
     return (
       <View
-        style={[styles.stateContainer, { backgroundColor: colors.bg, paddingTop: insets.top }]}
+        style={[
+          styles.stateContainer,
+          { backgroundColor: colors.bg, paddingTop: insets.top },
+        ]}
       >
-        <RecipeScreenHeader subtitle={recipeContextLabel(items.length, preferences)} />
+        <RecipeScreenHeader
+          subtitle={recipeContextLabel(items.length, preferences)}
+        />
         <ErrorState
           title="We couldn't generate recipes"
           message="The AI kitchen is unavailable right now. Your answers are still here to try again."
@@ -180,64 +202,100 @@ export default function RecipesScreen() {
   }
 
   return (
-    <ScrollView
+    <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.bg }}
-      contentContainerStyle={{
-        paddingTop: insets.top + 12,
-        paddingBottom: tabBarHeight + 28,
-      }}
-      contentInsetAdjustmentBehavior="automatic"
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
-      <RecipeScreenHeader subtitle="AI picks from your kitchen" />
-
-      <RecipeContextBar
-        itemCount={items.length}
-        preferences={preferences}
-        onAsk={() => setFlowOpen(true)}
-      />
-
-      <View
-        style={[
-          styles.promptCard,
-          { backgroundColor: colors.surface, borderColor: colors.border },
-        ]}
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colors.bg }}
+        contentContainerStyle={{
+          paddingTop: insets.top + 12,
+          paddingBottom: tabBarHeight + 28,
+        }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
       >
-        <View style={[styles.promptIcon, { backgroundColor: colors.accentSoft }]}>
-          <FontAwesome name="magic" size={24} color={colors.accent} />
-        </View>
-        <Text style={[styles.promptTitle, { color: colors.text, fontFamily: fonts.display }]}>
-          What sounds good?
-        </Text>
-        <Text style={[styles.promptText, { color: colors.textMuted, fontFamily: fonts.body }]}>
-          Answer a few quick questions or generate from your inventory alone.
-        </Text>
-      </View>
+        <RecipeScreenHeader subtitle="AI picks from your kitchen" />
 
-      <View style={styles.buttonStack}>
-        <Pressable
-          onPress={() => generate(preferences)}
-          accessibilityRole="button"
-          style={[styles.primaryAction, { backgroundColor: colors.accent }]}
-        >
-          <FontAwesome name="magic" size={15} color={colors.accentInk} />
-          <Text style={[styles.primaryActionText, { color: colors.accentInk, fontFamily: fonts.bodyStrong }]}>
-            Generate from my fridge
+        <View style={[styles.promptCard, { borderColor: colors.border }]}>
+          <View style={styles.kitchenLabel}>
+            <Feather name="feather" size={15} color={colors.accent} />
+            <Text
+              style={[
+                styles.kitchenLabelText,
+                { color: colors.accent, fontFamily: fonts.bodyStrong },
+              ]}
+            >
+              {items.length} {items.length === 1 ? "ingredient" : "ingredients"}{" "}
+              to start with
+            </Text>
+          </View>
+          <Text
+            style={[
+              styles.promptTitle,
+              { color: colors.text, fontFamily: fonts.display },
+            ]}
+          >
+            What sounds{"\n"}good today?
           </Text>
-        </Pressable>
-        <Pressable
-          onPress={() => setFlowOpen(true)}
-          accessibilityRole="button"
-          style={[styles.secondaryAction, { borderColor: colors.border, backgroundColor: colors.surface }]}
-        >
-          <FontAwesome name="list" size={14} color={colors.textMuted} />
-          <Text style={[styles.secondaryActionText, { color: colors.text, fontFamily: fonts.bodyStrong }]}>
-            {countAnsweredPreferences(preferences) > 0
-              ? "Edit session answers"
-              : "Ask me questions first"}
+          <Text
+            style={[
+              styles.promptText,
+              { color: colors.textMuted, fontFamily: fonts.body },
+            ]}
+          >
+            Turn what you have into something you want to cook.
           </Text>
-        </Pressable>
-      </View>
-    </ScrollView>
+        </View>
+
+        <View style={styles.buttonStack}>
+          <Text
+            style={[
+              styles.composerLabel,
+              { color: colors.textMuted, fontFamily: fonts.bodyStrong },
+            ]}
+          >
+            Have something in mind?
+          </Text>
+          <RecipeContextComposer
+            value={preferences.occasion ?? ""}
+            onChangeText={(occasion) =>
+              setPreferences((previous) => ({ ...previous, occasion }))
+            }
+            onSubmit={() => generate(preferences)}
+            testID="recipe-session-context"
+          />
+          <RecipeActionButton
+            label={
+              preferences.occasion?.trim()
+                ? "Generate my recipes"
+                : "Generate from my fridge"
+            }
+            onPress={() => generate(preferences)}
+            testID="recipe-generate"
+            style={styles.primaryAction}
+          />
+          <RecipePressable
+            onPress={() => setFlowOpen(true)}
+            accessibilityRole="button"
+            style={styles.secondaryAction}
+          >
+            <Feather name="sliders" size={15} color={colors.accent} />
+            <Text
+              style={[
+                styles.secondaryActionText,
+                { color: colors.text, fontFamily: fonts.bodyStrong },
+              ]}
+            >
+              {countAnsweredPreferences(preferences) > 0
+                ? "Edit session answers"
+                : "Ask me questions first"}
+            </Text>
+            <Feather name="arrow-right" size={15} color={colors.accent} />
+          </RecipePressable>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -246,52 +304,42 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   promptCard: {
-    marginHorizontal: 16,
+    marginHorizontal: 24,
     marginTop: 16,
-    padding: 24,
-    borderWidth: 1,
-    borderRadius: 18,
-    alignItems: "center",
+    paddingTop: 24,
+    paddingBottom: 32,
+    borderTopWidth: 1,
   },
-  promptIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+  kitchenLabel: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 12,
+    gap: 8,
+    marginBottom: 20,
   },
+  kitchenLabelText: { fontSize: 12, lineHeight: 18 },
   promptTitle: {
-    fontSize: 19,
-    letterSpacing: -0.3,
+    fontSize: 40,
+    lineHeight: 46,
+    letterSpacing: -1.2,
   },
   promptText: {
-    fontSize: 13,
-    lineHeight: 19,
-    textAlign: "center",
-    marginTop: 7,
+    fontSize: 15,
+    lineHeight: 23,
+    marginTop: 14,
     maxWidth: 290,
   },
   buttonStack: {
-    marginHorizontal: 16,
-    marginTop: 18,
-    gap: 10,
+    marginHorizontal: 24,
+    marginTop: 4,
+    gap: 12,
   },
+  composerLabel: { fontSize: 13, lineHeight: 20, marginLeft: 2 },
   primaryAction: {
-    minHeight: 52,
-    borderRadius: 13,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-  },
-  primaryActionText: {
-    fontSize: 14,
+    marginTop: 8,
   },
   secondaryAction: {
     minHeight: 50,
-    borderWidth: 1,
-    borderRadius: 13,
+    borderRadius: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",

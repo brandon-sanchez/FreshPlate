@@ -20,13 +20,15 @@ if (!supabasePublishableKey) {
   );
 }
 
+const isWebServer = Platform.OS === "web" && typeof window === "undefined";
+
 export const supabase = createClient(supabaseUrl, supabasePublishableKey, {
   auth: {
     // AsyncStorage = React Native's key-value storage (like Python's shelve).
     // Lets Supabase save/restore the session so users stay logged in across app restarts.
-    storage: AsyncStorage,
-    autoRefreshToken: true,   // automatically refresh expired JWT tokens
-    persistSession: true,     // save session to AsyncStorage
-    detectSessionInUrl: Platform.OS === "web", // only needed for web OAuth redirects
+    storage: isWebServer ? undefined : AsyncStorage,
+    autoRefreshToken: !isWebServer,
+    persistSession: !isWebServer,
+    detectSessionInUrl: Platform.OS === "web" && !isWebServer,
   },
 });

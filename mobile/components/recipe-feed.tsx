@@ -1,25 +1,40 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
-  Animated,
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import {
+  Animated as NativeAnimated,
   FlatList,
-  LayoutAnimation,
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
   type ViewToken,
 } from "react-native";
+import Animated, {
+  Easing,
+  LinearTransition,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+  type SharedValue,
+} from "react-native-reanimated";
 import Feather from "@expo/vector-icons/Feather";
+import RecipeActionButton from "@/components/recipe-action-button";
+import RecipeIngredientsSheet from "@/components/recipe-ingredients-sheet";
 import { RecipeActivity, RecipePressable } from "@/components/recipe-motion";
+import {
+  RecipeContextBar,
+  RecipeScreenHeader,
+} from "@/components/recipe-screen-header";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
-import type {
-  RecipePreferences,
-  RecipeSuggestion,
-} from "@/types/recipes";
-import { RecipeContextBar, RecipeScreenHeader } from "@/components/recipe-screen-header";
-
-const RECIPE_FEED_ENTRY_BATCH_SIZE = 8;
-const RECIPE_FEED_ENTRY_STAGGER_MS = 35;
+import type { RecipePreferences, RecipeSuggestion } from "@/types/recipes";
 
 type RecipeFeedProps = {
   recipes: RecipeSuggestion[];
@@ -38,6 +53,10 @@ type RecipeFeedProps = {
   onEditAnswers: () => void;
 };
 
+const replacementTransition = LinearTransition.duration(360).easing(
+  Easing.inOut(Easing.cubic),
+);
+
 export default function RecipeFeed({
   recipes,
   itemCount,
@@ -55,321 +74,609 @@ export default function RecipeFeed({
   onEditAnswers,
 }: RecipeFeedProps) {
   const { colors } = useTheme();
+  const { width, height, fontScale } = useWindowDimensions();
   const reducedMotion = useReducedMotion();
+  const cardHeight = Math.round(
+    Math.min(530, Math.max(480, height * 0.53)) +
+      Math.max(0, fontScale - 1) * 240,
+  );
+  const stride = cardHeight + 20;
+  const [listHeight, setListHeight] = useState(0);
+  const cardFitsViewport = listHeight - bottomInset >= cardHeight + 16;
+  const fanEnabled = fontScale <= 1.3 && cardFitsViewport;
+  const scrollY = useSharedValue(0);
+  useEffect(() => {
+    scrollY.value = 0;
+  }, [fontScale, scrollY]);
+  const listRef = useRef<FlatList<RecipeSuggestion>>(null);
   const [revealedIds, setRevealedIds] = useState(new Set<string>());
+  const [ingredientRecipe, setIngredientRecipe] =
+    useState<RecipeSuggestion | null>(null);
   const animatedIds = useRef(new Set<string>()).current;
   const recipesRef = useRef(recipes);
   const lastVisibleIndexRef = useRef(-1);
-  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 10 }).current;
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 15 }).current;
   const onNearEndRef = useRef(onNearEnd);
   useEffect(() => {
-    onNearEndRef.current = onNearEnd;
     recipesRef.current = recipes;
-  }, [onNearEnd, recipes]);
+    onNearEndRef.current = onNearEnd;
+  }, [recipes, onNearEnd]);
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
       const indexes = viewableItems
         .map((item) => item.index)
         .filter((index): index is number => index !== null);
-      if (indexes.length > 0) {
-        lastVisibleIndexRef.current = Math.max(...indexes);
-        onNearEndRef.current(lastVisibleIndexRef.current);
-        setRevealedIds((previous) => {
-          const next = new Set(previous);
-          for (const index of indexes) {
-            const recipe = recipesRef.current[index];
-            if (recipe) next.add(recipe.recipe_id);
-          }
-          return next.size === previous.size ? previous : next;
-        });
-      }
+      if (!indexes.length) return;
+      lastVisibleIndexRef.current = Math.max(...indexes);
+      onNearEndRef.current(lastVisibleIndexRef.current);
+      setRevealedIds((previous) => {
+        const next = new Set(previous);
+        for (const index of indexes) {
+          const recipe = recipesRef.current[index];
+          if (recipe) next.add(recipe.recipe_id);
+        }
+        return next.size === previous.size ? previous : next;
+      });
     },
   ).current;
-  const dismissRecipe = useCallback((recipeId: string) => {
-    const index = recipesRef.current.findIndex((recipe) => recipe.recipe_id === recipeId);
-    onDismiss(recipeId);
-    onNearEndRef.current(index);
-  }, [onDismiss]);
+  const onScroll = useAnimatedScrollHandler((event) => {
+    scrollY.value = Math.max(0, event.contentOffset.y);
+  });
+  const dismissRecipe = useCallback(
+    (recipeId: string) => {
+      const index = recipesRef.current.findIndex(
+        (recipe) => recipe.recipe_id === recipeId,
+      );
+      onDismiss(recipeId);
+      onNearEndRef.current(index);
+    },
+    [onDismiss],
+  );
   const renderItem = useCallback(
     ({ item, index }: { item: RecipeSuggestion; index: number }) => (
-      <RecipeFeedCard
+      <RecipeFanCard
         recipe={item}
-        entryIndex={index % 3}
+        index={index}
+        scrollY={scrollY}
+        stride={stride}
+        cardHeight={cardHeight}
+        cardWidth={width - 48}
+        reducedMotion={reducedMotion}
+        fanEnabled={fanEnabled}
+        largeText={fontScale > 1.2}
         revealed={revealedIds.has(item.recipe_id)}
         animatedIds={animatedIds}
-        reducedMotion={reducedMotion}
         onDismiss={dismissRecipe}
+        onIngredients={setIngredientRecipe}
       />
     ),
-    [animatedIds, dismissRecipe, reducedMotion, revealedIds],
+    [
+      animatedIds,
+      cardHeight,
+      dismissRecipe,
+      fanEnabled,
+      fontScale,
+      reducedMotion,
+      revealedIds,
+      scrollY,
+      stride,
+      width,
+    ],
   );
-
   const footer = isPrefetching ? (
-    <RecipeLoadingTail reducedMotion={reducedMotion} />
+    <RecipeSkeletonCard cardHeight={cardHeight} reducedMotion={reducedMotion} />
   ) : prefetchError ? (
-    <RecipeFeedMoreError hasRecipes={recipes.length > 0} onRetry={onRetryMore} />
-  ) : isExhausted && recipes.length > 0 ? (
-    <RecipeFeedTerminator hasRecipes onAddItems={onAddItems} onEditAnswers={onEditAnswers} />
-  ) : <View style={styles.footerSpace} />;
-
-  return (
-    <FlatList
-      data={recipes}
-      keyExtractor={(recipe) => recipe.recipe_id}
-      renderItem={renderItem}
-      ItemSeparatorComponent={FeedSeparator}
-      ListHeaderComponent={
-        <View>
-          <RecipeScreenHeader subtitle="Generated for this moment" />
-          <RecipeContextBar
-            itemCount={itemCount}
-            preferences={preferences}
-            onAsk={onAsk}
-          />
-        </View>
-      }
-      ListEmptyComponent={
-        isExhausted ? (
-          <RecipeFeedTerminator
-            hasRecipes={false}
-            onAddItems={onAddItems}
-            onEditAnswers={onEditAnswers}
-          />
-        ) : null
-      }
-      ListFooterComponent={footer}
-      extraData={revealedIds}
-      onEndReached={() => onNearEnd(lastVisibleIndexRef.current)}
-      onEndReachedThreshold={2}
-      onViewableItemsChanged={onViewableItemsChanged}
-      viewabilityConfig={viewabilityConfig}
-      initialNumToRender={RECIPE_FEED_ENTRY_BATCH_SIZE}
-      maxToRenderPerBatch={RECIPE_FEED_ENTRY_BATCH_SIZE}
-      updateCellsBatchingPeriod={16}
-      windowSize={9}
-      contentInsetAdjustmentBehavior="never"
-      style={{ flex: 1, backgroundColor: colors.bg }}
-      contentContainerStyle={{
-        paddingTop: topInset + 12,
-        paddingBottom: bottomInset,
-      }}
-      testID="recipe-feed-list"
+    <View style={styles.ending}>
+      <Text style={[styles.message, { color: colors.textMuted }]}>
+        {recipes.length
+          ? "We couldn't load more recipes right now."
+          : "We couldn't load recipes right now."}
+      </Text>
+      <RecipeActionButton
+        label="Try again"
+        onPress={onRetryMore}
+        testID="recipe-feed-more-retry"
+      />
+    </View>
+  ) : isExhausted ? (
+    <RecipeFeedTerminator
+      hasRecipes={recipes.length > 0}
+      onAddItems={onAddItems}
+      onEditAnswers={onEditAnswers}
     />
+  ) : null;
+  return (
+    <View
+      key={fontScale}
+      style={{ flex: 1, backgroundColor: colors.bg, paddingTop: topInset + 8 }}
+    >
+      <RecipeScreenHeader subtitle="A little inspiration, from your kitchen" />
+      <RecipeContextBar
+        itemCount={itemCount}
+        preferences={preferences}
+        onAsk={onAsk}
+      />
+      <Animated.FlatList
+        ref={listRef}
+        data={recipes}
+        keyExtractor={(recipe) => recipe.recipe_id}
+        renderItem={renderItem}
+        ListFooterComponent={footer}
+        extraData={revealedIds}
+        itemLayoutAnimation={reducedMotion ? undefined : replacementTransition}
+        onLayout={(event) => setListHeight(event.nativeEvent.layout.height)}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+        onEndReached={() => onNearEnd(lastVisibleIndexRef.current)}
+        onEndReachedThreshold={2}
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={viewabilityConfig}
+        initialNumToRender={4}
+        maxToRenderPerBatch={4}
+        windowSize={7}
+        updateCellsBatchingPeriod={16}
+        getItemLayout={(_, index) => ({
+          index,
+          length: stride,
+          offset: stride * index,
+        })}
+        snapToInterval={fanEnabled ? stride : undefined}
+        decelerationRate={fanEnabled ? "fast" : "normal"}
+        removeClippedSubviews={false}
+        showsVerticalScrollIndicator={false}
+        contentInsetAdjustmentBehavior="never"
+        contentContainerStyle={{
+          paddingTop: 8,
+          paddingBottom: bottomInset + 20,
+        }}
+        testID="recipe-feed-list"
+      />
+      <RecipeIngredientsSheet
+        recipe={ingredientRecipe}
+        onClose={() => setIngredientRecipe(null)}
+      />
+    </View>
   );
 }
 
-function FeedSeparator() {
-  return <View style={styles.separator} />;
-}
-
-const RecipeFeedCard = memo(function RecipeFeedCard({
+const RecipeFanCard = memo(function RecipeFanCard({
   recipe,
-  entryIndex,
+  index,
+  scrollY,
+  stride,
+  cardHeight,
+  cardWidth,
+  reducedMotion,
+  fanEnabled,
+  largeText,
   revealed,
   animatedIds,
-  reducedMotion,
   onDismiss,
+  onIngredients,
 }: {
   recipe: RecipeSuggestion;
-  entryIndex: number;
+  index: number;
+  scrollY: SharedValue<number>;
+  stride: number;
+  cardHeight: number;
+  cardWidth: number;
+  reducedMotion: boolean;
+  fanEnabled: boolean;
+  largeText: boolean;
   revealed: boolean;
   animatedIds: Set<string>;
-  reducedMotion: boolean;
   onDismiss: (recipeId: string) => void;
+  onIngredients: (recipe: RecipeSuggestion) => void;
 }) {
   const { colors, fonts } = useTheme();
   const [isDismissing, setIsDismissing] = useState(false);
-  const startsAtRest = useRef(reducedMotion || animatedIds.has(recipe.recipe_id)).current;
-  const entryOpacity = useRef(new Animated.Value(startsAtRest ? 1 : 0.45)).current;
-  const entryTranslateY = useRef(new Animated.Value(startsAtRest ? 0 : 22)).current;
-  const entryScale = useRef(new Animated.Value(startsAtRest ? 1 : 0.985)).current;
-  const translateY = useRef(new Animated.Value(0)).current;
-  const opacity = useRef(new Animated.Value(1)).current;
-  const entryDelay = useRef(entryIndex * RECIPE_FEED_ENTRY_STAGGER_MS).current;
-
+  const dismissalStarted = useRef(false);
+  const startsAtRest = useRef(
+    reducedMotion || animatedIds.has(recipe.recipe_id),
+  ).current;
+  const entryOpacity = useRef(
+    new NativeAnimated.Value(startsAtRest ? 1 : 0.45),
+  ).current;
+  const entryY = useRef(
+    new NativeAnimated.Value(startsAtRest ? 0 : 24),
+  ).current;
+  const opacity = useRef(new NativeAnimated.Value(1)).current;
+  const dismissY = useRef(new NativeAnimated.Value(0)).current;
+  const fanIndex = useSharedValue(index);
+  useLayoutEffect(() => {
+    fanIndex.value = reducedMotion
+      ? index
+      : withTiming(index, {
+          duration: 360,
+          easing: Easing.inOut(Easing.cubic),
+        });
+  }, [fanIndex, index, reducedMotion]);
+  const fanStyle = useAnimatedStyle(() => {
+    // Transpose Card Fan Carousel's arc onto the vertical scroll axis. The
+    // first two cards stay flat; the fan grows without changing cursor order.
+    const progress =
+      reducedMotion || !fanEnabled
+        ? 0
+        : Math.min(1, Math.max(0, (scrollY.value / stride - 1) / 1.5));
+    const position = Math.max(
+      -2,
+      Math.min(2, fanIndex.value - scrollY.value / stride),
+    );
+    const distance = Math.abs(position);
+    return {
+      transform: [
+        { translateX: progress * distance * distance * 19 },
+        { translateY: -progress * position * distance * 19 },
+        { rotate: progress * position * 7 + "deg" },
+        { scale: 1 - progress * Math.min(distance, 1.8) * 0.065 },
+      ],
+    };
+  }, [fanEnabled, index, reducedMotion, stride]);
   useEffect(() => {
-    // FlatList mounts offscreen cells ahead of the viewport. Reveal only when
-    // first seen, and remember IDs across virtualization and list growth.
     if (reducedMotion) {
       entryOpacity.setValue(1);
-      entryTranslateY.setValue(0);
-      entryScale.setValue(1);
+      entryY.setValue(0);
       if (revealed) animatedIds.add(recipe.recipe_id);
       return;
     }
     if (!revealed || animatedIds.has(recipe.recipe_id)) return;
     animatedIds.add(recipe.recipe_id);
-    const animation = Animated.parallel([
-      Animated.timing(entryOpacity, {
-        toValue: 1, duration: 260, delay: entryDelay,
-        useNativeDriver: true, isInteraction: false,
+    const animation = NativeAnimated.parallel([
+      NativeAnimated.timing(entryOpacity, {
+        toValue: 1,
+        duration: 280,
+        useNativeDriver: true,
+        isInteraction: false,
       }),
-      Animated.spring(entryTranslateY, {
-        toValue: 0, stiffness: 240, damping: 26, mass: 0.7,
-        delay: entryDelay, useNativeDriver: true, isInteraction: false,
-      }),
-      Animated.timing(entryScale, {
-        toValue: 1, duration: 320, delay: entryDelay,
-        useNativeDriver: true, isInteraction: false,
+      NativeAnimated.spring(entryY, {
+        toValue: 0,
+        stiffness: 240,
+        damping: 26,
+        mass: 0.7,
+        useNativeDriver: true,
+        isInteraction: false,
       }),
     ]);
     animation.start();
     return () => {
       animation.stop();
       entryOpacity.setValue(1);
-      entryTranslateY.setValue(0);
-      entryScale.setValue(1);
+      entryY.setValue(0);
     };
-  }, [animatedIds, entryDelay, entryOpacity, entryScale, entryTranslateY, recipe.recipe_id, reducedMotion, revealed]);
-
+  }, [
+    animatedIds,
+    entryOpacity,
+    entryY,
+    recipe.recipe_id,
+    reducedMotion,
+    revealed,
+  ]);
+  useEffect(
+    () => () => {
+      opacity.stopAnimation();
+      dismissY.stopAnimation();
+    },
+    [dismissY, opacity],
+  );
   const dismiss = () => {
-    if (isDismissing) return;
+    if (dismissalStarted.current) return;
+    dismissalStarted.current = true;
     setIsDismissing(true);
     if (reducedMotion) {
       onDismiss(recipe.recipe_id);
       return;
     }
-    Animated.parallel([
-      Animated.timing(translateY, {
-        toValue: -26,
-        duration: 220,
+    NativeAnimated.parallel([
+      NativeAnimated.timing(dismissY, {
+        toValue: -48,
+        duration: 260,
         useNativeDriver: true,
       }),
-      Animated.timing(opacity, {
+      NativeAnimated.timing(opacity, {
         toValue: 0,
-        duration: 220,
+        duration: 260,
         useNativeDriver: true,
       }),
     ]).start(({ finished }) => {
       if (finished) {
-        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
         onDismiss(recipe.recipe_id);
       }
     });
   };
-
   return (
-    <Animated.View
-      testID={`recipe-card-${recipe.recipe_id}`}
-      style={{
-        opacity: entryOpacity,
-        transform: [
-          { translateY: entryTranslateY },
-          { scale: entryScale },
-        ],
-      }}
-    >
-      <Animated.View
-      style={[
-        styles.card,
-        { backgroundColor: colors.surface, borderColor: colors.border },
-        { opacity, transform: [{ translateY }] },
-      ]}
-      >
-      <View style={styles.cardTopRow}>
-        <View style={[styles.generatedPill, { backgroundColor: colors.accentSoft }]}>
-          <Feather name="zap" size={12} color={colors.accent} />
-          <Text style={[styles.generatedText, { color: colors.accent, fontFamily: fonts.bodyStrong }]}>
-            Generated
-          </Text>
-        </View>
-        {recipe.saves_expiring.length > 0 ? (
-          <View style={[styles.savesPill, { backgroundColor: colors.surfaceAlt }]}>
-            <Text style={[styles.savesText, { color: colors.warn, fontFamily: fonts.bodyStrong }]}>
-              Saves {recipe.saves_expiring[0]}
-            </Text>
-          </View>
-        ) : null}
-      </View>
-
-      <Text
-        selectable
-        style={[styles.title, { color: colors.text, fontFamily: fonts.display }]}
-      >
-        {recipe.title}
-      </Text>
-
-      <View style={styles.statsRow}>
-        <View style={styles.stat}>
-          <Feather name="clock" size={13} color={colors.textMuted} />
-          <Text style={[styles.statText, { color: colors.textMuted, fontFamily: fonts.body }]}>
-            {recipe.cook_time_minutes} min
-          </Text>
-        </View>
-        <Text
-          selectable
-          style={[styles.matchText, { color: colors.accent, fontFamily: fonts.bodyStrong }]}
+    <View style={{ height: stride, paddingHorizontal: 24 }}>
+      <Animated.View style={fanStyle}>
+        <NativeAnimated.View
+          testID={"recipe-card-" + recipe.recipe_id}
+          style={{ opacity: entryOpacity, transform: [{ translateY: entryY }] }}
         >
-          {recipe.match_percent}% match
-        </Text>
-      </View>
-
-      <View style={[styles.actionRow, { borderTopColor: colors.border }]}>
-        <RecipePressable
-          onPress={dismiss}
-          disabled={isDismissing}
-          testID={`recipe-card-not-this-${recipe.recipe_id}`}
-          accessibilityRole="button"
-          accessibilityLabel={`Not this: ${recipe.title}`}
-          style={[styles.dismissButton, { backgroundColor: colors.surfaceAlt }]}
-        >
-          <Feather name="x" size={14} color={colors.textMuted} />
-          <Text style={[styles.dismissText, { color: colors.textMuted, fontFamily: fonts.bodyStrong }]}>
-            Not this
-          </Text>
-        </RecipePressable>
-      </View>
+          <NativeAnimated.View
+            style={[
+              styles.card,
+              {
+                width: cardWidth,
+                height: cardHeight,
+                backgroundColor: colors.surface,
+                opacity,
+                transform: [{ translateY: dismissY }],
+              },
+            ]}
+          >
+            <View
+              accessibilityLabel="Recipe image placeholder"
+              style={[styles.artwork, { backgroundColor: colors.accentSoft }]}
+            >
+              <Feather
+                name="image"
+                size={34}
+                color={colors.accent}
+                style={{ opacity: 0.3 }}
+              />
+              <View style={styles.imageCaption}>
+                <Feather name="zap" size={13} color={colors.accent} />
+                <Text
+                  style={{
+                    color: colors.accent,
+                    fontFamily: fonts.bodyStrong,
+                    fontSize: 12,
+                  }}
+                >
+                  Generated
+                </Text>
+              </View>
+            </View>
+            <View style={styles.cardContent}>
+              <Text
+                selectable
+                numberOfLines={3}
+                style={{
+                  fontFamily: fonts.display,
+                  fontSize: 24,
+                  lineHeight: 28,
+                  letterSpacing: -0.5,
+                  color: colors.text,
+                }}
+              >
+                {recipe.title}
+              </Text>
+              <View style={styles.facts}>
+                <Feather name="clock" size={14} color={colors.textMuted} />
+                <Text
+                  style={{
+                    color: colors.textMuted,
+                    fontFamily: fonts.body,
+                    fontSize: 13,
+                  }}
+                >
+                  {recipe.cook_time_minutes} min
+                </Text>
+                <Text style={{ color: colors.textSubtle, fontSize: 13 }}>
+                  ·
+                </Text>
+                <Text
+                  style={{
+                    color: colors.textMuted,
+                    fontFamily: fonts.body,
+                    fontSize: 13,
+                  }}
+                >
+                  {recipe.servings} servings
+                </Text>
+                <Text
+                  style={{
+                    marginLeft: "auto",
+                    color: colors.accent,
+                    fontFamily: fonts.bodyStrong,
+                    fontSize: 12,
+                  }}
+                >
+                  {recipe.match_percent}% match
+                </Text>
+              </View>
+              <View style={{ gap: 5, flex: 1 }}>
+                <Text
+                  style={{
+                    color: colors.textMuted,
+                    fontFamily: fonts.bodyStrong,
+                    fontSize: 12,
+                  }}
+                >
+                  Ingredients
+                </Text>
+                <Text
+                  selectable
+                  numberOfLines={2}
+                  style={{
+                    color: colors.text,
+                    fontFamily: fonts.body,
+                    fontSize: 14,
+                    lineHeight: 21,
+                  }}
+                >
+                  {recipe.ingredients
+                    .map((ingredient) => ingredient.name)
+                    .join(" · ")}
+                </Text>
+                {recipe.saves_expiring.length > 0 && (
+                  <Text
+                    numberOfLines={1}
+                    style={{
+                      color: colors.warn,
+                      fontFamily: fonts.body,
+                      fontSize: 12,
+                      marginTop: 3,
+                    }}
+                  >
+                    Uses up {recipe.saves_expiring.join(", ")}
+                  </Text>
+                )}
+              </View>
+              <View
+                style={[
+                  styles.actions,
+                  { borderColor: colors.border },
+                  largeText && {
+                    flexDirection: "column",
+                    alignItems: "stretch",
+                    gap: 4,
+                  },
+                ]}
+              >
+                <RecipeActionButton
+                  label="Not this"
+                  variant="secondary"
+                  onPress={dismiss}
+                  disabled={isDismissing}
+                  testID={"recipe-card-not-this-" + recipe.recipe_id}
+                  accessibilityLabel={"Not this: " + recipe.title}
+                  style={{
+                    minHeight: 48,
+                    paddingHorizontal: 24,
+                    flex: largeText ? undefined : 1,
+                  }}
+                />
+                <RecipePressable
+                  onPress={() => onIngredients(recipe)}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    "View all " +
+                    recipe.ingredients.length +
+                    " ingredients for " +
+                    recipe.title
+                  }
+                  testID={"recipe-card-ingredients-" + recipe.recipe_id}
+                  style={{
+                    minHeight: 48,
+                    paddingHorizontal: 6,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: colors.text,
+                      fontFamily: fonts.bodyStrong,
+                      fontSize: 12,
+                    }}
+                  >
+                    Ingredients
+                  </Text>
+                  <Feather
+                    name="arrow-up-right"
+                    size={17}
+                    color={colors.accent}
+                  />
+                </RecipePressable>
+              </View>
+            </View>
+          </NativeAnimated.View>
+        </NativeAnimated.View>
       </Animated.View>
-    </Animated.View>
+    </View>
   );
 });
 
-function RecipeLoadingTail({ reducedMotion }: { reducedMotion: boolean }) {
-  const { colors, fonts } = useTheme();
-  return (
-    <View testID="recipe-feed-loading" accessibilityRole="progressbar"
-      accessibilityLabel="Finding more recipes" accessibilityState={{ busy: true }}
-      style={[styles.loadingTail, { borderColor: colors.border }]}>
-      <RecipeActivity reducedMotion={reducedMotion} />
-      <Text style={{ color: colors.textMuted, fontFamily: fonts.body, fontSize: 13 }}>
-        Finding a few more ideas
-      </Text>
-      <Text style={{ color: colors.textMuted, fontFamily: fonts.body, fontSize: 12 }}>
-        You can keep browsing above
-      </Text>
-    </View>
-  );
-}
-
-function RecipeFeedMoreError({
-  hasRecipes,
-  onRetry,
+function RecipeSkeletonCard({
+  cardHeight,
+  reducedMotion,
 }: {
-  hasRecipes: boolean;
-  onRetry: () => void;
+  cardHeight: number;
+  reducedMotion: boolean;
 }) {
   const { colors, fonts } = useTheme();
-
+  const opacity = useRef(new NativeAnimated.Value(0.55)).current;
+  useEffect(() => {
+    if (reducedMotion) {
+      opacity.setValue(0.65);
+      return;
+    }
+    const animation = NativeAnimated.loop(
+      NativeAnimated.sequence([
+        NativeAnimated.timing(opacity, {
+          toValue: 0.9,
+          duration: 850,
+          useNativeDriver: true,
+          isInteraction: false,
+        }),
+        NativeAnimated.timing(opacity, {
+          toValue: 0.45,
+          duration: 850,
+          useNativeDriver: true,
+          isInteraction: false,
+        }),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [opacity, reducedMotion]);
   return (
     <View
-      testID="recipe-feed-more-error"
-      style={[styles.moreError, { backgroundColor: colors.surface, borderColor: colors.border }]}
+      testID="recipe-feed-loading"
+      accessibilityRole="progressbar"
+      accessibilityLabel="Finding more recipes"
+      accessibilityState={{ busy: true }}
+      style={{ paddingHorizontal: 24 }}
     >
-      <Text style={[styles.moreErrorText, { color: colors.textMuted, fontFamily: fonts.body }]}>
-        {hasRecipes
-          ? "We couldn't load more recipes right now."
-          : "We couldn't load recipes right now."}
-      </Text>
-      <RecipePressable
-        onPress={onRetry}
-        testID="recipe-feed-more-retry"
-        accessibilityRole="button"
-        style={[styles.retryButton, { borderColor: colors.border }]}
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "center",
+          alignItems: "center",
+          gap: 8,
+          paddingVertical: 16,
+        }}
       >
-        <Text style={[styles.retryText, { color: colors.text, fontFamily: fonts.bodyStrong }]}>
-          Try again
+        <RecipeActivity reducedMotion={reducedMotion} />
+        <Text
+          style={{
+            color: colors.textMuted,
+            fontFamily: fonts.body,
+            fontSize: 13,
+          }}
+        >
+          Finding a few more ideas
         </Text>
-      </RecipePressable>
+      </View>
+      <NativeAnimated.View
+        testID="recipe-feed-skeleton"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        style={[
+          styles.card,
+          { height: cardHeight, backgroundColor: colors.surface, opacity },
+        ]}
+      >
+        <View
+          style={[styles.artwork, { backgroundColor: colors.surfaceAlt }]}
+        />
+        <View style={styles.cardContent}>
+          {(["85%", "62%", "45%", "90%", "70%"] as const).map(
+            (lineWidth, index) => (
+              <View
+                key={lineWidth}
+                style={{
+                  backgroundColor: colors.surfaceAlt,
+                  height: index < 2 ? 23 : 12,
+                  borderRadius: 6,
+                  width: lineWidth,
+                  marginBottom: 5,
+                }}
+              />
+            ),
+          )}
+          <View
+            style={{
+              marginTop: "auto",
+              height: 48,
+              width: "48%",
+              borderRadius: 24,
+              backgroundColor: colors.surfaceAlt,
+            }}
+          />
+        </View>
+      </NativeAnimated.View>
     </View>
   );
 }
@@ -384,209 +691,88 @@ function RecipeFeedTerminator({
   onEditAnswers: () => void;
 }) {
   const { colors, fonts } = useTheme();
-
   return (
-    <View
-      testID="recipe-feed-exhausted"
-      style={[styles.terminator, { backgroundColor: colors.surface, borderColor: colors.border }]}
-    >
-      <View style={[styles.terminatorIcon, { backgroundColor: colors.accentSoft }]}>
-        <Feather name="check" size={18} color={colors.accent} />
-      </View>
-      <Text style={[styles.terminatorTitle, { color: colors.text, fontFamily: fonts.display }]}>
-        {hasRecipes ? "That's all for now" : "Nothing fits this kitchen yet"}
+    <View style={styles.ending}>
+      <View
+        style={{
+          height: 1,
+          width: 40,
+          backgroundColor: colors.accent,
+          marginBottom: 12,
+        }}
+      />
+      <Text
+        style={{
+          fontFamily: fonts.display,
+          fontSize: 28,
+          color: colors.text,
+          textAlign: "center",
+        }}
+      >
+        {hasRecipes ? "That's all for now" : "A little more to work with"}
       </Text>
-      <Text style={[styles.terminatorText, { color: colors.textMuted, fontFamily: fonts.body }]}>
+      <Text
+        style={[
+          styles.message,
+          { fontFamily: fonts.body, color: colors.textMuted },
+        ]}
+      >
         {hasRecipes
           ? "You've explored this set of recipe ideas. Add ingredients or edit your answers for a fresh set."
-          : "Your inventory can't support a coherent recipe yet. Try adding an item or changing the answers for this session."}
+          : "Your inventory can't support a coherent recipe yet. Add an ingredient or change your answers."}
       </Text>
-      <View style={styles.terminatorActions}>
-        <RecipePressable
-          onPress={onAddItems}
-          testID="recipe-feed-add-items"
-          accessibilityRole="button"
-          style={[styles.primaryTerminatorButton, { backgroundColor: colors.accent }]}
-        >
-          <Text style={[styles.primaryTerminatorText, { color: colors.accentInk, fontFamily: fonts.bodyStrong }]}>
-            Add items
-          </Text>
-        </RecipePressable>
-        <RecipePressable
-          onPress={onEditAnswers}
-          testID="recipe-feed-edit-answers"
-          accessibilityRole="button"
-          style={[styles.secondaryTerminatorButton, { borderColor: colors.border }]}
-        >
-          <Text style={[styles.secondaryTerminatorText, { color: colors.text, fontFamily: fonts.bodyStrong }]}>
-            Edit answers
-          </Text>
-        </RecipePressable>
-      </View>
+      <RecipeActionButton
+        label="Add items"
+        onPress={onAddItems}
+        testID="recipe-feed-add-items"
+        style={{ alignSelf: "stretch" }}
+      />
+      <RecipeActionButton
+        label="Edit answers"
+        variant="secondary"
+        onPress={onEditAnswers}
+        testID="recipe-feed-edit-answers"
+        style={{ alignSelf: "stretch" }}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  separator: {
-    height: 14,
-  },
-  loadingTail: { marginHorizontal: 24, marginTop: 18, minHeight: 126, alignItems: "center", justifyContent: "center", gap: 7, borderTopWidth: StyleSheet.hairlineWidth },
-  footerSpace: {
-    height: 24,
-  },
   card: {
-    marginHorizontal: 16,
-    padding: 18,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 20,
-    shadowColor: "#000",
-    shadowOpacity: 0.045,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
+    borderRadius: 24,
+    borderCurve: "continuous",
+    overflow: "hidden",
+    boxShadow: "0 4px 24px rgba(27,31,28,0.07)",
   },
-  cardTopRow: {
+  artwork: { height: 164, alignItems: "center", justifyContent: "center" },
+  imageCaption: {
+    position: "absolute",
+    bottom: 14,
+    left: 20,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    minHeight: 28,
+    gap: 5,
+  },
+  cardContent: { flex: 1, padding: 20, gap: 12 },
+  facts: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     flexWrap: "wrap",
   },
-  generatedPill: {
-    minHeight: 26,
-    paddingHorizontal: 9,
-    borderRadius: 100,
+  actions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    gap: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 12,
   },
-  generatedText: {
-    fontSize: 12,
-    letterSpacing: 0.3,
-  },
-  savesPill: {
-    minHeight: 26,
-    paddingHorizontal: 9,
-    borderRadius: 100,
-    justifyContent: "center",
-  },
-  savesText: {
-    fontSize: 12,
-  },
-  title: {
-    fontSize: 23,
-    lineHeight: 29,
-    letterSpacing: -0.5,
-    marginTop: 16,
-  },
-  statsRow: {
-    flexDirection: "row",
+  ending: {
+    marginHorizontal: 32,
+    paddingVertical: 32,
     alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 14,
+    gap: 16,
   },
-  stat: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-  },
-  statText: {
-    fontSize: 12,
-  },
-  matchText: {
-    fontSize: 12,
-  },
-  actionRow: {
-    borderTopWidth: 1,
-    marginTop: 18,
-    paddingTop: 14,
-    alignItems: "flex-start",
-  },
-  dismissButton: {
-    minHeight: 44,
-    paddingHorizontal: 16,
-    borderRadius: 100,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-  },
-  dismissText: {
-    fontSize: 12,
-  },
-  moreError: {
-    marginHorizontal: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderRadius: 16,
-    alignItems: "center",
-    gap: 10,
-  },
-  moreErrorText: {
-    fontSize: 13,
-  },
-  retryButton: {
-    minHeight: 44,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderRadius: 100,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  retryText: {
-    fontSize: 12,
-  },
-  terminator: {
-    marginHorizontal: 16,
-    marginTop: 18,
-    padding: 24,
-    borderWidth: 1,
-    borderRadius: 18,
-    alignItems: "center",
-    gap: 8,
-  },
-  terminatorIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 3,
-  },
-  terminatorTitle: {
-    fontSize: 19,
-    letterSpacing: -0.3,
-    textAlign: "center",
-  },
-  terminatorText: {
-    fontSize: 13,
-    lineHeight: 19,
-    textAlign: "center",
-    maxWidth: 290,
-  },
-  terminatorActions: {
-    width: "100%",
-    gap: 8,
-    marginTop: 8,
-  },
-  primaryTerminatorButton: {
-    minHeight: 46,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  primaryTerminatorText: {
-    fontSize: 13,
-  },
-  secondaryTerminatorButton: {
-    minHeight: 46,
-    borderWidth: 1,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  secondaryTerminatorText: {
-    fontSize: 13,
-  },
+  message: { fontSize: 14, lineHeight: 22, textAlign: "center" },
 });

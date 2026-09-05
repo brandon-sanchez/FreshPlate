@@ -1,17 +1,35 @@
-import { useEffect, useRef, type ComponentProps } from "react";
-import { Animated, Easing, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
+import {
+  Animated,
+  Easing,
+  Pressable,
+  StyleSheet,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-type RecipePressableProps = Omit<ComponentProps<typeof AnimatedPressable>, "style"> & {
+type RecipePressableProps = Omit<
+  ComponentProps<typeof AnimatedPressable>,
+  "style"
+> & {
   style?: StyleProp<ViewStyle>;
 };
 
 export function RecipePressable({
-  onPressIn, onPressOut, style, ...props
+  onPressIn,
+  onPressOut,
+  onFocus,
+  onBlur,
+  style,
+  ...props
 }: RecipePressableProps) {
+  const { colors } = useTheme();
   const scale = useRef(new Animated.Value(1)).current;
+  const [focused, setFocused] = useState(false);
   const reducedMotion = useReducedMotion();
   useEffect(() => {
     if (reducedMotion) scale.setValue(1);
@@ -20,21 +38,44 @@ export function RecipePressable({
   return (
     <AnimatedPressable
       {...props}
+      onFocus={(event) => {
+        setFocused(true);
+        onFocus?.(event);
+      }}
+      onBlur={(event) => {
+        setFocused(false);
+        onBlur?.(event);
+      }}
       onPressIn={(event) => {
-        if (!reducedMotion) Animated.timing(scale, {
-          toValue: 0.97, duration: 90, useNativeDriver: true,
-        }).start();
+        if (!reducedMotion)
+          Animated.timing(scale, {
+            toValue: 0.97,
+            duration: 90,
+            useNativeDriver: true,
+          }).start();
         onPressIn?.(event);
       }}
       onPressOut={(event) => {
         if (reducedMotion) scale.setValue(1);
-        else Animated.spring(scale, {
-          toValue: 1, stiffness: 350, damping: 24, mass: 0.6,
-          useNativeDriver: true,
-        }).start();
+        else
+          Animated.spring(scale, {
+            toValue: 1,
+            stiffness: 350,
+            damping: 24,
+            mass: 0.6,
+            useNativeDriver: true,
+          }).start();
         onPressOut?.(event);
       }}
-      style={[style, { transform: [{ scale }] }]}
+      style={[
+        style,
+        focused && {
+          outlineColor: colors.accent,
+          outlineWidth: 2,
+          outlineOffset: 3,
+        },
+        { transform: [{ scale }] },
+      ]}
     />
   );
 }
@@ -47,24 +88,40 @@ export function RecipeActivity({ reducedMotion }: { reducedMotion: boolean }) {
       phase.setValue(0);
       return;
     }
-    const animation = Animated.loop(Animated.timing(phase, {
-      toValue: 1, duration: 1500, easing: Easing.linear,
-      useNativeDriver: true, isInteraction: false,
-    }));
+    const animation = Animated.loop(
+      Animated.timing(phase, {
+        toValue: 1,
+        duration: 1500,
+        easing: Easing.linear,
+        useNativeDriver: true,
+        isInteraction: false,
+      }),
+    );
     animation.start();
     return () => animation.stop();
   }, [phase, reducedMotion]);
   return (
-    <View style={styles.dots} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+    <View
+      style={styles.dots}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
       {[0, 1, 2].map((index) => (
-        <Animated.View key={index} style={[
-          styles.dot, { backgroundColor: colors.accent, opacity: reducedMotion ? 0.6 :
-            phase.interpolate({
-              inputRange: [0, 0.15 + index * 0.15, 0.3 + index * 0.15, 1],
-              outputRange: [0.3, 1, 0.3, 0.3],
-            }),
-          },
-        ]} />
+        <Animated.View
+          key={index}
+          style={[
+            styles.dot,
+            {
+              backgroundColor: colors.accent,
+              opacity: reducedMotion
+                ? 0.6
+                : phase.interpolate({
+                    inputRange: [0, 0.15 + index * 0.15, 0.3 + index * 0.15, 1],
+                    outputRange: [0.3, 1, 0.3, 0.3],
+                  }),
+            },
+          ]}
+        />
       ))}
     </View>
   );

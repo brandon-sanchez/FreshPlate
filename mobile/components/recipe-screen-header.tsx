@@ -1,6 +1,6 @@
 import { RecipePressable } from "@/components/recipe-motion";
-import { StyleSheet, Text, View } from "react-native";
-import FontAwesome from "@expo/vector-icons/FontAwesome";
+import { StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import Feather from "@expo/vector-icons/Feather";
 import { useTheme } from "@/hooks/useTheme";
 import { countAnsweredPreferences, recipeContextLabel } from "@/lib/recipes";
 import type { RecipePreferences } from "@/types/recipes";
@@ -11,7 +11,10 @@ export function RecipeScreenHeader({ subtitle }: { subtitle: string }) {
   return (
     <View style={styles.topBar}>
       <Text
-        style={[styles.screenTitle, { color: colors.text, fontFamily: fonts.display }]}
+        style={[
+          styles.screenTitle,
+          { color: colors.text, fontFamily: fonts.display },
+        ]}
       >
         Recipes
       </Text>
@@ -37,18 +40,24 @@ export function RecipeContextBar({
   onAsk: () => void;
 }) {
   const { colors, fonts } = useTheme();
+  const { fontScale } = useWindowDimensions();
+  const largeText = fontScale > 1.2;
   const hasAnswers = countAnsweredPreferences(preferences) > 0;
 
   return (
     <View
       style={[
         styles.contextBar,
-        { backgroundColor: colors.surface, borderColor: colors.border },
+        largeText && styles.stackedContextBar,
+        { borderColor: colors.border },
       ]}
     >
-      <View style={styles.contextCopy}>
-        <FontAwesome name="magic" size={15} color={colors.accent} />
+      <View
+        style={[styles.contextCopy, largeText && styles.stackedContextCopy]}
+      >
+        <Feather name="feather" size={15} color={colors.accent} />
         <Text
+          key={fontScale}
           style={[
             styles.contextText,
             { color: colors.textMuted, fontFamily: fonts.body },
@@ -60,13 +69,18 @@ export function RecipeContextBar({
       <RecipePressable
         onPress={onAsk}
         accessibilityRole="button"
-        style={[styles.askButton, { backgroundColor: colors.surfaceAlt }]}
+        style={[
+          styles.askButton,
+          largeText && styles.stackedAskButton,
+          { backgroundColor: colors.surfaceAlt },
+        ]}
       >
-        <FontAwesome name="list" size={12} color={colors.textMuted} />
+        <Feather name="sliders" size={14} color={colors.accent} />
         <Text
+          key={fontScale}
           style={[
             styles.askButtonText,
-            { color: colors.textMuted, fontFamily: fonts.bodyStrong },
+            { color: colors.accent, fontFamily: fonts.bodyStrong },
           ]}
         >
           {hasAnswers ? "Edit answers" : "Ask me questions"}
@@ -78,25 +92,26 @@ export function RecipeContextBar({
 
 const styles = StyleSheet.create({
   topBar: {
-    paddingHorizontal: 20,
-    marginBottom: 16,
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    marginBottom: 18,
   },
   screenTitle: {
-    fontSize: 22,
-    letterSpacing: -0.6,
+    fontSize: 32,
+    lineHeight: 39,
+    letterSpacing: -0.8,
   },
   screenSubtitle: {
     fontSize: 13,
-    marginTop: 3,
+    lineHeight: 20,
+    marginTop: 4,
   },
   contextBar: {
-    marginHorizontal: 16,
+    marginHorizontal: 24,
     minHeight: 54,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: 0,
-    borderRadius: 14,
-    marginBottom: 14,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    marginBottom: 18,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -111,16 +126,33 @@ const styles = StyleSheet.create({
   },
   contextText: {
     fontSize: 12,
+    lineHeight: 18,
+    flexShrink: 1,
+  },
+  stackedContextBar: {
+    flexDirection: "column",
+    alignItems: "stretch",
+    gap: 12,
+  },
+  stackedContextCopy: {
+    flex: 0,
   },
   askButton: {
     minHeight: 44,
     paddingHorizontal: 11,
+    paddingVertical: 10,
     borderRadius: 100,
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
+    maxWidth: "100%",
+  },
+  stackedAskButton: {
+    alignSelf: "flex-start",
   },
   askButtonText: {
     fontSize: 12,
+    lineHeight: 18,
+    flexShrink: 1,
   },
 });

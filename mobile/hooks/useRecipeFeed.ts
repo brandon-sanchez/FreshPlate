@@ -20,7 +20,6 @@ import type {
 export const RECIPE_FEED_READY_POOL_TARGET = 10;
 export const RECIPE_FEED_PREFETCH_BATCH_CEILING = RECIPE_FEED_PAGE_SIZE;
 export const RECIPE_FEED_MAX_RUNS = 6;
-export const RECIPE_FEED_UNSEEN_BUFFER = 8;
 export { RECIPE_FEED_REQUEST_TIMEOUT_MS };
 
 export type RecipeFeedStatus = "idle" | "loading" | "ready" | "error";
