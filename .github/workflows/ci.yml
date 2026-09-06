@@ -60,6 +60,9 @@ jobs:
     name: Deploy to Cloud Run
     needs: [backend, mobile]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: freshplate-production-deploy
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -67,6 +70,22 @@ jobs:
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Skip superseded main push
+        id: freshness
+        run: |
+          set -euo pipefail
+          latest_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [ "$latest_sha" != "${GITHUB_SHA}" ]; then
+            echo "This push is superseded by $latest_sha; skipping deployment."
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Stop if superseded
+        if: steps.freshness.outputs.current != 'true'
+        run: exit 0
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
@@ -82,8 +101,8 @@ jobs:
           project_id: ${{ vars.GCP_PROJECT_ID }}
           source: backend
           flags: >-
-            --allow-unauthenticated
             --service-account=${{ vars.GCP_CLOUD_RUN_SERVICE_ACCOUNT }}
+            --build-service-account=${{ vars.GCP_CLOUD_BUILD_SERVICE_ACCOUNT }}
             --port=8080
             --memory=512Mi
             --min-instances=0
