@@ -40,6 +40,7 @@ type RecipeFeedProps = {
   onEditAnswers: () => void;
   savedIds?: Set<string>;
   onToggleSave?: (recipe: RecipeSuggestion, saved: boolean) => void;
+  isSavePending?: boolean;
   header?: ReactNode;
 };
 
@@ -64,6 +65,7 @@ export default function RecipeFeed({
   onEditAnswers,
   savedIds = new Set<string>(),
   onToggleSave = () => undefined,
+  isSavePending = false,
   header,
 }: RecipeFeedProps) {
   const { colors } = useTheme();
@@ -146,6 +148,7 @@ export default function RecipeFeed({
         onIngredients={setIngredientRecipe}
         saved={savedIds.has(item.recipe_id)}
         onToggleSave={onToggleSave}
+        isSavePending={isSavePending}
       />
     ),
     [
@@ -309,6 +312,7 @@ const RecipeCard = memo(function RecipeCard({
   onIngredients: (recipe: RecipeSuggestion) => void;
   saved: boolean;
   onToggleSave: (recipe: RecipeSuggestion, saved: boolean) => void;
+  isSavePending: boolean;
 }) {
   const { colors, fonts } = useTheme();
   const [isDismissing, setIsDismissing] = useState(false);
@@ -542,6 +546,7 @@ const RecipeCard = memo(function RecipeCard({
               >
                 <RecipePressable
                   onPress={() => onToggleSave(recipe, saved)}
+                  disabled={isSavePending}
                   accessibilityRole="button"
                   accessibilityLabel={saved ? `Remove ${recipe.title} from saved recipes` : `Save ${recipe.title} to household cookbook`}
                   testID={`recipe-card-save-${recipe.recipe_id}`}

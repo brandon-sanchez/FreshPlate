@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import Feather from "@expo/vector-icons/Feather";
+import Toast from "react-native-toast-message";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -218,7 +219,12 @@ export default function RecipesScreen() {
         onAddItems={() => router.push("/(tabs)/inventory")}
         onEditAnswers={() => setFlowOpen(true)}
         savedIds={saved.savedIds}
-        onToggleSave={(recipe, isSaved) => saved.toggle({ recipe, saved: isSaved })}
+        onToggleSave={(recipe, isSaved) => {
+          void saved.toggle({ recipe, saved: isSaved }).catch(() => {
+            Toast.show({ type: "error", text1: "Couldn't update saved recipes", text2: "Check your connection and try again." });
+          });
+        }}
+        isSavePending={saved.isToggling}
       />
     );
   }
@@ -378,10 +384,13 @@ const styles = StyleSheet.create({
 
 function SavedRecipeRow({ recipe, onRemove }: { recipe: import("@/types/recipes").RecipeSuggestion; onRemove: () => void }) {
   const { colors, fonts } = useTheme();
-  return <View style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 18, gap: 8 }}>
+  return <View style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 12, gap: 8, borderWidth: 1, borderColor: colors.border, flexDirection: "row" }}>
+    <View style={{ width: 110, height: 110, borderRadius: 12, backgroundColor: colors.accentSoft, alignItems: "center", justifyContent: "center" }}><Feather name="image" size={28} color={colors.accent} style={{ opacity: 0.35 }} /></View>
+    <View style={{ flex: 1, gap: 8 }}>
     <View style={{ flexDirection: "row", alignItems: "center" }}><Text style={{ flex: 1, color: colors.text, fontFamily: fonts.display, fontSize: 20 }}>{recipe.title}</Text><RecipePressable onPress={onRemove} accessibilityRole="button" accessibilityLabel={`Remove ${recipe.title} from saved recipes`} style={{ minHeight: 44, minWidth: 44, alignItems: "center", justifyContent: "center" }}><Feather name="bookmark" size={20} color={colors.accent} fill={colors.accent} /></RecipePressable></View>
     <Text style={{ color: colors.textMuted, fontFamily: fonts.body, fontSize: 13 }}>{recipe.cook_time_minutes} min · {recipe.servings} servings · {recipe.match_percent}% match</Text>
     <Text style={{ color: colors.accent, fontFamily: fonts.bodyStrong, fontSize: 12 }}>Household cookbook</Text>
+    </View>
   </View>;
 }
 
