@@ -73,6 +73,10 @@ def _recipe(title: str = "Spinach Pasta") -> dict[str, Any]:
     }
 
 
+def _eligible(index: int = 0) -> dict[str, Any]:
+    return {"candidate_index": index, "verdict": "eligible", "reason": "complete meal"}
+
+
 class StubRetriever:
     async def search(self, query: str, **_: Any) -> list[RetrievedRecipe]:
         assert query == "baby spinach tomatoes"
@@ -110,7 +114,14 @@ def test_authenticated_suggestion_returns_identity_match_and_expiry_badge(
     patch_jwks([signing_key])
     _install_graph_dependencies(
         recipe_app,
-        FakeProvider([{"recipes": [_recipe()]}]),
+        FakeProvider(
+            [
+                {"recipes": [_recipe()]},
+                {
+                    "decisions": [_eligible()]
+                },
+            ]
+        ),
     )
 
     with TestClient(recipe_app) as client:
@@ -142,7 +153,12 @@ def test_same_title_regeneration_gets_a_new_recipe_id(
 ) -> None:
     patch_jwks([signing_key])
     recipe_app.dependency_overrides[get_recipe_provider] = lambda: FakeProvider(
-        [{"recipes": [_recipe()]}]
+        [
+            {"recipes": [_recipe()]},
+            {
+                "decisions": [_eligible()]
+            },
+        ]
     )
     recipe_app.dependency_overrides[get_recipe_retriever] = lambda: StubRetriever()
 
@@ -198,7 +214,11 @@ def test_suggestion_honors_exclusions_and_batch_ceiling(
                     _recipe("Excluded Recipe"),
                     _recipe("Third Recipe"),
                 ]
-            }
+            },
+            {"decisions": [
+                _eligible(),
+                _eligible(1),
+            ]},
         ]
     )
     _install_graph_dependencies(recipe_app, provider)
@@ -297,12 +317,22 @@ class DelayedProvider:
         self,
         _prompt: str,
         *,
-        response_model: type[RecipeGenerationResponse],
+        response_model: type[Any],
         system_instruction: str | None,
         deadline: Any,
-    ) -> RecipeGenerationResponse:
-        del response_model, system_instruction, deadline
+    ) -> Any:
+        del system_instruction, deadline
         await asyncio.sleep(self.delay_seconds)
+        if response_model.__name__ == "MealAssessment":
+            return response_model(
+                decisions=[
+                    {
+                        "candidate_index": 0,
+                        "verdict": "eligible",
+                        "reason": "complete meal",
+                    }
+                ]
+            )
         return RecipeGenerationResponse(recipes=[_recipe()])
 
 
