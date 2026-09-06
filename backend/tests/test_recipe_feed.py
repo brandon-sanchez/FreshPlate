@@ -63,6 +63,19 @@ def _recipe(title: str) -> dict[str, Any]:
     }
 
 
+def _assessment(count: int) -> dict[str, Any]:
+    return {
+        "decisions": [
+            {
+                "candidate_index": index,
+                "verdict": "eligible",
+                "reason": "complete meal",
+            }
+            for index in range(count)
+        ]
+    }
+
+
 class StubRetriever:
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -205,7 +218,10 @@ def test_initial_feed_page_uses_a_five_card_head_batch(
 ) -> None:
     patch_jwks([signing_key])
     provider = FakeProvider(
-        [{"recipes": [_recipe(f"Recipe {index}") for index in range(1, 11)]}]
+        [
+            {"recipes": [_recipe(f"Recipe {index}") for index in range(1, 11)]},
+            _assessment(5),
+        ]
     )
     app = create_app()
     _install_dependencies(
