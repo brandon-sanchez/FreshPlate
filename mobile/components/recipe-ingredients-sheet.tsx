@@ -6,6 +6,7 @@ import { RecipePressable } from "@/components/recipe-motion";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
 import type { RecipeSuggestion } from "@/types/recipes";
+import RecipeSteps from "@/components/recipe-steps";
 
 export default function RecipeIngredientsSheet({
   recipe,
@@ -172,17 +173,6 @@ export default function RecipeIngredientsSheet({
                   >
                     {ingredient.name}
                   </Text>
-                  <Text
-                    style={{
-                      fontFamily: fonts.body,
-                      color: colors.textMuted,
-                      fontSize: 12,
-                    }}
-                  >
-                    {ingredient.inventory_item_id
-                      ? "From your kitchen"
-                      : "Check your pantry"}
-                  </Text>
                 </View>
                 <Text
                   selectable
@@ -207,19 +197,7 @@ export default function RecipeIngredientsSheet({
             >
               STEPS
             </Text>
-            {recipe?.steps.map((step, index) => (
-              <Text
-                key={`${index}-${step}`}
-                selectable
-                style={{
-                  color: colors.text,
-                  lineHeight: 20,
-                  paddingVertical: 4,
-                }}
-              >
-                {index + 1}. {step}
-              </Text>
-            ))}
+            {recipe && <RecipeSteps steps={recipe.steps} />}
           </ScrollView>
           {recipe && (
             <RecipePressable

@@ -42,7 +42,10 @@ describe("recipe preview sheet", () => {
     expect(screen.getByText("Pasta")).toBeTruthy();
     expect(screen.getByText(/2 servings/)).toBeTruthy();
     expect(screen.getByText("Tomato")).toBeTruthy();
-    expect(screen.getByText("1. Boil pasta")).toBeTruthy();
+    expect(screen.getByText("1")).toBeTruthy();
+    expect(screen.getByTestId("recipe-step-body-0").props.children).toBe(
+      "Boil pasta",
+    );
     fireEvent.press(screen.getByLabelText("View full recipe"));
     expect(onOpen).toHaveBeenCalledWith(recipe);
   });
@@ -74,7 +77,10 @@ describe("recipe preview sheet", () => {
       </SafeAreaProvider>,
     );
     expect(screen.getByText("Rice")).toBeTruthy();
-    expect(screen.getByText("1. Steam rice")).toBeTruthy();
+    expect(screen.getByText("1")).toBeTruthy();
+    expect(screen.getByTestId("recipe-step-body-0").props.children).toBe(
+      "Steam rice",
+    );
   });
 
   it("expands the current recipe after opening from a closed sheet and switching recipes", () => {
