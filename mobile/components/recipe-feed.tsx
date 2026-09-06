@@ -445,6 +445,10 @@ const RecipeCard = memo(function RecipeCard({
                   Generated
                 </Text>
               </View>
+              <RecipePressable onPress={() => onToggleSave(recipe, saved)} disabled={isSavePending} accessibilityRole="button" accessibilityLabel={saved ? "Remove " + recipe.title + " from saved recipes" : "Save " + recipe.title + " to household cookbook"} testID={"recipe-card-save-" + recipe.recipe_id} style={styles.saveButton}>
+                <Feather name="bookmark" size={19} color={saved ? colors.accent : colors.textMuted} fill={saved ? colors.accent : "transparent"} />
+                <Text style={{ color: saved ? colors.accent : colors.textMuted, fontFamily: fonts.bodyStrong, fontSize: 12 }}>{saved ? "Saved" : "Save"}</Text>
+              </RecipePressable>
             </View>
             <View
               style={[styles.cardContent, compact && { padding: 16, gap: 8 }]}
@@ -545,19 +549,6 @@ const RecipeCard = memo(function RecipeCard({
                   },
                 ]}
               >
-                <RecipePressable
-                  onPress={() => onToggleSave(recipe, saved)}
-                  disabled={isSavePending}
-                  accessibilityRole="button"
-                  accessibilityLabel={saved ? `Remove ${recipe.title} from saved recipes` : `Save ${recipe.title} to household cookbook`}
-                  testID={`recipe-card-save-${recipe.recipe_id}`}
-                  style={styles.saveButton}
-                >
-                  <Feather name="bookmark" size={19} color={saved ? colors.accent : colors.textMuted} fill={saved ? colors.accent : "transparent"} />
-                  <Text style={{ color: saved ? colors.accent : colors.textMuted, fontFamily: fonts.bodyStrong, fontSize: 12 }}>
-                    {saved ? "Saved" : "Save"}
-                  </Text>
-                </RecipePressable>
                 <RecipeActionButton
                   label="Not this"
                   variant="secondary"

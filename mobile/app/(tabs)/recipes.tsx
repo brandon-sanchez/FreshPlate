@@ -382,12 +382,12 @@ const styles = StyleSheet.create({
   tabText: { fontSize: 13 },
 });
 
-function SavedRecipeRow({ recipe, onRemove }: { recipe: import("@/types/recipes").RecipeSuggestion; onRemove: () => void }) {
+function SavedRecipeRow({ recipe, onRemove, disabled }: { recipe: import("@/types/recipes").RecipeSuggestion; onRemove: () => void; disabled: boolean }) {
   const { colors, fonts } = useTheme();
   return <View style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 12, gap: 8, borderWidth: 1, borderColor: colors.border, flexDirection: "row" }}>
     <View style={{ width: 110, height: 110, borderRadius: 12, backgroundColor: colors.accentSoft, alignItems: "center", justifyContent: "center" }}><Feather name="image" size={28} color={colors.accent} style={{ opacity: 0.35 }} /></View>
     <View style={{ flex: 1, gap: 8 }}>
-    <View style={{ flexDirection: "row", alignItems: "center" }}><Text style={{ flex: 1, color: colors.text, fontFamily: fonts.display, fontSize: 20 }}>{recipe.title}</Text><RecipePressable onPress={onRemove} accessibilityRole="button" accessibilityLabel={`Remove ${recipe.title} from saved recipes`} style={{ minHeight: 44, minWidth: 44, alignItems: "center", justifyContent: "center" }}><Feather name="bookmark" size={20} color={colors.accent} fill={colors.accent} /></RecipePressable></View>
+    <View style={{ flexDirection: "row", alignItems: "center" }}><Text style={{ flex: 1, color: colors.text, fontFamily: fonts.display, fontSize: 20 }}>{recipe.title}</Text><RecipePressable onPress={onRemove} disabled={disabled} accessibilityRole="button" accessibilityLabel={`Remove ${recipe.title} from saved recipes`} style={{ minHeight: 44, minWidth: 44, alignItems: "center", justifyContent: "center" }}><Feather name="bookmark" size={20} color={colors.accent} fill={colors.accent} /></RecipePressable></View>
     <Text style={{ color: colors.textMuted, fontFamily: fonts.body, fontSize: 13 }}>{recipe.cook_time_minutes} min · {recipe.servings} servings · {recipe.match_percent}% match</Text>
     <Text style={{ color: colors.accent, fontFamily: fonts.bodyStrong, fontSize: 12 }}>Household cookbook</Text>
     </View>
@@ -406,5 +406,5 @@ function SavedRecipesContent({ saved }: { saved: ReturnType<typeof useSavedRecip
   if (saved.isPending) return <LoadingState label="Loading your cookbook..." />;
   if (saved.isError) return <ErrorState onRetry={() => saved.refetch()} />;
   if (!saved.data?.length) return <EmptyState icon={<View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: colors.accentSoft, alignItems: "center", justifyContent: "center" }}><Feather name="bookmark" size={24} color={colors.accent} /></View>} title="Nothing saved yet" message="Tap the bookmark on any recipe to keep it in your household cookbook" />;
-  return <ScrollView contentContainerStyle={{ padding: 24, gap: 12 }} showsVerticalScrollIndicator={false}>{saved.data.map((entry) => <SavedRecipeRow key={entry.recipe_id} recipe={entry.recipe} onRemove={() => void saved.toggle({ recipe: entry.recipe, saved: true })} />)}</ScrollView>;
+  return <ScrollView contentContainerStyle={{ padding: 24, gap: 12 }} showsVerticalScrollIndicator={false}>{saved.data.map((entry) => <SavedRecipeRow key={entry.recipe_id} recipe={entry.recipe} disabled={saved.isToggling} onRemove={() => { void saved.toggle({ recipe: entry.recipe, saved: true }).catch(() => Toast.show({ type: "error", text1: "Couldn't update saved recipes", text2: "Check your connection and try again." })); }} />)}</ScrollView>;
 }
