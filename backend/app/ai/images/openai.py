@@ -5,9 +5,11 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+from io import BytesIO
 from typing import Any
 
 import httpx
+from PIL import Image, UnidentifiedImageError
 from pydantic import SecretStr
 
 from app.ai.llm.errors import ProviderError
@@ -15,6 +17,7 @@ from app.ai.llm.errors import ProviderError
 ENDPOINT = "https://api.openai.com/v1/images/generations"
 MAX_PROMPT_BYTES = 8000
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
+MAX_ENVELOPE_BYTES = 14 * 1024 * 1024
 MODEL = "gpt-image-2"
 
 
@@ -63,20 +66,17 @@ class OpenAIImageProvider:
             )
             response = await client.send(request, stream=True, follow_redirects=False)
             if response.status_code < 200 or response.status_code >= 300:
-                    raise ProviderError(
-                        "Image provider unavailable", status_code=response.status_code
-                    )
+                raise ProviderError(
+                    "Image provider unavailable", status_code=response.status_code
+                )
             content_length = response.headers.get("content-length", "")
-            if (
-                    content_length.isdigit()
-                    and int(content_length) > MAX_RESPONSE_BYTES
-                ):
-                    raise ProviderError("Image provider response is too large")
+            if content_length.isdigit() and int(content_length) > MAX_ENVELOPE_BYTES:
+                raise ProviderError("Image provider response is too large")
             chunks: list[bytes] = []
             total = 0
             async for chunk in response.aiter_bytes():
                 total += len(chunk)
-                if total > MAX_RESPONSE_BYTES:
+                if total > MAX_ENVELOPE_BYTES:
                     raise ProviderError("Image provider response is too large")
                 chunks.append(chunk)
             await response.aclose()
@@ -98,15 +98,22 @@ class OpenAIImageProvider:
                 raise ProviderError(
                     "Image provider returned an invalid image", cause=exc
                 ) from exc
-            if len(image) > MAX_RESPONSE_BYTES or not image.startswith(
-                b"\x89PNG\r\n\x1a\n"
-            ):
+            if len(image) > MAX_RESPONSE_BYTES:
                 raise ProviderError("Image provider returned an invalid PNG")
+            try:
+                with Image.open(BytesIO(image)) as decoded:
+                    decoded.verify()
+            except (UnidentifiedImageError, OSError) as exc:
+                raise ProviderError(
+                    "Image provider returned an invalid PNG", cause=exc
+                ) from exc
             return image
         except ProviderError:
             raise
         except (httpx.HTTPError, ValueError, TypeError) as exc:
             raise ProviderError("Image provider unavailable", cause=exc) from exc
         finally:
+            if "response" in locals():
+                await response.aclose()
             if close_client:
                 await client.aclose()

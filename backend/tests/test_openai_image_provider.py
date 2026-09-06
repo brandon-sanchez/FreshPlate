@@ -48,6 +48,23 @@ async def test_generate_sends_fixed_recipe_parameters_and_png() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_sends_ingredient_parameters() -> None:
+    async def handler(request):
+        body = json.loads(request.content)
+        assert body["size"] == "1024x1024"
+        assert body["quality"] == "low"
+        return httpx.Response(
+            200, json={"data": [{"b64_json": base64.b64encode(PNG).decode()}]}
+        )
+
+    async with client_for(handler) as client:
+        result = await OpenAIImageProvider(
+            "key", enabled=True, monthly_cap_microusd=1, client=client
+        ).generate("ingredient", kind="ingredient")
+    assert result == PNG
+
+
+@pytest.mark.asyncio
 async def test_disabled_or_empty_key_skips_http() -> None:
     async def handler(request):
         raise AssertionError("HTTP must not run")
@@ -62,6 +79,12 @@ async def test_disabled_or_empty_key_skips_http() -> None:
         assert (
             await OpenAIImageProvider(
                 SecretStr("key"), enabled=False, client=client
+            ).generate("x", kind="ingredient")
+            is None
+        )
+        assert (
+            await OpenAIImageProvider(
+                SecretStr("key"), enabled=True, monthly_cap_microusd=0, client=client
             ).generate("x", kind="ingredient")
             is None
         )
