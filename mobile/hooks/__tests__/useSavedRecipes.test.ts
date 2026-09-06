@@ -1,5 +1,5 @@
 import React from "react";
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react-native";
+import { act, cleanupAsync, renderHook, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { RecipeSuggestion } from "@/types/recipes";
 
@@ -28,11 +28,22 @@ import { useSavedRecipes } from "@/hooks/useSavedRecipes";
 const recipe = { recipe_id: "11111111-1111-4111-8111-111111111111", title: "Pasta", cook_time_minutes: 20, servings: 2, ingredients: [], steps: [], match_percent: 100, saves_expiring: [] } as RecipeSuggestion;
 function wrapper({ children }: { children: React.ReactNode }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
+  queryClients.add(client);
   return React.createElement(QueryClientProvider, { client }, children);
 }
 
+const queryClients = new Set<QueryClient>();
+
 afterEach(async () => {
-  cleanup();
+  await cleanupAsync();
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  for (const client of queryClients) {
+    for (const mutation of client.getMutationCache().getAll()) mutation.destroy();
+    client.clear();
+  }
+  queryClients.clear();
 });
 
 describe("useSavedRecipes", () => {
