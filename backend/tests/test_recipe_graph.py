@@ -345,7 +345,7 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
     assert provider.calls[1]["deadline"] is deadline
     assert retriever.calls[0]["deadline"] is deadline
     assert result["metadata"]["prompt_name"] == "generate_recipes"
-    assert result["metadata"]["prompt_version"] == 2
+    assert result["metadata"]["prompt_version"] == 3
     assert result["metadata"]["request_id"] == "request-123"
 
 

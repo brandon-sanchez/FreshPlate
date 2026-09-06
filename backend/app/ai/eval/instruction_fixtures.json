@@ -1,0 +1,26 @@
+[
+  {
+    "name": "vague instructions",
+    "instruction": "Cook the chicken. Add the vegetables. Serve.",
+    "expected": "reject",
+    "reason": "Missing ordered actions, equipment, heat, timing, and doneness."
+  },
+  {
+    "name": "missing heat and timing",
+    "instruction": "Saute the onions until done, then add the rice and cook it.",
+    "expected": "reject",
+    "reason": "Heat, approximate timing, liquid, and a rice doneness cue are missing."
+  },
+  {
+    "name": "unsupported ingredient",
+    "instruction": "Make the inventory tomato and pasta into dinner with 2 pounds of shrimp.",
+    "expected": "reject",
+    "reason": "The shrimp is not present in the supplied inventory."
+  },
+  {
+    "name": "complete brief pasta",
+    "instruction": "Serves 4.\n\nBoil the pasta\nBoil 12 ounces spaghetti in a large pot of water according to the package directions until al dente, then drain.\n\nStart the sauce\nHeat 2 tablespoons oil in a skillet over medium heat. Cook 3 minced garlic cloves for 30–60 seconds until fragrant.\n\nSimmer the tomatoes\nAdd 1 can crushed tomatoes and simmer gently for 12–15 minutes until slightly thickened.\n\nToss and serve\nToss the drained pasta with the sauce, divide among four bowls, and serve warm.",
+    "expected": "accept",
+    "reason": "Realistic portions and short cooking stages with headings, heat, timings, and observable cues are present."
+  }
+]
