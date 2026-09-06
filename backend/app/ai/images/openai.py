@@ -1,0 +1,88 @@
+"""Small, single-attempt adapter for the GPT Image 2 HTTP API."""
+
+from __future__ import annotations
+
+import base64
+import binascii
+from typing import Any
+
+import httpx
+from pydantic import SecretStr
+
+from app.ai.llm.errors import ProviderError
+
+ENDPOINT = "https://api.openai.com/v1/images/generations"
+MAX_PROMPT_BYTES = 8000
+MAX_RESPONSE_BYTES = 10 * 1024 * 1024
+MODEL = "gpt-image-2"
+
+
+class OpenAIImageProvider:
+    """Generate one PNG image after a caller owns its reservation."""
+
+    def __init__(
+        self,
+        api_key: SecretStr | str,
+        *,
+        enabled: bool = False,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._api_key = (
+            api_key.get_secret_value() if isinstance(api_key, SecretStr) else api_key
+        )
+        self._enabled = enabled
+        self._client = client
+
+    async def generate(self, prompt: str, *, kind: str) -> bytes | None:
+        if not self._enabled or not self._api_key:
+            return None
+        encoded = prompt.encode("utf-8")
+        if len(encoded) > MAX_PROMPT_BYTES:
+            raise ValueError("Image prompt exceeds 8000 UTF-8 bytes")
+        payload: dict[str, Any] = {"model": MODEL, "prompt": prompt, "n": 1}
+        if kind == "recipe":
+            payload.update(size="1536x1024", quality="medium")
+        elif kind == "ingredient":
+            payload.update(size="1024x1024", quality="low")
+        else:
+            raise ValueError("Image kind must be recipe or ingredient")
+        client = self._client or httpx.AsyncClient(follow_redirects=False)
+        close_client = self._client is None
+        try:
+            response = await client.post(
+                ENDPOINT,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                json=payload,
+                timeout=120.0,
+            )
+            if response.status_code >= 400:
+                raise ProviderError(
+                    "Image provider unavailable", status_code=response.status_code
+                )
+            if len(response.content) > MAX_RESPONSE_BYTES:
+                raise ProviderError("Image provider response is too large")
+            body = response.json()
+            data = body.get("data") if isinstance(body, dict) else None
+            if not isinstance(data, list) or len(data) != 1:
+                raise ProviderError("Image provider returned an invalid image")
+            value = data[0].get("b64_json") if isinstance(data[0], dict) else None
+            if not isinstance(value, str) or not value:
+                raise ProviderError("Image provider returned an invalid image")
+            try:
+                image = base64.b64decode(value, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise ProviderError(
+                    "Image provider returned an invalid image", cause=exc
+                ) from exc
+            if len(image) > MAX_RESPONSE_BYTES or not image.startswith(
+                b"\x89PNG\r\n\x1a\n"
+            ):
+                raise ProviderError("Image provider returned an invalid PNG")
+            return image
+        except ProviderError:
+            raise
+        except (httpx.HTTPError, ValueError, TypeError) as exc:
+            raise ProviderError("Image provider unavailable", cause=exc) from exc
+        finally:
+            if close_client:
+                await client.aclose()
