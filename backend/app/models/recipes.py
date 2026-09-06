@@ -123,6 +123,13 @@ class CookDeduction(BaseModel):
     inventory_item_id: UUID
     confirmed_amount: float = Field(gt=0)
 
+    @field_validator("confirmed_amount")
+    @classmethod
+    def require_finite_amount(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("Confirmed amount must be finite")
+        return value
+
 
 class CookConfirmationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
