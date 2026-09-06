@@ -22,6 +22,7 @@ from scripts.run_evals import (
 
 
 def sample_recipe() -> Recipe:
+    """Return the minimal recipe shared by judge and evaluator tests."""
     return Recipe(
         title="Tomato Pasta",
         cook_time_minutes=20,
@@ -33,6 +34,7 @@ def sample_recipe() -> Recipe:
 
 @pytest.mark.asyncio
 async def test_judge_accepts_valid_structured_output():
+    """Accept a judge response that satisfies the structured rubric."""
     result = await judge_recipe(
         FakeProvider(
             [
@@ -53,6 +55,7 @@ async def test_judge_accepts_valid_structured_output():
 
 @pytest.mark.asyncio
 async def test_judge_rejects_invalid_structured_output():
+    """Reject malformed judge output through the provider validation seam."""
     with pytest.raises(Exception, match="invalid structured output"):
         await judge_recipe(
             FakeProvider([{"preference_alignment": 101}]),
@@ -64,14 +67,20 @@ async def test_judge_rejects_invalid_structured_output():
 
 @pytest.mark.asyncio
 async def test_offline_runner_scores_all_dataset_cases_without_credentials(capsys):
+    """Verify offline scoring exercises successes and intentional rejects."""
     scorecard = await run("offline", "test-offline")
     assert scorecard["cases"] == 22
     assert scorecard["experiment"] == "test-offline"
     assert scorecard["judge_mode"] == "synthetic"
-    assert json.loads(capsys.readouterr().out)["coverage"] == 0.0
+    output = json.loads(capsys.readouterr().out)
+    assert output["succeeded_cases"] == 20
+    assert output["failed_cases"] == 2
+    assert output["coverage"] == 100.0
+    assert output["completeness"] == 100.0
 
 
 def test_documented_offline_command_reports_22_cases():
+    """Ensure the documented CLI emits the complete offline dataset count."""
     backend = Path(__file__).parents[1]
     env = {
         key: value
@@ -93,6 +102,7 @@ def test_documented_offline_command_reports_22_cases():
 
 
 def test_each_case_has_an_independent_fixture_response():
+    """Ensure each fixture preserves its case-specific tracked ingredient."""
     cases = json.loads(
         (Path(__file__).parents[1] / "app/ai/eval/dataset.json").read_text()
     )
@@ -108,6 +118,7 @@ def test_each_case_has_an_independent_fixture_response():
 
 @pytest.mark.asyncio
 async def test_live_evaluators_match_langsmith_schema():
+    """Ensure evaluator return values validate as LangSmith results."""
     outputs = {
         "recipe": sample_recipe()
         .model_copy(
@@ -148,6 +159,7 @@ async def test_live_evaluators_match_langsmith_schema():
 
 
 def test_live_scorecard_aggregates_mixed_completed_and_failed_rows():
+    """Aggregate valid rows while retaining a target pipeline failure."""
     results = [
         {
             "run": SimpleNamespace(error=None),
@@ -194,7 +206,40 @@ def test_live_scorecard_aggregates_mixed_completed_and_failed_rows():
     }
 
 
+def test_live_scorecard_rejects_incomplete_or_failed_evaluator_feedback():
+    """Count incomplete evaluator rows as failures without zero-score bias."""
+    results = [
+        {
+            "run": SimpleNamespace(error=None),
+            "evaluation_results": {
+                "results": [
+                    EvaluationResult(key="coverage", score=100),
+                    EvaluationResult(key="completeness", score=None),
+                    EvaluationResult(
+                        key="preference_alignment",
+                        score=90,
+                        evaluator_info={"error": True},
+                    ),
+                ]
+            },
+        },
+        {
+            "run": SimpleNamespace(error=None),
+            "evaluation_results": {
+                "results": [EvaluationResult(key="coverage", score=100)]
+            },
+        },
+    ]
+    scorecard = _aggregate_live_results(results, total=22)
+    assert scorecard["total_cases"] == 22
+    assert scorecard["succeeded_cases"] == 0
+    assert scorecard["failed_cases"] == 22
+    assert scorecard["coverage"] == 0.0
+    assert scorecard["quantity_violation_rate"] == 0.0
+
+
 def test_offline_cli_emits_numeric_machine_readable_scorecard():
+    """Ensure every offline metric is JSON-compatible numeric output."""
     backend = Path(__file__).parents[1]
     result = subprocess.run(
         [sys.executable, "-m", "scripts.run_evals", "--mode", "offline"],
@@ -207,5 +252,5 @@ def test_offline_cli_emits_numeric_machine_readable_scorecard():
     scorecard = json.loads(result.stdout)
     assert all(
         isinstance(scorecard[key], (int, float))
-        for key in ("coverage", "completeness", "preference", "violation_rate")
+        for key in ("coverage", "completeness", "preference", "quantity_violation_rate")
     )

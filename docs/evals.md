@@ -11,11 +11,17 @@ cd backend
 python -m scripts.run_evals --mode offline
 ```
 
-Use `--mode live` only when `GEMINI_API_KEY` is set. A live run can send the
-named experiment to LangSmith when `LANGSMITH_API_KEY` is also set. This
-repository does not claim trace or experiment links until a real run creates
-them. Record those links and the printed scorecard here after that run.
+Use `--mode live` only with `GEMINI_API_KEY`, `LANGSMITH_API_KEY`, and the
+Supabase retrieval configuration available. The live runner calls Gemini,
+reads the production Supabase vector store, and uploads the experiment and
+evaluator traces to LangSmith.
+
+Current offline evidence: `cases=22`, `succeeded_cases=20`, `failed_cases=2`,
+`coverage=100.0`, `completeness=100.0`, `preference=100.0`, and
+`quantity_violation_rate=0.0`. The two failures are intentional deterministic
+semantic rejections. No live experiment links or traces have been produced;
+issue 34 follow-up evidence remains pending.
 
 The judge uses one rubric for preference alignment and gross or implausible
-quantity violations. Offline mode reports synthetic judge scores, uses deterministic fixtures, and does not
-contact Gemini, LangSmith, or a database.
+quantity violations. Offline mode reports synthetic judge scores, uses
+deterministic fixtures, and does not contact Gemini, LangSmith, or a database.

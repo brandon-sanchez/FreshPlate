@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 from pathlib import Path
 from typing import Any
 
 from app.ai.agents.graph import build_recipe_graph
+from app.ai.agents.meal_quality import MealAssessment
 from app.ai.agents.models import Recipe, RecipeIngredient
 from app.ai.eval.judge import JudgeResult, judge_recipe
 from app.ai.eval.scorers import completeness_percent, ingredient_coverage_percent
@@ -19,7 +21,9 @@ DATASET = Path(__file__).parents[1] / "app/ai/eval/dataset.json"
 
 
 def _fixture_recipe(case: dict[str, Any]) -> Recipe:
-    item = case["inventory"][0]
+    """Build a recipe whose tracked ingredient maps to the case inventory."""
+    inventory = case["inventory"]
+    item = inventory[0]
     return Recipe(
         title=case["name"].title(),
         cook_time_minutes=20,
@@ -31,13 +35,13 @@ def _fixture_recipe(case: dict[str, Any]) -> Recipe:
                 use_amount=1,
                 unit=item["unit"],
             ),
-            RecipeIngredient(name="olive oil", unit="tablespoon"),
         ],
         steps=["Prepare the ingredients.", "Cook until tender.", "Serve warm."],
     )
 
 
-def _offline_judgement(recipe: Recipe) -> JudgeResult:
+def _offline_judgement() -> JudgeResult:
+    """Provide deterministic scoring for the offline smoke benchmark."""
     return JudgeResult(
         preference_alignment=100,
         rationale="Deterministic offline fixture.",
@@ -45,24 +49,43 @@ def _offline_judgement(recipe: Recipe) -> JudgeResult:
 
 
 async def run(mode: str, experiment: str) -> dict[str, float | int | str]:
+    """Run deterministic offline scoring or the configured live experiment."""
     cases = json.loads(DATASET.read_text(encoding="utf-8"))
     if mode == "live":
         return await _run_live(cases, experiment)
 
     class FixtureRetriever:
         async def search(self, query: str, **kwargs: Any) -> list[RetrievedRecipe]:
+            """Return one deterministic grounding document for a fixture query."""
             del kwargs
             return [RetrievedRecipe(id=1, title=query, content=query, similarity=1.0)]
 
     rows: list[dict[str, Any]] = []
-    for case in cases:
-        provider = (
-            GeminiProvider()
-            if mode == "live"
-            else FakeProvider(
-                [{"recipes": [_fixture_recipe(case).model_dump()]} for _ in range(4)]
-            )
+    for index, case in enumerate(cases):
+        rejected = index in {0, len(cases) - 1}
+        recipe = _fixture_recipe(case)
+        assessment = MealAssessment.model_validate(
+            {
+                "decisions": [
+                    {
+                        "candidate_index": 0,
+                        "verdict": "insufficient" if rejected else "eligible",
+                        "reason": "Intentional deterministic rejection"
+                        if rejected
+                        else "Grounded offline fixture",
+                    }
+                ]
+            }
         )
+        responses: list[dict[str, Any]] = []
+        for _ in range(4):
+            responses.extend(
+                [
+                    {"recipes": [recipe.model_dump()]},
+                    assessment.model_dump(),
+                ]
+            )
+        provider = FakeProvider(responses)
         graph = build_recipe_graph(provider, FixtureRetriever())
         result = await graph.ainvoke(
             {
@@ -76,7 +99,7 @@ async def run(mode: str, experiment: str) -> dict[str, float | int | str]:
             rows.append({"name": case["name"], "error": "no valid recipe"})
             continue
         recipe = recipes[0]
-        judge = _offline_judgement(recipe)
+        judge = _offline_judgement()
         rows.append(
             {
                 "name": case["name"],
@@ -108,7 +131,7 @@ async def run(mode: str, experiment: str) -> dict[str, float | int | str]:
         )
         if successful_rows
         else 0.0,
-        "violation_rate": (
+        "quantity_violation_rate": (
             round(
                 sum(bool(r["violations"]) for r in successful_rows)
                 / len(successful_rows),
@@ -157,6 +180,7 @@ async def _run_live(cases: list[dict[str, Any]], experiment: str) -> dict[str, A
     )
 
     async def target(inputs: dict[str, Any]) -> dict[str, Any]:
+        """Adapt graph output to LangSmith's evaluator target contract."""
         result = await graph.ainvoke({**inputs, "batch_ceiling": 1})
         recipes = result.get("valid_recipes", [])
         if not recipes:
@@ -181,11 +205,11 @@ async def _run_live(cases: list[dict[str, Any]], experiment: str) -> dict[str, A
             completed.append(item)
     elif isinstance(results, (list, tuple)):
         completed.extend(results)
-    metrics = _aggregate_live_results(completed, len(cases))
+    metrics = _aggregate_live_results(completed, expected_count=len(examples))
     url = getattr(results, "experiment_url", None) or getattr(results, "url", "")
     scorecard = {
         "experiment": experiment,
-        "cases": len(cases),
+        "cases": metrics["total_cases"],
         "judge_mode": "llm",
         **metrics,
         "url": str(url),
@@ -194,7 +218,9 @@ async def _run_live(cases: list[dict[str, Any]], experiment: str) -> dict[str, A
     return scorecard
 
 
-def _aggregate_live_results(results: list[Any], total: int) -> dict[str, Any]:
+def _aggregate_live_results(
+    results: list[Any], expected_count: int | None = None, *, total: int | None = None
+) -> dict[str, Any]:
     """Aggregate evaluator feedback while retaining failed target rows."""
     scores: dict[str, list[float]] = {
         "coverage": [],
@@ -203,28 +229,52 @@ def _aggregate_live_results(results: list[Any], total: int) -> dict[str, Any]:
     }
     violations = 0
     failed = 0
+    required = {"coverage", "completeness", "preference_alignment"}
     for result in results:
         run = result["run"]
         if run.error:
             failed += 1
             continue
-        feedback = result["evaluation_results"]["results"]
+        feedback = result.get("evaluation_results", {}).get("results", [])
+        keys = [item.key for item in feedback]
+        if len(keys) != len(set(keys)):
+            failed += 1
+            continue
+        feedback_by_key = dict(zip(keys, feedback))
+        if not required.issubset(feedback_by_key):
+            failed += 1
+            continue
+        if any(
+            item.score is None
+            or not isinstance(item.score, (int, float))
+            or isinstance(item.score, bool)
+            or not math.isfinite(float(item.score))
+            or not 0 <= item.score <= 100
+            or (item.evaluator_info or {}).get("error")
+            for item in feedback_by_key.values()
+            if item.key in required
+        ):
+            failed += 1
+            continue
         for item in feedback:
             key = item.key
             score = item.score
             score_key = "preference" if key == "preference_alignment" else key
             if score_key in scores and isinstance(score, (int, float)):
                 scores[score_key].append(float(score))
-            info = item.evaluator_info
+            info = item.evaluator_info or {}
             if key == "preference_alignment" and info.get(
                 "quantity_violation_count", 0
             ):
                 violations += 1
-    succeeded = total - failed
+    expected = expected_count if expected_count is not None else (total or len(results))
+    incomplete = max(expected - len(results), 0)
+    failed_cases = failed + incomplete
+    succeeded = len(results) - failed
     return {
-        "total_cases": total,
+        "total_cases": expected,
         "succeeded_cases": succeeded,
-        "failed_cases": failed,
+        "failed_cases": failed_cases,
         "coverage": round(sum(scores["coverage"]) / len(scores["coverage"]), 1)
         if scores["coverage"]
         else 0.0,
@@ -243,11 +293,12 @@ def _aggregate_live_results(results: list[Any], total: int) -> dict[str, Any]:
 
 
 def build_live_evaluators(provider: Any) -> list[Any]:
-    """Return LangSmith-compatible deterministic and judge evaluators."""
+    """Return LangSmith evaluators for completeness, coverage, and preference."""
 
     def measured(
         outputs: dict[str, Any], reference_outputs: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        """Score structural recipe completeness on a target output."""
         del reference_outputs
         return {
             "key": "completeness",
@@ -257,6 +308,7 @@ def build_live_evaluators(provider: Any) -> list[Any]:
     def coverage(
         outputs: dict[str, Any], reference_outputs: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        """Score how many recipe ingredients are grounded in inventory."""
         del reference_outputs
         recipe = Recipe.model_validate(outputs["recipe"])
         return {
@@ -267,6 +319,7 @@ def build_live_evaluators(provider: Any) -> list[Any]:
     async def judge(
         outputs: dict[str, Any], reference_outputs: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        """Run the structured LLM judge and expose its rubric metadata."""
         del reference_outputs
         result = await judge_recipe(
             provider,
@@ -288,6 +341,7 @@ def build_live_evaluators(provider: Any) -> list[Any]:
 
 
 def main() -> None:
+    """Parse CLI options and execute the selected evaluation mode."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("offline", "live"), default="offline")
     parser.add_argument("--experiment", default="freshplate-eval-local")
