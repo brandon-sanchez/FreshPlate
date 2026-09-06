@@ -45,25 +45,7 @@ export default function RecipesScreen() {
   const [tab, setTab] = useState<"for-you" | "saved">("for-you");
   const [preferences, setPreferences] = useState<RecipePreferences>({});
   const [flowOpen, setFlowOpen] = useState(false);
-
   const items = inventory.data ?? [];
-
-  if (tab === "saved") {
-    return (
-      <View style={[styles.stateContainer, { backgroundColor: colors.bg, paddingTop: insets.top, paddingBottom: tabBarHeight }]}>
-        <RecipeScreenHeader subtitle="Your household cookbook" />
-        <View style={styles.tabs}>
-          <RecipePressable onPress={() => setTab("for-you")} style={styles.tab}><Text style={[styles.tabText, { color: colors.textMuted, fontFamily: fonts.bodyStrong }]}>For you</Text></RecipePressable>
-          <RecipePressable onPress={() => setTab("saved")} style={[styles.tab, { borderBottomColor: colors.accent, borderBottomWidth: 2 }]}><Text style={[styles.tabText, { color: colors.accent, fontFamily: fonts.bodyStrong }]}>Saved</Text></RecipePressable>
-        </View>
-        {saved.isPending ? <LoadingState label="Loading your cookbook..." /> : saved.isError ? <ErrorState onRetry={() => saved.refetch()} /> : saved.data?.length ? (
-          <ScrollView contentContainerStyle={{ padding: 24, gap: 12 }} showsVerticalScrollIndicator={false}>
-            {saved.data.map((entry) => <SavedRecipeRow key={entry.recipe_id} recipe={entry.recipe} onRemove={() => saved.toggle({ recipe: entry.recipe, saved: true })} />)}
-          </ScrollView>
-        ) : <EmptyState icon={<View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: colors.accentSoft, alignItems: "center", justifyContent: "center" }}><Feather name="bookmark" size={24} color={colors.accent} /></View>} title="Nothing saved yet" message="Tap the bookmark on any recipe to keep it in your household cookbook" />}
-      </View>
-    );
-  }
 
   const generate = useCallback(
     (nextPreferences: RecipePreferences) => {
@@ -80,6 +62,14 @@ export default function RecipesScreen() {
     },
     [feed, items],
   );
+
+  if (tab === "saved") {
+    return <View style={[styles.stateContainer, { backgroundColor: colors.bg, paddingTop: insets.top, paddingBottom: tabBarHeight }]}>
+      <RecipeScreenHeader subtitle="Your household cookbook" />
+      <RecipeTabs tab={tab} onChange={setTab} />
+      <SavedRecipesContent saved={saved} />
+    </View>;
+  }
 
   if (inventory.isPending) {
     return (
@@ -203,6 +193,7 @@ export default function RecipesScreen() {
   if (feed.status === "ready") {
     return (
       <RecipeFeed
+        header={<><RecipeScreenHeader /><RecipeTabs tab={tab} onChange={setTab} /></>}
         recipes={feed.recipes}
         itemCount={items.length}
         preferences={preferences}
@@ -238,10 +229,7 @@ export default function RecipesScreen() {
         keyboardDismissMode="interactive"
       >
         <RecipeScreenHeader subtitle="AI picks from your kitchen" />
-        <View style={styles.tabs}>
-          <RecipePressable onPress={() => setTab("for-you")} style={[styles.tab, { borderBottomColor: colors.accent, borderBottomWidth: 2 }]}><Text style={[styles.tabText, { color: colors.accent, fontFamily: fonts.bodyStrong }]}>For you</Text></RecipePressable>
-          <RecipePressable onPress={() => setTab("saved")} style={styles.tab}><Text style={[styles.tabText, { color: colors.textMuted, fontFamily: fonts.bodyStrong }]}>Saved</Text></RecipePressable>
-        </View>
+        <RecipeTabs tab={tab} onChange={setTab} />
 
         <View style={[styles.promptCard, { borderColor: colors.border }]}>
           <View style={styles.kitchenLabel}>
@@ -386,4 +374,19 @@ function SavedRecipeRow({ recipe, onRemove }: { recipe: import("@/types/recipes"
     <Text style={{ color: colors.textMuted, fontFamily: fonts.body, fontSize: 13 }}>{recipe.cook_time_minutes} min · {recipe.servings} servings · {recipe.match_percent}% match</Text>
     <Text style={{ color: colors.accent, fontFamily: fonts.bodyStrong, fontSize: 12 }}>Household cookbook</Text>
   </View>;
+}
+
+function RecipeTabs({ tab, onChange }: { tab: "for-you" | "saved"; onChange: (tab: "for-you" | "saved") => void }) {
+  const { colors, fonts } = useTheme();
+  return <View style={styles.tabs}>
+    {(["for-you", "saved"] as const).map((value) => <RecipePressable key={value} onPress={() => onChange(value)} style={[styles.tab, tab === value && { borderBottomColor: colors.accent, borderBottomWidth: 2 }]}><Text style={[styles.tabText, { color: tab === value ? colors.accent : colors.textMuted, fontFamily: fonts.bodyStrong }]}>{value === "for-you" ? "For you" : "Saved"}</Text></RecipePressable>)}
+  </View>;
+}
+
+function SavedRecipesContent({ saved }: { saved: ReturnType<typeof useSavedRecipes> }) {
+  const { colors } = useTheme();
+  if (saved.isPending) return <LoadingState label="Loading your cookbook..." />;
+  if (saved.isError) return <ErrorState onRetry={() => saved.refetch()} />;
+  if (!saved.data?.length) return <EmptyState icon={<View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: colors.accentSoft, alignItems: "center", justifyContent: "center" }}><Feather name="bookmark" size={24} color={colors.accent} /></View>} title="Nothing saved yet" message="Tap the bookmark on any recipe to keep it in your household cookbook" />;
+  return <ScrollView contentContainerStyle={{ padding: 24, gap: 12 }} showsVerticalScrollIndicator={false}>{saved.data.map((entry) => <SavedRecipeRow key={entry.recipe_id} recipe={entry.recipe} onRemove={() => void saved.toggle({ recipe: entry.recipe, saved: true })} />)}</ScrollView>;
 }

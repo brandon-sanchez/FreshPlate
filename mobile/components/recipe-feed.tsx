@@ -8,6 +8,7 @@ import {
   useWindowDimensions,
   type ViewToken,
 } from "react-native";
+import type { ReactNode } from "react";
 import Animated, { Easing, LinearTransition } from "react-native-reanimated";
 import Feather from "@expo/vector-icons/Feather";
 import RecipeCarousel from "@/components/recipe-carousel";
@@ -39,6 +40,7 @@ type RecipeFeedProps = {
   onEditAnswers: () => void;
   savedIds?: Set<string>;
   onToggleSave?: (recipe: RecipeSuggestion, saved: boolean) => void;
+  header?: ReactNode;
 };
 
 const replacementTransition = LinearTransition.duration(360).easing(
@@ -62,6 +64,7 @@ export default function RecipeFeed({
   onEditAnswers,
   savedIds = new Set<string>(),
   onToggleSave = () => undefined,
+  header,
 }: RecipeFeedProps) {
   const { colors } = useTheme();
   const { width, height, fontScale } = useWindowDimensions();
@@ -190,7 +193,7 @@ export default function RecipeFeed({
       key={fontScale}
       style={{ flex: 1, backgroundColor: colors.bg, paddingTop: topInset + 8 }}
     >
-      <RecipeScreenHeader />
+      {header ?? <RecipeScreenHeader />}
       <RecipeContextBar
         itemCount={itemCount}
         preferences={preferences}
