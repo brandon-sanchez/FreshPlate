@@ -10,6 +10,7 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
   setItem: jest.fn(),
   removeItem: jest.fn(),
 }));
+jest.mock("@/lib/supabase", () => ({ supabase: {} }));
 jest.mock("expo-crypto", () => ({
   randomUUID: () => "11111111-1111-4111-8111-111111111111",
 }));
