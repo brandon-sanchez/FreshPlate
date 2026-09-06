@@ -174,7 +174,7 @@ def test_cli_invalid_target_returns_failure_and_preserves_inventory(db):
     dsn, run = db
     user = "00000000-0000-0000-0000-000000000001"
     target = "30000000-0000-0000-0000-000000000031"
-    run(dsn, f"INSERT INTO households VALUES ('{target}','{user}'); INSERT INTO demo_households(household_id) VALUES ('{target}'); INSERT INTO household_members VALUES ('{target}','{user}','owner'); INSERT INTO inventory_items(household_id,added_by,name,quantity,unit,storage_location) VALUES ('{target}','{user}','Original',1,'each','fridge');")
+    run(dsn, f"INSERT INTO households VALUES ('{target}','{user}'); INSERT INTO household_members VALUES ('{target}','{user}','owner'); INSERT INTO inventory_items(household_id,added_by,name,quantity,unit,storage_location) VALUES ('{target}','{user}','Original',1,'each','fridge');")
     env = os.environ | {"DEMO_DATABASE_URL": dsn, "DEMO_HOUSEHOLD_ID": target, "DEMO_USER_ID": user}
     result = subprocess.run([sys.executable, "-m", "app.scripts.seed_demo"], cwd=Path(__file__).parents[1], env=env, text=True, capture_output=True)
     assert result.returncode != 0
@@ -185,10 +185,10 @@ def test_invalid_item_after_delete_rolls_back_and_owner_must_be_designated(db):
     dsn, run = db
     user = "00000000-0000-0000-0000-000000000001"
     target = "40000000-0000-0000-0000-000000000041"
-    run(dsn, f"INSERT INTO households VALUES ('{target}','{user}'); INSERT INTO household_members VALUES ('{target}','{user}','owner'); INSERT INTO inventory_items(household_id,added_by,name,quantity,unit,storage_location) VALUES ('{target}','{user}','Original',1,'each','fridge');")
+    run(dsn, f"INSERT INTO households VALUES ('{target}','{user}'); INSERT INTO demo_households(household_id) VALUES ('{target}'); INSERT INTO household_members VALUES ('{target}','{user}','owner'); INSERT INTO inventory_items(household_id,added_by,name,quantity,unit,storage_location) VALUES ('{target}','{user}','Original',1,'each','fridge');")
     bad = items()
     bad[0]["quantity"] = "not-a-number"
-    failed = call(db, target, user, bad)
+    failed = call(db, target, user, bad, check=False)
     assert failed.returncode != 0
     assert run(dsn, f"SELECT name FROM inventory_items WHERE household_id='{target}';").stdout.strip() == "Original"
     denied = run(dsn, f"SET ROLE authenticated; INSERT INTO demo_households(household_id) VALUES ('{target}');", check=False)

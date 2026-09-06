@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
-import json
 import os
-import subprocess
 import uuid
+
+import psycopg
+from psycopg.types.json import Jsonb
 
 ITEMS = [
     ("Baby spinach", 1, "bag", "Produce", 2, "fridge"),
@@ -57,19 +58,15 @@ def main() -> None:
         for name, quantity, unit, category, days, location in ITEMS
     ]
     # PostgreSQL computes relative dates in the transaction, keeping the seed current.
-    payload = json.dumps(items)
-    sql = "SELECT public.reset_demo_household(:'household_id'::uuid, :'user_id'::uuid, :'payload'::jsonb);"
-    env = os.environ.copy()
-    env["PGDATABASE"] = dsn
+    payload = items
     try:
-        subprocess.run(
-        ["psql", "--no-psqlrc", "--tuples-only", "--set", "ON_ERROR_STOP=1",
-         "--set", f"household_id={household_id}", "--set", f"user_id={user_id}",
-         "--set", f"payload={payload}"],
-        input=sql, text=True, env=env, check=True, capture_output=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        raise SystemExit("Demo household reset failed; no database diagnostics were exposed.") from exc
+        with psycopg.connect(dsn) as connection:
+            connection.execute(
+                "SELECT public.reset_demo_household(%s::uuid, %s::uuid, %s::jsonb)",
+                (household_id, user_id, Jsonb(payload)),
+            )
+    except psycopg.Error:
+        raise SystemExit("Demo household reset failed; no database diagnostics were exposed.") from None
 
 
 if __name__ == "__main__":
