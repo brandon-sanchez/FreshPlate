@@ -105,7 +105,7 @@ def test_reset_repeat_and_isolate_households(db):
     other = "00000000-0000-0000-0000-000000000012"
     db[1](
         db[0],
-        f"INSERT INTO households VALUES ({sql(target)},{sql(user)},true),({sql(other)},{sql(user)},true); INSERT INTO household_members VALUES ({sql(target)},{sql(user)},'owner'),({sql(other)},{sql(user)},'owner');",  # noqa: E501
+        f"INSERT INTO households VALUES ({sql(target)},{sql(user)},true),({sql(other)},{sql(user)},true); INSERT INTO demo_households(household_id) VALUES ({sql(target)}),({sql(other)}); INSERT INTO household_members VALUES ({sql(target)},{sql(user)},'owner'),({sql(other)},{sql(user)},'owner');",  # noqa: E501
     )
     db[1](
         db[0],
@@ -138,7 +138,7 @@ def test_invalid_target_payload_and_role_leave_data_unchanged(db):
     target = "00000000-0000-0000-0000-000000000021"
     db[1](
         db[0],
-        f"INSERT INTO households VALUES ({sql(target)},{sql(user)},true); INSERT INTO household_members VALUES ({sql(target)},{sql(user)},'owner'); INSERT INTO inventory_items(household_id,added_by,name,quantity,unit,storage_location) VALUES ({sql(target)},{sql(user)},'Original',1,'each','fridge');",  # noqa: E501
+        f"INSERT INTO households VALUES ({sql(target)},{sql(user)},true); INSERT INTO demo_households(household_id) VALUES ({sql(target)}); INSERT INTO household_members VALUES ({sql(target)},{sql(user)},'owner'); INSERT INTO inventory_items(household_id,added_by,name,quantity,unit,storage_location) VALUES ({sql(target)},{sql(user)},'Original',1,'each','fridge');",  # noqa: E501
     )
     assert call(db, target, user, items(14), check=False).returncode != 0
     assert call(db, target, user, items(), role="public", check=False).returncode != 0
@@ -153,7 +153,7 @@ def test_invalid_target_payload_and_role_leave_data_unchanged(db):
 def test_null_payload_is_rejected_without_deleting_inventory(db):
     user = "00000000-0000-0000-0000-000000000001"
     target = "20000000-0000-0000-0000-000000000021"
-    db[1](db[0], f"INSERT INTO households VALUES ({sql(target)},{sql(user)},true); INSERT INTO household_members VALUES ({sql(target)},{sql(user)},'owner'); INSERT INTO inventory_items(household_id,added_by,name,quantity,unit,storage_location) VALUES ({sql(target)},{sql(user)},'Original',1,'each','fridge');")
+    db[1](db[0], f"INSERT INTO households VALUES ({sql(target)},{sql(user)},true); INSERT INTO demo_households(household_id) VALUES ({sql(target)}); INSERT INTO household_members VALUES ({sql(target)},{sql(user)},'owner'); INSERT INTO inventory_items(household_id,added_by,name,quantity,unit,storage_location) VALUES ({sql(target)},{sql(user)},'Original',1,'each','fridge');")
     assert call(db, target, user, None, check=False).returncode != 0
     assert db[1](db[0], f"SELECT name FROM inventory_items WHERE household_id={sql(target)}").stdout.strip() == "Original"
 
@@ -173,7 +173,7 @@ def test_cli_entrypoint_resets_disposable_database_twice(db):
     dsn, run = db
     user = "00000000-0000-0000-0000-000000000001"
     target = "10000000-0000-0000-0000-000000000031"
-    run(dsn, f"INSERT INTO households VALUES ('{target}','{user}',true); INSERT INTO household_members VALUES ('{target}','{user}','owner');")
+    run(dsn, f"INSERT INTO households VALUES ('{target}','{user}',true); INSERT INTO demo_households(household_id) VALUES ('{target}'); INSERT INTO household_members VALUES ('{target}','{user}','owner');")
     env = os.environ | {
         "DEMO_DATABASE_URL": dsn,
         "DEMO_HOUSEHOLD_ID": target,

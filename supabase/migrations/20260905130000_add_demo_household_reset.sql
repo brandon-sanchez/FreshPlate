@@ -1,5 +1,14 @@
 ALTER TABLE public.households ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT false;
 
+CREATE TABLE IF NOT EXISTS public.demo_households (
+    household_id uuid PRIMARY KEY REFERENCES public.households(id) ON DELETE CASCADE,
+    designated_at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO public.demo_households (household_id)
+SELECT id FROM public.households WHERE is_demo
+ON CONFLICT DO NOTHING;
+REVOKE ALL ON public.demo_households FROM PUBLIC, anon, authenticated;
+
 CREATE OR REPLACE FUNCTION public.reset_demo_household(
     p_household_id uuid,
     p_user_id uuid,
@@ -14,8 +23,9 @@ DECLARE
     inserted_count integer;
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM public.households
-        WHERE id = p_household_id AND created_by = p_user_id AND is_demo
+        SELECT 1 FROM public.households h
+        JOIN public.demo_households d ON d.household_id = h.id
+        WHERE h.id = p_household_id AND h.created_by = p_user_id
     ) OR NOT EXISTS (
         SELECT 1 FROM public.household_members
         WHERE household_id = p_household_id AND user_id = p_user_id AND role = 'owner'
@@ -51,4 +61,3 @@ GRANT EXECUTE ON FUNCTION public.reset_demo_household(uuid, uuid, jsonb) TO serv
 
 -- Demo designation is administrative state; ordinary users must not be able to
 -- turn an arbitrary household into a target for the privileged reset function.
-REVOKE UPDATE (is_demo) ON public.households FROM PUBLIC, anon, authenticated;

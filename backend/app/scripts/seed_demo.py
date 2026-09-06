@@ -7,7 +7,7 @@ import json
 import os
 import subprocess
 import uuid
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 ITEMS = [
     ("Baby spinach", 1, "bag", "Produce", 2, "fridge"),
@@ -64,14 +64,20 @@ def main() -> None:
         raise SystemExit("DEMO_DATABASE_URL must include a database host")
     sql = "SELECT public.reset_demo_household(:'household_id'::uuid, :'user_id'::uuid, :'payload'::jsonb);"
     env = os.environ.copy()
-    # Pass the complete libpq URI intact so encoded credentials and connection
-    # parameters (including SSL settings) are interpreted by libpq itself.
-    subprocess.run(
-        ["psql", "--no-psqlrc", "--tuples-only", "-d", dsn, "--set", "ON_ERROR_STOP=1",
+    env.update({"PGHOST": parsed.hostname, "PGPORT": str(parsed.port or 5432),
+                "PGUSER": unquote(parsed.username or "postgres"),
+                "PGDATABASE": parsed.path.lstrip("/")})
+    if parsed.password:
+        env["PGPASSWORD"] = unquote(parsed.password)
+    try:
+        subprocess.run(
+        ["psql", "--no-psqlrc", "--tuples-only", "--set", "ON_ERROR_STOP=1",
          "--set", f"household_id={household_id}", "--set", f"user_id={user_id}",
          "--set", f"payload={payload}"],
         input=sql, text=True, env=env, check=True, capture_output=True,
-    )
+        )
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit("Demo household reset failed; no database diagnostics were exposed.") from exc
 
 
 if __name__ == "__main__":
