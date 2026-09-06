@@ -6,7 +6,6 @@ from app.ai.agents.models import Recipe, RecipeGenerationResponse, RecipeIngredi
 from app.ai.agents.nodes import (
     EXPIRING_WITHIN_DAYS,
     MAX_QUALITY_RETRIES,
-    RecipeProviderPort,
     RecipeRetrieverPort,
     analyze_inventory,
     check_quality,
@@ -36,7 +35,6 @@ __all__ = [
     "Recipe",
     "RecipeGenerationResponse",
     "RecipeIngredient",
-    "RecipeProviderPort",
     "RecipeState",
     "RecipeRetrieverPort",
     "RetrievalResult",

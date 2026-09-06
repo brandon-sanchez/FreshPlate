@@ -215,7 +215,20 @@ async def test_refill_deadline_observes_provider_failure_during_cancellation(
     app = create_app()
     _install_dependencies(
         app,
-        FakeProvider([{"recipes": [_recipe("Initial")]}]),
+        FakeProvider(
+            [
+                {"recipes": [_recipe("Initial")]},
+                {
+                    "decisions": [
+                        {
+                            "candidate_index": 0,
+                            "verdict": "eligible",
+                            "reason": "complete meal",
+                        }
+                    ]
+                },
+            ]
+        ),
         StubRetriever(),
         store,
     )

@@ -63,6 +63,19 @@ def _recipe(title: str) -> dict[str, Any]:
     }
 
 
+def _assessment(count: int) -> dict[str, Any]:
+    return {
+        "decisions": [
+            {
+                "candidate_index": index,
+                "verdict": "eligible",
+                "reason": "complete meal",
+            }
+            for index in range(count)
+        ]
+    }
+
+
 class StubRetriever:
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -205,7 +218,10 @@ def test_initial_feed_page_uses_a_five_card_head_batch(
 ) -> None:
     patch_jwks([signing_key])
     provider = FakeProvider(
-        [{"recipes": [_recipe(f"Recipe {index}") for index in range(1, 11)]}]
+        [
+            {"recipes": [_recipe(f"Recipe {index}") for index in range(1, 11)]},
+            _assessment(5),
+        ]
     )
     app = create_app()
     _install_dependencies(
@@ -249,6 +265,7 @@ def test_initial_feed_keeps_partial_results_without_a_quality_retry(
                     invalid_recipe,
                 ]
             },
+            _assessment(1),
             {"recipes": [_recipe("Retry recipe")]},
         ]
     )
@@ -285,6 +302,7 @@ def test_initial_feed_retries_when_no_recipe_passes_quality(
         [
             {"recipes": [invalid_recipe]},
             {"recipes": [_recipe("Retry recipe")]},
+            _assessment(1),
         ]
     )
     app = create_app()
@@ -319,7 +337,9 @@ def test_refill_returns_partial_results_without_a_second_quality_pass(
     provider = FakeProvider(
         [
             {"recipes": [_recipe(f"Recipe {index}") for index in range(1, 9)]},
+            _assessment(5),
             {"recipes": [_recipe("Recipe 9"), invalid_recipe]},
+            _assessment(1),
             {"recipes": [_recipe("Retry recipe")]},
         ]
     )
@@ -360,6 +380,7 @@ def test_empty_refill_ends_the_feed_with_honest_exhaustion(
     provider = FakeProvider(
         [
             {"recipes": [_recipe(f"Recipe {index}") for index in range(1, 9)]},
+            _assessment(5),
             {"recipes": []},
             {"recipes": [_recipe("Recipe 9")]},
         ]
@@ -440,10 +461,19 @@ def test_feed_stops_generating_at_the_six_run_session_cap(
 ) -> None:
     """The session cap guards tail quality: six runs, then honest exhaustion."""
     patch_jwks([signing_key])
-    responses = [
-        {"recipes": [_recipe(f"Run {run} recipe {index}") for index in range(1, 6)]}
-        for run in range(1, 8)
-    ]
+    responses = []
+    for run in range(1, 8):
+        responses.extend(
+            [
+                {
+                    "recipes": [
+                        _recipe(f"Run {run} recipe {index}")
+                        for index in range(1, 6)
+                    ]
+                },
+                _assessment(5),
+            ]
+        )
     provider = FakeProvider(responses)
     store = InMemoryRecipeFeedStore()
     app = create_app()
@@ -470,7 +500,7 @@ def test_feed_stops_generating_at_the_six_run_session_cap(
 
     assert pages[-1]["has_more"] is False
     assert pages[-1]["ready_count"] == 30
-    assert len(provider._responses) == 1
+    assert len(provider._responses) == 2
 
 
 def test_feed_pages_from_a_server_owned_pool_before_refilling(
@@ -481,7 +511,9 @@ def test_feed_pages_from_a_server_owned_pool_before_refilling(
     provider = FakeProvider(
         [
             {"recipes": [_recipe(f"Recipe {index}") for index in range(1, 6)]},
+            _assessment(5),
             {"recipes": [_recipe("Recipe 11"), _recipe("Recipe 12")]},
+            _assessment(2),
         ]
     )
     retriever = StubRetriever()
@@ -592,7 +624,9 @@ def test_refill_runs_never_reuse_grounding_docs_from_earlier_runs(
     provider = PromptRecordingProvider(
         [
             {"recipes": [_recipe(f"Recipe {index}") for index in range(1, 6)]},
+            _assessment(5),
             {"recipes": [_recipe("Recipe 6")]},
+            _assessment(1),
         ]
     )
     store = InMemoryRecipeFeedStore()
@@ -612,7 +646,9 @@ def test_refill_runs_never_reuse_grounding_docs_from_earlier_runs(
             json={"cursor": "5", "limit": 5},
         )
 
-    initial_prompt, refill_prompt = provider.prompts
+    initial_prompt, refill_prompt = [
+        prompt for prompt in provider.prompts if prompt.startswith("Create up")
+    ]
     assert "Doc 01" in initial_prompt and "Doc 05" in initial_prompt
     assert "Doc 06" not in initial_prompt
     assert "Doc 06" in refill_prompt and "Doc 10" in refill_prompt
@@ -625,7 +661,9 @@ def test_feed_page_does_not_cross_user_session_boundaries(
 ) -> None:
     patch_jwks([signing_key])
     app = create_app()
-    provider = FakeProvider([{"recipes": [_recipe("Private recipe")]}])
+    provider = FakeProvider(
+        [{"recipes": [_recipe("Private recipe")]}, _assessment(1)]
+    )
     _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
     with TestClient(app) as client:
         first = client.post(
@@ -656,7 +694,9 @@ def test_feed_page_does_not_cross_user_session_boundaries(
 
 def test_feed_keeps_items_without_a_searchable_name(signing_key, patch_jwks) -> None:
     patch_jwks([signing_key])
-    provider = PromptRecordingProvider([{"recipes": [_recipe("Spinach dinner")]}])
+    provider = PromptRecordingProvider(
+        [{"recipes": [_recipe("Spinach dinner")]}, _assessment(1)]
+    )
     retriever = StubRetriever()
     store = InMemoryRecipeFeedStore()
     app = create_app()
@@ -680,7 +720,10 @@ def test_early_exhaustion_is_persisted(signing_key, patch_jwks) -> None:
     store = InMemoryRecipeFeedStore()
     app = create_app()
     _install_dependencies(
-        app, FakeProvider([{"recipes": [_recipe("Dinner")]}]), StubRetriever(), store
+        app,
+        FakeProvider([{"recipes": [_recipe("Dinner")]}, _assessment(1)]),
+        StubRetriever(),
+        store,
     )
     with TestClient(app) as client:
         first = client.post(
@@ -720,8 +763,10 @@ async def test_concurrent_refills_share_the_last_generation_run(
     store = InMemoryRecipeFeedStore()
     provider = SlowProvider(
         [
-            {"recipes": [_recipe("Initial")]},
-            {"recipes": [_recipe("Last run")]},
+                {"recipes": [_recipe("Initial")]},
+                _assessment(1),
+                {"recipes": [_recipe("Last run")]},
+                _assessment(1),
             {"recipes": [_recipe("Over budget")]},
         ]
     )
@@ -749,7 +794,9 @@ async def test_concurrent_refills_share_the_last_generation_run(
                 for _ in range(2)
             ]
         )
-    assert len(provider.prompts) == 2
+    assert len(
+        [prompt for prompt in provider.prompts if prompt.startswith("Create up")]
+    ) == 2
     assert all(page.status_code == 200 for page in pages)
     assert pages[0].json() == pages[1].json()
     assert store.sessions[session_id].generation_runs == 6
@@ -765,9 +812,11 @@ def test_failed_refill_can_retry_without_refunding_its_run(signing_key, patch_jw
     store = InMemoryRecipeFeedStore()
     provider = FakeProvider(
         [
-            {"recipes": [_recipe("Initial")]},
-            ProviderError("Unavailable"),
-            {"recipes": [_recipe("Retry")]},
+                {"recipes": [_recipe("Initial")]},
+                _assessment(1),
+                ProviderError("Unavailable"),
+                {"recipes": [_recipe("Retry")]},
+                _assessment(1),
         ]
     )
     app = create_app()

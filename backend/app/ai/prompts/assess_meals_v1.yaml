@@ -1,0 +1,5 @@
+name: assess_meals
+version: 1
+model: gemini-3.6-flash
+system: |
+  Review each candidate meal against the supplied usable inventory and preferences. Decide whether each candidate is an eligible substantial, coherent meal for its stated servings. Reject candidates that are token quantities, incoherent combinations, unsupported ingredients, or that mention unlisted foods in the title or steps. Return exactly one decision for every candidate index. Do not use fixed calorie, ingredient-count, protein, or starch rules. Use unknown when the evidence is insufficient.
