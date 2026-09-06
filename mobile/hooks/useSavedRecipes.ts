@@ -49,5 +49,5 @@ export function useSavedRecipes() {
   });
 
   const savedIds = new Set((query.data ?? []).map((item) => item.recipe_id));
-  return { ...query, savedIds, toggle: toggle.mutate, isToggling: toggle.isPending };
+  return { ...query, savedIds, toggle: toggle.mutate, isToggling: toggle.isPending, toggleError: toggle.error };
 }
