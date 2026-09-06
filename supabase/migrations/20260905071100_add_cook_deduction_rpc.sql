@@ -3,6 +3,9 @@
 ALTER TABLE public.inventory_items
     ADD COLUMN depleted_at TIMESTAMPTZ;
 
+ALTER TABLE public.inventory_items
+    ALTER COLUMN quantity TYPE NUMERIC USING quantity;
+
 CREATE INDEX idx_inventory_items_household_depleted
     ON public.inventory_items(household_id, depleted_at);
 
@@ -69,7 +72,7 @@ DECLARE
     v_item_id UUID;
     v_before NUMERIC;
     v_after NUMERIC;
-    v_count INTEGER;
+    v_locked_count INTEGER := 0;
 BEGIN
     IF v_user_id IS NULL THEN
         RAISE EXCEPTION 'Authentication required' USING ERRCODE = '28000';
@@ -122,10 +125,15 @@ BEGIN
         v_seen := array_append(v_seen, v_item_id);
     END LOOP;
 
-    SELECT count(*) INTO v_count
-    FROM public.inventory_items
-    WHERE household_id = p_household_id AND id = ANY(v_seen);
-    IF v_count <> cardinality(v_seen) THEN
+    FOR v_item IN
+        SELECT * FROM public.inventory_items
+        WHERE household_id = p_household_id AND id = ANY(v_seen)
+        ORDER BY id
+        FOR UPDATE
+    LOOP
+        v_locked_count := v_locked_count + 1;
+    END LOOP;
+    IF v_locked_count <> cardinality(v_seen) THEN
         RAISE EXCEPTION 'Inventory item is not in this household' USING ERRCODE = '42501';
     END IF;
 
@@ -133,7 +141,6 @@ BEGIN
         SELECT * FROM public.inventory_items
         WHERE household_id = p_household_id AND id = ANY(v_seen)
         ORDER BY id
-        FOR UPDATE
     LOOP
         v_item_id := v_item.id;
         SELECT (value->>'confirmed_amount')::NUMERIC INTO v_confirmed
@@ -141,14 +148,10 @@ BEGIN
         WHERE (value->>'inventory_item_id')::UUID = v_item_id;
         v_before := v_item.quantity;
         v_after := GREATEST(v_before - LEAST(v_confirmed, GREATEST(v_before, 0)), 0);
-        IF round(v_after, 2) < v_after THEN
-            v_after := v_before;
-        ELSE
-            UPDATE public.inventory_items
-            SET quantity = v_after
-            WHERE id = v_item_id
-            RETURNING quantity INTO v_after;
-        END IF;
+        UPDATE public.inventory_items
+        SET quantity = v_after
+        WHERE id = v_item_id
+        RETURNING quantity INTO v_after;
         v_committed := v_before - v_after;
         IF v_after = 0 THEN
             UPDATE public.inventory_items SET depleted_at = COALESCE(depleted_at, now())
