@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { toastConfig } from "@/components/toastConfig";
 import CenterToast from "@/components/CenterToast";
+import { bindActiveCookAuthLifecycle } from "@/stores/activeCook";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -84,6 +85,8 @@ function RootLayoutNav() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const segments = useSegments();
+
+  useEffect(() => bindActiveCookAuthLifecycle(), []);
 
   // Pull auth state from our Zustand store (each selector grabs one field)
   const session = useAuthStore((s) => s.session);

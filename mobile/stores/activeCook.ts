@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { randomUUID } from "expo-crypto";
 import { create } from "zustand";
 import type { RecipeSuggestion } from "@/types/recipes";
+import { useAuthStore } from "@/stores/auth";
 
 type Scope = { userId: string; householdId: string };
 export type ActiveCook = Scope & {
@@ -242,3 +243,31 @@ export function createActiveCookStore() {
 }
 
 export const useActiveCookStore = createActiveCookStore();
+
+type AuthScopeState = { user: { id: string } | null; householdId: string | null };
+
+/** Bind active-cook memory to auth identity changes at the application root. */
+export function bindActiveCookAuthLifecycle(
+  authStore = useAuthStore,
+): () => void {
+  let scope: string | null = null;
+  const sync = (state: AuthScopeState) => {
+    const next = state.user?.id && state.householdId
+      ? `${state.user.id}:${state.householdId}`
+      : null;
+    if (next === scope) return;
+    scope = next;
+    if (!next) {
+      useActiveCookStore.getState().leaveScope();
+      return;
+    }
+    void useActiveCookStore.getState().hydrate(state.user!.id, state.householdId!);
+  };
+  sync(authStore.getState());
+  const unsubscribe = authStore.subscribe(sync);
+  return () => {
+    unsubscribe();
+    scope = null;
+    useActiveCookStore.getState().leaveScope();
+  };
+}
