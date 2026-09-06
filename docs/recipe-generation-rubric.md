@@ -2,6 +2,8 @@
 
 This reference records the evidence behind prompt version 3 and the checks used when reviewing generated meals.
 
+The curated instruction cases in `backend/app/ai/eval/instruction_fixtures.json` give the judge four labeled examples: vague instructions, missing heat or timing, an unsupported ingredient, and a complete brief pasta recipe. The fixture test validates the case schema and both expected outcomes. These cases guide evaluation and do not claim that a FakeProvider obeys the prompt.
+
 ## Sources
 
 - [Fresh Midwest excerpt on Epicurious](https://www.epicurious.com/recipes/food/views/chicken-and-potato-skillet) by cookbook author Maren Ellingboe King: four servings use four thighs and two pounds of potatoes. The method names the skillet, heat, browning cue, bake time, thermometer endpoint, and potato tenderness.
@@ -20,5 +22,5 @@ This reference records the evidence behind prompt version 3 and the checks used 
 - A four-serving chicken meal has about four portions or 1.5–2 pounds of chicken, a vegetable component, and a starch or hearty base.
 - A four-serving fish meal has about 1.25–1.5 pounds or four fillets, a side plan, thickness-aware timing, and an opacity, flaking, or 145°F cue.
 - A vegan four-serving meal has a substantial quantity of legumes, tofu, or another protein source. A small garnish does not satisfy this test.
-- Every main states servings, uses at least three meaningful ordered steps, names heat or equipment, gives useful timing, supplies a sensory or thermometer cue, and explains serving or resting.
+- Every meal states servings, uses the number of meaningful ordered steps its method needs, names heat or equipment where relevant, gives useful timing, supplies a sensory or thermometer cue where relevant, and explains serving or resting where relevant.
 - Reviewers judge role, quantity, technique, and plate completeness together. They do not use a fixed ingredient count, calorie cutoff, or minimum word count as a quality proxy.

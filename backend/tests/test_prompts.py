@@ -27,6 +27,7 @@ def test_generate_prompt_requires_portions_and_observable_instruction_cues() -> 
     assert "165°f" in system
     assert "145°f" in system
     assert "do not pad" in system
+    assert "at least three" not in system
 
 
 def test_load_prompt_rejects_a_prompt_without_a_version(
