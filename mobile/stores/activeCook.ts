@@ -244,7 +244,10 @@ export function createActiveCookStore() {
 
 export const useActiveCookStore = createActiveCookStore();
 
-type AuthScopeState = { user: { id: string } | null; householdId: string | null };
+type AuthScopeState = {
+  user: { id: string } | null;
+  householdId: string | null;
+};
 
 /** Bind active-cook memory to auth identity changes at the application root. */
 export function bindActiveCookAuthLifecycle(
@@ -253,9 +256,10 @@ export function bindActiveCookAuthLifecycle(
   let scope: string | null = null;
   let initialized = false;
   const sync = (state: AuthScopeState) => {
-    const next = state.user?.id && state.householdId
-      ? `${state.user.id}:${state.householdId}`
-      : null;
+    const next =
+      state.user?.id && state.householdId
+        ? `${state.user.id}:${state.householdId}`
+        : null;
     if (initialized && next === scope) return;
     initialized = true;
     scope = next;
@@ -263,7 +267,9 @@ export function bindActiveCookAuthLifecycle(
       useActiveCookStore.getState().leaveScope();
       return;
     }
-    void useActiveCookStore.getState().hydrate(state.user!.id, state.householdId!);
+    void useActiveCookStore
+      .getState()
+      .hydrate(state.user!.id, state.householdId!);
   };
   sync(authStore.getState());
   const unsubscribe = authStore.subscribe(sync);
