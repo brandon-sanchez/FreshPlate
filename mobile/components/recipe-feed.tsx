@@ -43,6 +43,7 @@ type RecipeFeedProps = {
   onToggleSave?: (recipe: RecipeSuggestion, saved: boolean) => void;
   isSavePending?: boolean;
   header?: ReactNode;
+  onOpenDetail?: (recipe: RecipeSuggestion) => void;
 };
 
 const replacementTransition = LinearTransition.duration(360).easing(
@@ -68,6 +69,7 @@ export default function RecipeFeed({
   onToggleSave = () => undefined,
   isSavePending = false,
   header,
+  onOpenDetail,
 }: RecipeFeedProps) {
   const { colors } = useTheme();
   const { width, height, fontScale } = useWindowDimensions();
@@ -281,12 +283,13 @@ export default function RecipeFeed({
       <RecipeIngredientsSheet
         recipe={ingredientRecipe}
         onClose={() => setIngredientRecipe(null)}
+        onOpenDetail={onOpenDetail}
       />
     </View>
   );
 }
 
-const RecipeCard = memo(function RecipeCard({
+  const RecipeCard = memo(function RecipeCard({
   recipe,
   stride,
   cardHeight,
@@ -422,13 +425,19 @@ const RecipeCard = memo(function RecipeCard({
             ]}
           >
             <View
-              accessibilityLabel="Recipe image placeholder"
               style={[
                 styles.artwork,
                 compact && { height: 104 },
                 { backgroundColor: colors.accentSoft },
               ]}
             >
+              <RecipePressable
+                accessibilityRole="button"
+                accessibilityLabel={`Preview ${recipe.title}`}
+                testID={`recipe-card-preview-${recipe.recipe_id}`}
+                onPress={() => onIngredients(recipe)}
+                style={[StyleSheet.absoluteFillObject, { alignItems: "center", justifyContent: "center" }]}
+              >
               <Feather
                 name="image"
                 size={34}
@@ -447,6 +456,7 @@ const RecipeCard = memo(function RecipeCard({
                   Generated
                 </Text>
               </View>
+              </RecipePressable>
               <RecipePressable onPress={() => onToggleSave(recipe, saved)} disabled={isSavePending} accessibilityRole="button" accessibilityLabel={saved ? "Remove " + recipe.title + " from saved recipes" : "Save " + recipe.title + " to household cookbook"} testID={"recipe-card-save-" + recipe.recipe_id} style={[styles.saveButton, { backgroundColor: colors.surface }]}>
                 {saved ? <FontAwesome name="bookmark" size={19} color={colors.accent} /> : <Feather name="bookmark" size={19} color={colors.textMuted} />}
                 <Text style={{ color: saved ? colors.accent : colors.textMuted, fontFamily: fonts.bodyStrong, fontSize: 12 }}>{saved ? "Saved" : "Save"}</Text>
@@ -458,6 +468,8 @@ const RecipeCard = memo(function RecipeCard({
               <Text
                 selectable
                 numberOfLines={3}
+                onPress={() => onIngredients(recipe)}
+                accessibilityRole="link"
                 style={{
                   fontFamily: fonts.display,
                   fontSize: compact ? 22 : 24,
