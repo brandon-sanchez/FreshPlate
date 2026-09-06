@@ -20,7 +20,8 @@ The curated instruction cases in `backend/app/ai/eval/instruction_fixtures.json`
 ## Review tests
 
 - A four-serving chicken meal uses a quantity that matches the stated servings. The exact amount depends on the cut and the rest of the dish.
-- A four-serving fish meal has about 1.25–1.5 pounds or four fillets, a side plan, thickness-aware timing, and an opacity, flaking, or 145°F cue.
+- A four-serving fish meal has about 1.25–1.5 pounds or four fillets, a side plan, thickness-aware timing, and a thermometer endpoint of 145°F. Opacity and easy flaking are useful additional cues.
 - A vegan four-serving meal uses quantities that make the named dish substantial. Do not present garnish quantities as the main ingredient.
 - Every meal states servings, uses the number of meaningful ordered steps its method needs, names heat or equipment where relevant, gives useful timing, supplies a sensory or thermometer cue where relevant, and explains serving or resting where relevant.
+- Each step begins with a short action heading, then a newline and one or two concise sentences for one cooking stage. Separate stages use separate steps.
 - Reviewers judge role, quantity, technique, and plate completeness together. They do not use a fixed ingredient count, calorie cutoff, or minimum word count as a quality proxy.

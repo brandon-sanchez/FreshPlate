@@ -9,7 +9,13 @@ def test_instruction_fixtures_are_complete_and_have_both_expected_outcomes() -> 
     fixtures = json.loads(path.read_text(encoding="utf-8"))
 
     assert len(fixtures) == 4
-    assert {fixture["expected"] for fixture in fixtures} == {"accept", "reject"}
+    expected_by_name = {
+        "vague instructions": "reject",
+        "missing heat and timing": "reject",
+        "unsupported ingredient": "reject",
+        "complete brief pasta": "accept",
+    }
+    assert {fixture["name"]: fixture["expected"] for fixture in fixtures} == expected_by_name
     for fixture in fixtures:
         assert set(fixture) == {"name", "instruction", "expected", "reason"}
         assert fixture["instruction"].strip()
