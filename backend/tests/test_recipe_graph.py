@@ -280,13 +280,13 @@ def test_check_quality_rejects_duplicate_inventory_overuse() -> None:
                 "Tomatoes", inventory_item_id="tomatoes", use_amount=2, unit="item"
             ),
             _ingredient(
-                "More tomatoes", inventory_item_id="tomatoes", use_amount=2, unit="item"
+                "Tomatoes", inventory_item_id="tomatoes", use_amount=2, unit="item"
             ),
         )
     )
     result = check_quality(
         {
-            "usable_items": [_usable_item(quantity=0.3)],
+            "usable_items": [_usable_item()],
             "generated_recipes": [recipe],
         }
     )
@@ -306,7 +306,10 @@ def test_check_quality_accepts_decimal_amounts_at_exact_inventory_total() -> Non
         )
     )
     result = check_quality(
-        {"usable_items": [_usable_item()], "generated_recipes": [recipe]}
+        {
+            "usable_items": [_usable_item(quantity=0.3)],
+            "generated_recipes": [recipe],
+        }
     )
     assert [item.title for item in result["valid_recipes"]] == [recipe.title]
 
