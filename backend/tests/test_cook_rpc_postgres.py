@@ -126,12 +126,13 @@ def call(
     snapshot=None,
     *,
     user=USER,
+    role="authenticated",
     check=True,
 ):
     snapshot = snapshot or {"recipe_id": recipe, "title": "Beans"}
     return db.run(
         f"SELECT public.cook_recipe({q(household)}, {q(operation)}, {q(recipe)}, {j(snapshot)}, {j(deductions)})",
-        role="authenticated",
+        role=role,
         user=user,
         check=check,
     )
@@ -264,42 +265,33 @@ def test_stale_depletion_records_zero_committed(database):
 
 
 @pytest.mark.parametrize(
-    "deductions",
+    "amount",
     [
-        [
-            {
-                "inventory_item_id": "00000000-0000-0000-0000-000000000000",
-                "confirmed_amount": 1,
-            }
-        ],
-        [
-            {
-                "inventory_item_id": "00000000-0000-0000-0000-000000000000",
-                "confirmed_amount": 0,
-            }
-        ],
-        [
-            {
-                "inventory_item_id": "00000000-0000-0000-0000-000000000000",
-                "confirmed_amount": -1,
-            }
-        ],
-        [
-            {
-                "inventory_item_id": "00000000-0000-0000-0000-000000000000",
-                "confirmed_amount": "NaN",
-            }
-        ],
+        0,
+        -1,
+        "NaN",
+        "+Infinity",
+        "-Infinity",
+        None,
     ],
 )
-def test_invalid_request_rolls_back(database, deductions):
+def test_invalid_amount_rolls_back(database, amount):
     household, item, recipe, operation = seed(database)
-    failed = call(database, household, operation, recipe, deductions, check=False)
+    event_count = database.run("SELECT count(*) FROM cook_events")
+    failed = call(
+        database,
+        household,
+        operation,
+        recipe,
+        [{"inventory_item_id": item, "confirmed_amount": amount}],
+        check=False,
+    )
     assert failed.returncode != 0
     assert (
         database.run(f"SELECT quantity::text FROM inventory_items WHERE id={q(item)}")
         == "3"
     )
+    assert database.run("SELECT count(*) FROM cook_events") == event_count
 
 
 def test_foreign_household_and_snapshot_mismatch_are_rejected(database):
@@ -314,6 +306,64 @@ def test_foreign_household_and_snapshot_mismatch_are_rejected(database):
         operation,
         recipe,
         [{"inventory_item_id": foreign_item, "confirmed_amount": 1}],
+        check=False,
+    )
+    assert failed.returncode != 0
+    assert database.run(f"SELECT quantity::text FROM inventory_items WHERE id={q(item)}") == "3"
+
+
+def test_replay_with_snapshot_recipe_id_mismatch_is_rejected(database):
+    household, item, recipe, operation = seed(database)
+    call(
+        database,
+        household,
+        operation,
+        recipe,
+        [{"inventory_item_id": item, "confirmed_amount": 1}],
+    )
+    failed = call(
+        database,
+        household,
+        operation,
+        recipe,
+        [{"inventory_item_id": item, "confirmed_amount": 1}],
+        snapshot={"recipe_id": str(uuid4()), "title": "Beans"},
+        check=False,
+    )
+    assert failed.returncode != 0
+    assert database.run(f"SELECT quantity::text FROM inventory_items WHERE id={q(item)}") == "2"
+    assert database.run(f"SELECT count(*) FROM cook_events WHERE operation_id={q(operation)}") == "1"
+
+
+def test_duplicate_inventory_id_is_rejected_without_side_effects(database):
+    household, item, recipe, operation = seed(database)
+    event_count = database.run("SELECT count(*) FROM cook_events")
+    failed = call(
+        database,
+        household,
+        operation,
+        recipe,
+        [
+            {"inventory_item_id": item, "confirmed_amount": 1},
+            {"inventory_item_id": item, "confirmed_amount": 1},
+        ],
+        check=False,
+    )
+    assert failed.returncode != 0
+    assert database.run(f"SELECT quantity::text FROM inventory_items WHERE id={q(item)}") == "3"
+    assert database.run("SELECT count(*) FROM cook_events") == event_count
+
+
+def test_anonymous_role_cannot_call_cook_rpc(database):
+    household, item, recipe, operation = seed(database)
+    failed = call(
+        database,
+        household,
+        operation,
+        recipe,
+        [{"inventory_item_id": item, "confirmed_amount": 1}],
+        user=None,
+        role="anon",
         check=False,
     )
     assert failed.returncode != 0
@@ -338,6 +388,8 @@ def test_mixed_valid_and_foreign_rows_roll_back(database):
         check=False,
     )
     assert failed.returncode != 0
+    assert database.run(f"SELECT quantity::text FROM inventory_items WHERE id={q(item)}") == "3"
+    assert database.run(f"SELECT count(*) FROM cook_events WHERE operation_id={q(operation)}") == "0"
 
 
 def concurrent_calls(db, calls):
