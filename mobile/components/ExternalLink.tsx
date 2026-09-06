@@ -3,8 +3,7 @@ import * as WebBrowser from 'expo-web-browser';
 import React from 'react';
 import { Platform } from 'react-native';
 
-// Opens external URLs. On web it behaves like a normal link.
-// On iOS/Android it opens an in-app browser instead of leaving the app.
+/** Opens external URLs as a normal link on web and an in-app browser on mobile. */
 export function ExternalLink(
   props: Omit<React.ComponentProps<typeof Link>, 'href'> & { href: ExternalPathString }
 ) {

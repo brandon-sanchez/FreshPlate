@@ -66,6 +66,7 @@ function page(
   };
 }
 
+/** Provides each hook test with an isolated query cache and tracks it for cleanup. */
 function wrapper({ children }: { children: React.ReactNode }) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
