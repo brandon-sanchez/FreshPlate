@@ -60,14 +60,18 @@ def main() -> None:
     # PostgreSQL computes relative dates in the transaction, keeping the seed current.
     payload = json.dumps(items)
     parsed = urlsplit(dsn)
-    if not parsed.hostname:
+    if not parsed.hostname or not parsed.path.strip('/').strip():
         raise SystemExit("DEMO_DATABASE_URL must include a database host")
     sql = "SELECT public.reset_demo_household(:'household_id'::uuid, :'user_id'::uuid, :'payload'::jsonb);"
     env = os.environ.copy()
-    env.update({"PGHOST": parsed.hostname, "PGPORT": str(parsed.port or 5432), "PGUSER": parsed.username or "postgres", "PGDATABASE": parsed.path.lstrip("/")})
-    if parsed.password:
-        env["PGPASSWORD"] = parsed.password
-    subprocess.run(["psql", "--no-psqlrc", "--tuples-only", "--set", f"household_id={household_id}", "--set", f"user_id={user_id}", "--set", f"payload={payload}"], input=sql, text=True, env=env, check=True, capture_output=True)
+    # Pass the complete libpq URI intact so encoded credentials and connection
+    # parameters (including SSL settings) are interpreted by libpq itself.
+    subprocess.run(
+        ["psql", "--no-psqlrc", "--tuples-only", "-d", dsn, "--set", "ON_ERROR_STOP=1",
+         "--set", f"household_id={household_id}", "--set", f"user_id={user_id}",
+         "--set", f"payload={payload}"],
+        input=sql, text=True, env=env, check=True, capture_output=True,
+    )
 
 
 if __name__ == "__main__":

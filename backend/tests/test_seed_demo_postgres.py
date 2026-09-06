@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
@@ -147,3 +148,41 @@ def test_invalid_target_payload_and_role_leave_data_unchanged(db):
         ).stdout.strip()
         == "Original"
     )
+
+
+def test_null_payload_is_rejected_without_deleting_inventory(db):
+    user = "00000000-0000-0000-0000-000000000001"
+    target = "20000000-0000-0000-0000-000000000021"
+    db[1](db[0], f"INSERT INTO households VALUES ({sql(target)},{sql(user)},true); INSERT INTO household_members VALUES ({sql(target)},{sql(user)},'owner'); INSERT INTO inventory_items(household_id,added_by,name,quantity,unit,storage_location) VALUES ({sql(target)},{sql(user)},'Original',1,'each','fridge');")
+    assert call(db, target, user, None, check=False).returncode != 0
+    assert db[1](db[0], f"SELECT name FROM inventory_items WHERE household_id={sql(target)}").stdout.strip() == "Original"
+
+
+def test_cli_invalid_target_returns_failure_and_preserves_inventory(db):
+    dsn, run = db
+    user = "00000000-0000-0000-0000-000000000001"
+    target = "30000000-0000-0000-0000-000000000031"
+    run(dsn, f"INSERT INTO households VALUES ('{target}','{user}',false); INSERT INTO household_members VALUES ('{target}','{user}','owner'); INSERT INTO inventory_items(household_id,added_by,name,quantity,unit,storage_location) VALUES ('{target}','{user}','Original',1,'each','fridge');")
+    env = os.environ | {"DEMO_DATABASE_URL": dsn, "DEMO_HOUSEHOLD_ID": target, "DEMO_USER_ID": user}
+    result = subprocess.run([sys.executable, "-m", "app.scripts.seed_demo"], cwd=Path(__file__).parents[1], env=env, text=True, capture_output=True)
+    assert result.returncode != 0
+    assert run(dsn, f"SELECT name FROM inventory_items WHERE household_id='{target}';").stdout.strip() == "Original"
+
+
+def test_cli_entrypoint_resets_disposable_database_twice(db):
+    dsn, run = db
+    user = "00000000-0000-0000-0000-000000000001"
+    target = "10000000-0000-0000-0000-000000000031"
+    run(dsn, f"INSERT INTO households VALUES ('{target}','{user}',true); INSERT INTO household_members VALUES ('{target}','{user}','owner');")
+    env = os.environ | {
+        "DEMO_DATABASE_URL": dsn,
+        "DEMO_HOUSEHOLD_ID": target,
+        "DEMO_USER_ID": user,
+    }
+    for _ in range(2):
+        result = subprocess.run(
+            [sys.executable, "-m", "app.scripts.seed_demo"],
+            cwd=Path(__file__).parents[1], env=env, text=True, capture_output=True,
+        )
+        assert result.returncode == 0, result.stderr
+        assert run(dsn, f"SELECT count(*) FROM inventory_items WHERE household_id='{target}';").stdout.strip() == "20"

@@ -23,7 +23,7 @@ BEGIN
         RAISE EXCEPTION 'demo household and owner do not match';
     END IF;
 
-    IF jsonb_typeof(p_items) <> 'array' OR jsonb_array_length(p_items) NOT BETWEEN 15 AND 25 THEN
+    IF p_items IS NULL OR jsonb_typeof(p_items) <> 'array' OR jsonb_array_length(p_items) NOT BETWEEN 15 AND 25 THEN
         RAISE EXCEPTION 'demo seed must contain 15 to 25 items';
     END IF;
 
@@ -48,3 +48,7 @@ $$;
 
 REVOKE ALL ON FUNCTION public.reset_demo_household(uuid, uuid, jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.reset_demo_household(uuid, uuid, jsonb) TO service_role;
+
+-- Demo designation is administrative state; ordinary users must not be able to
+-- turn an arbitrary household into a target for the privileged reset function.
+REVOKE UPDATE (is_demo) ON public.households FROM PUBLIC, anon, authenticated;
