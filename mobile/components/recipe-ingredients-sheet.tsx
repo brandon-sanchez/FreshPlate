@@ -1,6 +1,7 @@
 import { Modal, PanResponder, ScrollView, Text, View } from "react-native";
 import { useRef } from "react";
 import Feather from "@expo/vector-icons/Feather";
+import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RecipePressable } from "@/components/recipe-motion";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
@@ -125,31 +126,45 @@ export default function RecipeIngredientsSheet({
                 <Feather name="x" size={22} color={colors.text} />
               </RecipePressable>
             </View>
-            <Text
-              selectable
-              style={{
-                fontFamily: fonts.display,
-                color: colors.text,
-                fontSize: 26,
-                lineHeight: 32,
-              }}
-            >
-              {recipe?.title}
-            </Text>
-            <Text
-              style={{
-                fontFamily: fonts.body,
-                color: colors.textMuted,
-                fontSize: 13,
-              }}
-            >
-              {recipe?.cook_time_minutes} min · {recipe?.servings} servings
-            </Text>
           </View>
           <ScrollView
             testID="recipe-ingredients-list"
             contentContainerStyle={{ paddingHorizontal: 24 }}
           >
+            <View style={{ gap: 12, paddingBottom: 20 }}>
+              <View
+                testID="recipe-preview-artwork"
+                style={{
+                  height: 132,
+                  borderRadius: 18,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: colors.accentSoft,
+                }}
+              >
+                <FontAwesome name="cutlery" size={48} color={colors.accent} />
+              </View>
+              <Text
+                selectable
+                style={{
+                  fontFamily: fonts.display,
+                  color: colors.text,
+                  fontSize: 26,
+                  lineHeight: 32,
+                }}
+              >
+                {recipe?.title}
+              </Text>
+              <Text
+                style={{
+                  fontFamily: fonts.body,
+                  color: colors.textMuted,
+                  fontSize: 13,
+                }}
+              >
+                {recipe?.cook_time_minutes} min · {recipe?.servings} servings
+              </Text>
+            </View>
             {recipe?.ingredients.map((ingredient, index) => (
               <View
                 key={`${ingredient.name}-${index}`}
