@@ -1,8 +1,12 @@
 import base64
 import json
+import struct
+import zlib
+from io import BytesIO
 
 import httpx
 import pytest
+from PIL import Image
 from pydantic import SecretStr
 
 from app.ai.images.openai import ENDPOINT, OpenAIImageProvider
@@ -109,3 +113,103 @@ async def test_oversize_prompt_and_provider_errors_are_single_attempt() -> None:
             await provider.generate("x", kind="ingredient")
     assert calls == 1
     assert "secret" not in str(error.value)
+
+
+class ClosingStream(httpx.AsyncByteStream):
+    def __init__(self, payload: bytes, *, fail: bool = False) -> None:
+        self.payload = payload
+        self.fail = fail
+        self.closed = False
+
+    async def __aiter__(self):
+        yield self.payload
+        if self.fail:
+            raise httpx.ReadError("synthetic stream failure")
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+def envelope(image: bytes) -> bytes:
+    return json.dumps(
+        {"data": [{"b64_json": base64.b64encode(image).decode()}]}
+    ).encode()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,headers,fail",
+    [
+        (429, {}, False),
+        (302, {"location": "https://untrusted.invalid"}, False),
+        (200, {"content-length": str(14 * 1024 * 1024 + 1)}, False),
+        (200, {}, True),
+    ],
+)
+async def test_stream_errors_close_response_and_make_one_request(
+    status, headers, fail
+) -> None:
+    stream = ClosingStream(b"private", fail=fail)
+    calls = 0
+
+    async def handler(request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(status, headers=headers, stream=stream)
+
+    async with client_for(handler) as client:
+        with pytest.raises(ProviderError):
+            await OpenAIImageProvider(
+                "key", enabled=True, monthly_cap_microusd=1, client=client
+            ).generate("x", kind="recipe")
+    assert stream.closed
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [b"not json", envelope(b"not base64"), json.dumps({"data": []}).encode()],
+)
+async def test_malformed_image_responses_are_rejected(body) -> None:
+    async def handler(request):
+        return httpx.Response(200, content=body)
+
+    async with client_for(handler) as client:
+        with pytest.raises(ProviderError):
+            await OpenAIImageProvider(
+                "key", enabled=True, monthly_cap_microusd=1, client=client
+            ).generate("x", kind="recipe")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("image", [b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff\xe0invalid"])
+async def test_non_decodable_images_are_rejected(image) -> None:
+    async def handler(request):
+        return httpx.Response(200, content=envelope(image))
+
+    async with client_for(handler) as client:
+        with pytest.raises(ProviderError):
+            await OpenAIImageProvider(
+                "key", enabled=True, monthly_cap_microusd=1, client=client
+            ).generate("x", kind="recipe")
+
+
+@pytest.mark.asyncio
+async def test_valid_eight_mib_png_is_accepted() -> None:
+    output = BytesIO()
+    Image.new("RGB", (1, 1), "red").save(output, format="PNG")
+    tiny = output.getvalue()
+    text = b"Note\0" + b"x" * (8 * 1024 * 1024)
+    chunk = struct.pack(">I", len(text)) + b"tEXt" + text
+    chunk += struct.pack(">I", zlib.crc32(b"tEXt" + text))
+    image = tiny[:33] + chunk + tiny[33:]
+
+    async def handler(request):
+        return httpx.Response(200, content=envelope(image))
+
+    async with client_for(handler) as client:
+        result = await OpenAIImageProvider(
+            "key", enabled=True, monthly_cap_microusd=1, client=client
+        ).generate("x", kind="recipe")
+    assert result == image
