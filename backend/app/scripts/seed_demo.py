@@ -7,7 +7,6 @@ import os
 import subprocess
 import uuid
 
-
 ITEMS = [
     ("Baby spinach", 1, "bag", "Produce", 2, "fridge"),
     ("Avocados", 3, "each", "Produce", 3, "fridge"),
@@ -35,7 +34,9 @@ ITEMS = [
 def main() -> None:
     household_id = os.environ.get("DEMO_HOUSEHOLD_ID")
     user_id = os.environ.get("DEMO_USER_ID")
-    dsn = os.environ.get("DEMO_DATABASE_URL", "postgresql://postgres@127.0.0.1:55441/postgres")
+    dsn = os.environ.get(
+        "DEMO_DATABASE_URL", "postgresql://postgres@127.0.0.1:55441/postgres"
+    )
     if not household_id or not user_id:
         raise SystemExit("Set DEMO_HOUSEHOLD_ID and DEMO_USER_ID explicitly.")
     for value, name in ((household_id, "DEMO_HOUSEHOLD_ID"), (user_id, "DEMO_USER_ID")):
@@ -61,7 +62,9 @@ def main() -> None:
         user_id,
         payload,
     )
-    subprocess.run(["psql", dsn, "--no-psqlrc", "--tuples-only", "--command", sql], check=True)
+    subprocess.run(
+        ["psql", dsn, "--no-psqlrc", "--tuples-only", "--command", sql], check=True  # noqa: E501
+    )
 
 
 if __name__ == "__main__":
