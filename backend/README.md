@@ -5,6 +5,7 @@ From `backend/`, create a Python environment and install the dependencies:
 ```sh
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
+venv/bin/pip install ruff==0.16.1
 cp .env.example .env
 ```
 

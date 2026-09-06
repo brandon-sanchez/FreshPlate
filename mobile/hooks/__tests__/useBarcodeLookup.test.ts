@@ -1,5 +1,5 @@
 import React from "react";
-import { renderHook, waitFor } from "@testing-library/react-native";
+import { cleanupAsync, renderHook, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // Supabase auth.getSession is called from apiFetch to grab the access token.
@@ -19,6 +19,7 @@ import { useBarcodeLookup, isValidBarcode } from "@/hooks/useBarcodeLookup";
 // cache and its timers so they cannot outlive the test run.
 let client: QueryClient;
 
+/** Creates a query client configured for deterministic barcode hook tests. */
 function createTestClient() {
   return new QueryClient({
     defaultOptions: {
@@ -32,6 +33,7 @@ function createTestClient() {
   });
 }
 
+/** Supplies the barcode hook with the test query client. */
 function wrapper({ children }: { children: React.ReactNode }) {
   return React.createElement(QueryClientProvider, { client }, children);
 }
@@ -55,7 +57,8 @@ describe("useBarcodeLookup", () => {
     client = createTestClient();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await cleanupAsync();
     client.clear();
     global.fetch = originalFetch;
   });

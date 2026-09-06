@@ -3,7 +3,7 @@ import {
   QueryClient,
   QueryClientProvider,
 } from "@tanstack/react-query";
-import { act, renderHook, waitFor } from "@testing-library/react-native";
+import { act, cleanupAsync, renderHook, waitFor } from "@testing-library/react-native";
 import type {
   RecipeFeedResponse,
   RecipeFeedSessionRequest,
@@ -66,10 +66,12 @@ function page(
   };
 }
 
+/** Provides each hook test with an isolated query cache and tracks it for cleanup. */
 function wrapper({ children }: { children: React.ReactNode }) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  queryClients.add(queryClient);
   return React.createElement(
     QueryClientProvider,
     { client: queryClient },
@@ -77,10 +79,21 @@ function wrapper({ children }: { children: React.ReactNode }) {
   );
 }
 
+const queryClients = new Set<QueryClient>();
+
 describe("useRecipeFeed", () => {
   beforeEach(() => {
     mockCreateSession.mockReset();
     mockFetchPage.mockReset();
+  });
+
+  afterEach(async () => {
+    await cleanupAsync();
+    for (const queryClient of queryClients) {
+      for (const mutation of queryClient.getMutationCache().getAll()) mutation.destroy();
+      queryClient.clear();
+    }
+    queryClients.clear();
   });
 
   it("does not treat the initial viewport as a fast scroll", async () => {
