@@ -1,5 +1,5 @@
 import React from "react";
-import { renderHook, waitFor } from "@testing-library/react-native";
+import { cleanupAsync, renderHook, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // Supabase auth.getSession is called from apiFetch to grab the access token.
@@ -55,7 +55,8 @@ describe("useBarcodeLookup", () => {
     client = createTestClient();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await cleanupAsync();
     client.clear();
     global.fetch = originalFetch;
   });

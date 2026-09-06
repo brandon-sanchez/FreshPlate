@@ -11,8 +11,8 @@ Install the backend dependencies from `backend/README.md`. Install the mobile de
 Run the backend checks from `backend/`:
 
 ```sh
-ruff check .
-pytest
+venv/bin/ruff check .
+venv/bin/pytest
 ```
 
 Run the mobile checks from `mobile/`:
