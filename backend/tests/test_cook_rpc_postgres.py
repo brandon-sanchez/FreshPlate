@@ -427,6 +427,116 @@ def test_http_forwards_jwt_to_real_rpc(database, patch_jwks):
     assert database.run(f"SELECT quantity::text FROM inventory_items WHERE id={q(item)}") == "0.0"
 
 
+def _http_body(household, item, recipe, operation, amount=1, title="Beans"):
+    return {
+        "household_id": household,
+        "operation_id": operation,
+        "recipe_id": recipe,
+        "recipe_snapshot": {"recipe_id": recipe, "title": title},
+        "deductions": [{"inventory_item_id": item, "confirmed_amount": amount}],
+    }
+
+
+def test_http_two_users_forward_distinct_auth_uid_and_reject_foreign_household(
+    database, patch_jwks
+):
+    key = SigningKey("cook-users")
+    patch_jwks([key])
+    other = OTHER
+    household_a, item_a, recipe_a, operation_a = seed(database, 2)
+    household_b, item_b, recipe_b, operation_b = seed(database, 2)
+    database.run(
+        f"UPDATE household_members SET user_id={q(other)} WHERE household_id={q(household_b)}"
+    )
+    app = create_app()
+    with TestClient(app) as client:
+        client.app.state.supabase_http_client = RpcHttpClient(database)
+        headers_a = {"Authorization": f"Bearer {key.sign(sub=USER)}"}
+        headers_b = {"Authorization": f"Bearer {key.sign(sub=other)}"}
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(
+                pool.map(
+                    lambda args: client.post(
+                        "/api/cook/confirm", headers=args[0], json=args[1]
+                    ),
+                    [
+                        (headers_a, _http_body(household_a, item_a, recipe_a, operation_a)),
+                        (headers_b, _http_body(household_b, item_b, recipe_b, operation_b)),
+                    ],
+                )
+            )
+        assert [response.status_code for response in responses] == [200, 200]
+        foreign = client.post(
+            "/api/cook/confirm",
+            headers=headers_a,
+            json=_http_body(household_b, item_b, str(uuid4()), str(uuid4())),
+        )
+        assert foreign.status_code == 409
+    assert database.run(f"SELECT quantity::text FROM inventory_items WHERE id={q(item_a)}") == "1.0"
+    assert database.run(f"SELECT quantity::text FROM inventory_items WHERE id={q(item_b)}") == "1.0"
+    assert database.run(f"SELECT user_id FROM cook_events WHERE operation_id={q(operation_a)}") == USER
+    assert database.run(f"SELECT user_id FROM cook_events WHERE operation_id={q(operation_b)}") == OTHER
+    assert database.run(f"SELECT count(*) FROM cook_events WHERE household_id={q(household_b)} AND user_id={q(USER)}") == "0"
+
+
+def test_http_replay_after_delete_and_parallel_replay_deduct_once(database, patch_jwks):
+    key = SigningKey("cook-replay")
+    patch_jwks([key])
+    household, item, recipe, operation = seed(database, 2)
+    app = create_app()
+    body = _http_body(household, item, recipe, operation, title="Same title")
+    headers = {"Authorization": f"Bearer {key.sign(sub=USER)}"}
+    with TestClient(app) as client:
+        client.app.state.supabase_http_client = RpcHttpClient(database)
+        first = client.post("/api/cook/confirm", headers=headers, json=body)
+        assert first.status_code == 200
+        database.run(f"DELETE FROM inventory_items WHERE id={q(item)}")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda _: client.post("/api/cook/confirm", headers=headers, json=body), range(2)))
+    assert all(response.status_code == 200 for response in responses)
+    assert database.run(f"SELECT count(*) FROM cook_events WHERE operation_id={q(operation)}") == "1"
+
+
+def test_http_parallel_initial_same_operation_deducts_once(database, patch_jwks):
+    key = SigningKey("cook-http-concurrent")
+    patch_jwks([key])
+    household, item, recipe, operation = seed(database, 3)
+    app = create_app()
+    headers = {"Authorization": f"Bearer {key.sign(sub=USER)}"}
+    body = _http_body(household, item, recipe, operation, amount=2)
+    with TestClient(app) as client:
+        client.app.state.supabase_http_client = RpcHttpClient(database)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda _: client.post("/api/cook/confirm", headers=headers, json=body), range(2)))
+    assert all(response.status_code == 200 for response in responses)
+    assert database.run(f"SELECT quantity::text FROM inventory_items WHERE id={q(item)}") == "1.0"
+    assert database.run(f"SELECT count(*) FROM cook_events WHERE operation_id={q(operation)}") == "1"
+
+
+def test_http_same_title_recipes_keep_distinct_uuid_identity(database, patch_jwks):
+    key = SigningKey("cook-identity")
+    patch_jwks([key])
+    household, item_a, recipe_a, operation_a = seed(database, 2)
+    item_b, recipe_b, operation_b = str(uuid4()), str(uuid4()), str(uuid4())
+    database.run(
+        f"INSERT INTO inventory_items(id, household_id, name, quantity) VALUES ({q(item_b)}, {q(household)}, 'Beans', 2)"
+    )
+    app = create_app()
+    headers = {"Authorization": f"Bearer {key.sign(sub=USER)}"}
+    with TestClient(app) as client:
+        client.app.state.supabase_http_client = RpcHttpClient(database)
+        for item, recipe, operation in ((item_a, recipe_a, operation_a), (item_b, recipe_b, operation_b)):
+            response = client.post("/api/cook/confirm", headers=headers, json=_http_body(household, item, recipe, operation, title="Same title"))
+            assert response.status_code == 200
+    assert database.run(
+        f"SELECT count(*) FROM cook_events WHERE household_id={q(household)} AND recipe_snapshot->>'title'='Same title'"
+    ) == "2"
+    assert database.run(
+        "SELECT string_agg(recipe_id::text, ',' ORDER BY recipe_id) FROM cook_events "
+        f"WHERE household_id={q(household)} AND recipe_snapshot->>'title'='Same title'"
+    ) == ",".join(sorted((recipe_a, recipe_b)))
+
+
 def concurrent_calls(db, calls):
     barrier = __import__("threading").Barrier(len(calls))
 
