@@ -13,7 +13,14 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
+import httpx
 import pytest
+from fastapi.testclient import TestClient
+from jose import jwt
+
+from app.core.config import settings
+from app.main import create_app
+from tests.conftest import SigningKey
 
 DSN = os.environ.get("FRESHPLATE_TEST_POSTGRES_DSN", "")
 pytestmark = pytest.mark.skipif(not DSN, reason="Requires disposable local PostgreSQL")
@@ -390,6 +397,34 @@ def test_mixed_valid_and_foreign_rows_roll_back(database):
     assert failed.returncode != 0
     assert database.run(f"SELECT quantity::text FROM inventory_items WHERE id={q(item)}") == "3"
     assert database.run(f"SELECT count(*) FROM cook_events WHERE operation_id={q(operation)}") == "0"
+
+
+class RpcHttpClient:
+    def __init__(self, database): self.database = database
+    async def post(self, url, *, headers, json, timeout):
+        user = jwt.get_unverified_claims(headers["Authorization"][7:])["sub"]
+        result = call(self.database, json["p_household_id"], json["p_operation_id"], json["p_recipe_id"], json["p_deductions"], snapshot=json["p_recipe_snapshot"], user=user, check=False)
+        if result.returncode:
+            return httpx.Response(409, request=httpx.Request("POST", url))
+        return httpx.Response(200, request=httpx.Request("POST", url), content=__import__("json").dumps(json_module(result.stdout)).encode())
+
+
+def json_module(value):
+    return json.loads(value)
+
+
+def test_http_forwards_jwt_to_real_rpc(database, patch_jwks):
+    key = SigningKey("cook-http")
+    patch_jwks([key])
+    settings.supabase_url = "https://supabase.test"
+    settings.supabase_publishable_key = "key"
+    household, item, recipe, operation = seed(database, 2)
+    app = create_app()
+    with TestClient(app) as client:
+        client.app.state.supabase_http_client = RpcHttpClient(database)
+        response = client.post("/api/cook/confirm", headers={"Authorization": f"Bearer {key.sign(sub=USER)}"}, json={"household_id": household, "operation_id": operation, "recipe_id": recipe, "recipe_snapshot": {"recipe_id": recipe, "title": "Beans"}, "deductions": [{"inventory_item_id": item, "confirmed_amount": 2}]})
+    assert response.status_code == 200
+    assert database.run(f"SELECT quantity::text FROM inventory_items WHERE id={q(item)}") == "0.0"
 
 
 def concurrent_calls(db, calls):
