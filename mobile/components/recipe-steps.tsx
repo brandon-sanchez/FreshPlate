@@ -1,4 +1,4 @@
-import { Text, View } from "react-native";
+import { Text, View, useWindowDimensions } from "react-native";
 import { useTheme } from "@/hooks/useTheme";
 
 function splitStep(step: string): { heading: string | null; body: string } {
@@ -11,6 +11,8 @@ function splitStep(step: string): { heading: string | null; body: string } {
 
 export default function RecipeSteps({ steps }: { steps: string[] }) {
   const { colors, fonts } = useTheme();
+  const { fontScale } = useWindowDimensions();
+  const markerSize = Math.max(24, Math.ceil(24 * fontScale));
 
   return (
     <View testID="recipe-steps" style={{ gap: 12 }}>
@@ -28,9 +30,9 @@ export default function RecipeSteps({ steps }: { steps: string[] }) {
           >
             <View
               style={{
-                width: 24,
-                height: 24,
-                borderRadius: 12,
+                minWidth: markerSize,
+                height: markerSize,
+                borderRadius: markerSize / 2,
                 alignItems: "center",
                 justifyContent: "center",
                 backgroundColor: colors.accentSoft,
@@ -41,6 +43,7 @@ export default function RecipeSteps({ steps }: { steps: string[] }) {
                 style={{
                   color: colors.accent,
                   fontFamily: fonts.bodyStrong,
+                  fontSize: 14,
                 }}
               >
                 {index + 1}
