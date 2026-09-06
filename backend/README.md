@@ -27,6 +27,19 @@ venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir a
 
 Open `/health` to check the server. Recipe requests also need a valid Supabase user session and household inventory.
 
+## Reset the demo household
+
+Create a dedicated demo user and household in Supabase, then set their UUIDs explicitly. An administrator must insert the household into `demo_households`; ordinary authenticated users cannot modify this registry. The account must own the household; the reset refuses mismatched or arbitrary household IDs.
+
+```sh
+export DEMO_HOUSEHOLD_ID='household-uuid'
+export DEMO_USER_ID='user-uuid'
+export DEMO_DATABASE_URL='postgresql://...'
+python -m app.scripts.seed_demo
+```
+
+Run this command from `backend/` using an explicit service role database connection in `DEMO_DATABASE_URL` (the URI is passed to libpq unchanged). It atomically replaces the dedicated household's 20 curated items, with expiry dates calculated relative to the day of each reset. Apply the demo migration before running it. Demo credentials stay in your local environment and are never committed.
+
 ## Deploy the feed changes
 
 Apply `20260905063603_secure_atomic_recipe_feed_refills.sql` before deploying this backend revision.
