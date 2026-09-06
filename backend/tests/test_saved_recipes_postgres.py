@@ -68,28 +68,34 @@ def test_saved_recipe_constraints_and_rls(db):
     rid = "30000000-0000-0000-0000-000000000001"
     good = f"""SET ROLE authenticated; SET request.jwt.claim.sub='{A}';
 INSERT INTO saved_recipes(household_id,recipe_id,recipe,saved_by) VALUES ('{h}','{rid}','{{"recipe_id":"{rid}","title":"Soup"}}','{A}');
-SELECT count(*) FROM saved_recipes; DELETE FROM saved_recipes WHERE recipe_id='{rid}';"""
-    assert q(good).stdout.strip() == "1"
+SELECT count(*) FROM saved_recipes WHERE recipe_id='{rid}';"""
+    result = q(good)
+    assert result.returncode == 0 and result.stdout.strip() == "1"
+    deleted = q(f"SET ROLE authenticated; SET request.jwt.claim.sub='{A}'; DELETE FROM saved_recipes WHERE recipe_id='{rid}'; SELECT count(*) FROM saved_recipes WHERE recipe_id='{rid}';")
+    assert deleted.returncode == 0 and deleted.stdout.strip() == "0"
     assert (
         q(
             f"SET ROLE authenticated; SET request.jwt.claim.sub='{A}'; INSERT INTO saved_recipes(household_id,recipe_id,recipe,saved_by) VALUES ('{foreign}','{rid}','{{\"recipe_id\":\"{rid}\"}}','{A}');"
         ).returncode
         != 0
     )
+    foreign_read = q(f"SET ROLE authenticated; SET request.jwt.claim.sub='{A}'; SELECT count(*) FROM saved_recipes WHERE household_id='{foreign}'; DELETE FROM saved_recipes WHERE household_id='{foreign}';")
+    assert foreign_read.returncode == 0 and foreign_read.stdout.strip() == "0"
     assert (
         q(
             f"INSERT INTO saved_recipes(household_id,recipe_id,recipe,saved_by) VALUES ('{h}','{rid}','{{\"recipe_id\":\"{rid}\"}}','{A}'),('{h}','{rid}','{{\"recipe_id\":\"{rid}\"}}','{A}');"
         ).returncode
         != 0
     )
-    for snap in (
+    for index, snap in enumerate((
         "'{}'",
         "'{\"recipe_id\":null}'",
         '\'{"recipe_id":"40000000-0000-0000-0000-000000000001"}\'',
-    ):
+    )):
+        invalid_id = f"30000000-0000-0000-0000-00000000000{index + 2}"
         assert (
             q(
-                f"INSERT INTO saved_recipes(household_id,recipe_id,recipe,saved_by) VALUES ('{h}','{rid}',{snap},'{A}');"
+                f"INSERT INTO saved_recipes(household_id,recipe_id,recipe,saved_by) VALUES ('{h}','{invalid_id}',{snap},'{A}');"
             ).returncode
             != 0
         )
