@@ -5,6 +5,7 @@ import { PanResponder } from "react-native";
 import RecipeIngredientsSheet from "@/components/recipe-ingredients-sheet";
 
 jest.mock("@expo/vector-icons/Feather", () => () => null);
+jest.mock("@expo/vector-icons/FontAwesome", () => () => null);
 jest.mock("@/hooks/useReducedMotion", () => ({ useReducedMotion: () => true }));
 
 const recipe = {
