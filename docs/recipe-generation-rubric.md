@@ -2,7 +2,7 @@
 
 This reference records the evidence behind prompt version 3 and the checks used when reviewing generated meals.
 
-The curated instruction cases in `backend/app/ai/eval/instruction_fixtures.json` give the judge four labeled examples: vague instructions, missing heat or timing, an unsupported ingredient, and a complete brief pasta recipe. The fixture test validates the case schema and both expected outcomes. These cases guide evaluation and do not claim that a FakeProvider obeys the prompt.
+The curated instruction cases in `backend/app/ai/eval/instruction_fixtures.json` give the judge four labeled examples: vague instructions, missing heat or timing, an unsupported ingredient, and a complete brief pasta recipe. The fixture test validates the case schema and the expected outcome for each named case. These cases guide evaluation and do not claim that a FakeProvider obeys the prompt.
 
 ## Sources
 

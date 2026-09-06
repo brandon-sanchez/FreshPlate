@@ -15,7 +15,8 @@ def test_instruction_fixtures_are_complete_and_have_both_expected_outcomes() -> 
         "unsupported ingredient": "reject",
         "complete brief pasta": "accept",
     }
-    assert {fixture["name"]: fixture["expected"] for fixture in fixtures} == expected_by_name
+    actual = {fixture["name"]: fixture["expected"] for fixture in fixtures}
+    assert actual == expected_by_name
     for fixture in fixtures:
         assert set(fixture) == {"name", "instruction", "expected", "reason"}
         assert fixture["instruction"].strip()
