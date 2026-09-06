@@ -7,7 +7,8 @@ const mockOrder = jest.fn();
 const mockEq = jest.fn((_column: string, _value: unknown) => ({ order: mockOrder }));
 const mockSelect = jest.fn(() => ({ eq: mockEq }));
 let deleteError: Error | null = null;
-const mockDeleteEq = jest.fn(() => ({ eq: mockDeleteEq, then: (resolve: (value: { error: Error | null }) => unknown) => resolve({ error: deleteError }) }));
+type DeleteQuery = { eq: (column: string, value: unknown) => DeleteQuery; then: (resolve: (value: { error: Error | null }) => unknown) => unknown };
+const mockDeleteEq: jest.Mock<DeleteQuery, []> = jest.fn((): DeleteQuery => ({ eq: mockDeleteEq, then: (resolve) => resolve({ error: deleteError }) }));
 const mockDelete = jest.fn(() => ({ eq: mockDeleteEq }));
 const mockInsert = jest.fn(() => Promise.resolve({ error: null }));
 const mockFrom = jest.fn((table: string) => ({ select: mockSelect, delete: mockDelete, insert: mockInsert, table }));
@@ -31,7 +32,7 @@ function wrapper({ children }: { children: React.ReactNode }) {
 }
 
 describe("useSavedRecipes", () => {
-  beforeEach(() => { jest.clearAllMocks(); household.current = "household-a"; user.current = { id: "user-a" }; mockOrder.mockResolvedValue({ data: [], error: null }); });
+  beforeEach(() => { jest.clearAllMocks(); deleteError = null; household.current = "household-a"; user.current = { id: "user-a" }; mockOrder.mockResolvedValue({ data: [], error: null }); });
 
   it("loads only the active household and exposes saved ids", async () => {
     mockOrder.mockResolvedValue({ data: [{ id: "s1", household_id: "household-a", recipe_id: recipe.recipe_id, recipe, saved_by: "user-a", created_at: "now" }], error: null });
@@ -57,7 +58,7 @@ describe("useSavedRecipes", () => {
   it("saves the immutable recipe id and full snapshot, then invalidates on success", async () => {
     const { result } = renderHook(() => useSavedRecipes(), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    act(() => result.current.toggle({ recipe, saved: false }));
+    await act(async () => { await result.current.toggle({ recipe, saved: false }); });
     await waitFor(() => expect(mockInsert).toHaveBeenCalled());
     expect(mockInsert).toHaveBeenCalledWith({ household_id: "household-a", recipe_id: recipe.recipe_id, recipe, saved_by: "user-a" });
   });
@@ -65,10 +66,10 @@ describe("useSavedRecipes", () => {
   it("deletes by household and recipe id and surfaces mutation failures", async () => {
     const { result } = renderHook(() => useSavedRecipes(), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    act(() => result.current.toggle({ recipe, saved: true }));
+    await act(async () => { await result.current.toggle({ recipe, saved: true }); });
     await waitFor(() => expect(mockDeleteEq).toHaveBeenCalledWith("recipe_id", recipe.recipe_id));
     deleteError = new Error("delete failed");
-    act(() => result.current.toggle({ recipe, saved: true }));
+    await act(async () => { await expect(result.current.toggle({ recipe, saved: true })).rejects.toThrow("delete failed"); });
     await waitFor(() => expect(result.current.toggleError?.message).toBe("delete failed"));
   });
 });

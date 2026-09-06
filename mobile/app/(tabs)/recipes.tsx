@@ -79,6 +79,8 @@ export default function RecipesScreen() {
           { backgroundColor: colors.bg, paddingTop: insets.top },
         ]}
       >
+        <RecipeScreenHeader subtitle="AI picks from your kitchen" />
+        <RecipeTabs tab={tab} onChange={setTab} />
         <LoadingState label="Loading your fridge..." />
       </View>
     );
@@ -92,6 +94,8 @@ export default function RecipesScreen() {
           { backgroundColor: colors.bg, paddingTop: insets.top },
         ]}
       >
+        <RecipeScreenHeader subtitle="AI picks from your kitchen" />
+        <RecipeTabs tab={tab} onChange={setTab} />
         <ErrorState onRetry={() => inventory.refetch()} />
       </View>
     );
@@ -111,6 +115,7 @@ export default function RecipesScreen() {
         ]}
       >
         <RecipeScreenHeader subtitle="Find something that feels right" />
+        <RecipeTabs tab={tab} onChange={setTab} />
         <RecipePreferenceFlow
           initialPreferences={preferences}
           onComplete={generate}
@@ -132,6 +137,8 @@ export default function RecipesScreen() {
           },
         ]}
       >
+        <RecipeScreenHeader subtitle="AI picks from your kitchen" />
+        <RecipeTabs tab={tab} onChange={setTab} />
         <RecipeGenerationLoader />
       </View>
     );
@@ -146,6 +153,7 @@ export default function RecipesScreen() {
         ]}
       >
         <RecipeScreenHeader subtitle="Start with what you have" />
+        <RecipeTabs tab={tab} onChange={setTab} />
         <EmptyState
           icon={
             <View
@@ -181,6 +189,7 @@ export default function RecipesScreen() {
         <RecipeScreenHeader
           subtitle={recipeContextLabel(items.length, preferences)}
         />
+        <RecipeTabs tab={tab} onChange={setTab} />
         <ErrorState
           title="We couldn't generate recipes"
           message="The AI kitchen is unavailable right now. Your answers are still here to try again."
@@ -362,8 +371,8 @@ const styles = StyleSheet.create({
   secondaryActionText: {
     fontSize: 14,
   },
-  tabs: { flexDirection: "row", marginHorizontal: 24, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#E2DED4", marginBottom: 18 },
-  tab: { flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center" },
+  tabs: { flexDirection: "row", marginHorizontal: 24, padding: 4, borderRadius: 14, backgroundColor: "#E9E6DE", marginBottom: 18 },
+  tab: { flex: 1, minHeight: 40, borderRadius: 11, alignItems: "center", justifyContent: "center" },
   tabText: { fontSize: 13 },
 });
 
@@ -379,7 +388,7 @@ function SavedRecipeRow({ recipe, onRemove }: { recipe: import("@/types/recipes"
 function RecipeTabs({ tab, onChange }: { tab: "for-you" | "saved"; onChange: (tab: "for-you" | "saved") => void }) {
   const { colors, fonts } = useTheme();
   return <View style={styles.tabs}>
-    {(["for-you", "saved"] as const).map((value) => <RecipePressable key={value} onPress={() => onChange(value)} style={[styles.tab, tab === value && { borderBottomColor: colors.accent, borderBottomWidth: 2 }]}><Text style={[styles.tabText, { color: tab === value ? colors.accent : colors.textMuted, fontFamily: fonts.bodyStrong }]}>{value === "for-you" ? "For you" : "Saved"}</Text></RecipePressable>)}
+    {(["for-you", "saved"] as const).map((value) => <RecipePressable key={value} onPress={() => onChange(value)} style={[styles.tab, tab === value && { backgroundColor: colors.surface }]}><Text style={[styles.tabText, { color: tab === value ? colors.accent : colors.textMuted, fontFamily: fonts.bodyStrong }]}>{value === "for-you" ? "For you" : "Saved"}</Text></RecipePressable>)}
   </View>;
 }
 

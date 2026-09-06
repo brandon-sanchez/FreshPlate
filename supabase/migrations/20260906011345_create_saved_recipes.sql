@@ -6,7 +6,11 @@ CREATE TABLE public.saved_recipes (
     saved_by uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     created_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT saved_recipes_household_recipe_key UNIQUE (household_id, recipe_id),
-    CONSTRAINT saved_recipes_recipe_id_matches_snapshot CHECK ((recipe->>'recipe_id')::uuid = recipe_id)
+    CONSTRAINT saved_recipes_recipe_id_matches_snapshot CHECK (
+        jsonb_typeof(recipe) = 'object'
+        AND recipe->>'recipe_id' IS NOT NULL
+        AND (recipe->>'recipe_id')::uuid = recipe_id
+    )
 );
 
 ALTER TABLE public.saved_recipes ENABLE ROW LEVEL SECURITY;

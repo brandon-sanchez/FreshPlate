@@ -23,10 +23,18 @@ function isSavedRecipe(value: unknown): value is SavedRecipe {
 function isRecipeSuggestion(value: unknown): value is RecipeSuggestion {
   if (!value || typeof value !== "object") return false;
   const recipe = value as Record<string, unknown>;
-  return typeof recipe.recipe_id === "string" && typeof recipe.title === "string" &&
-    typeof recipe.cook_time_minutes === "number" && typeof recipe.servings === "number" &&
-    Array.isArray(recipe.ingredients) && Array.isArray(recipe.steps) &&
-    typeof recipe.match_percent === "number" && Array.isArray(recipe.saves_expiring);
+  if (typeof recipe.recipe_id !== "string" || typeof recipe.title !== "string" ||
+    !Number.isFinite(recipe.cook_time_minutes) || !Number.isFinite(recipe.servings) ||
+    !Number.isFinite(recipe.match_percent) || !Array.isArray(recipe.ingredients) ||
+    !Array.isArray(recipe.steps) || !Array.isArray(recipe.saves_expiring)) return false;
+  return recipe.ingredients.every((item) => {
+    if (!item || typeof item !== "object") return false;
+    const ingredient = item as Record<string, unknown>;
+    return typeof ingredient.name === "string" &&
+      (ingredient.inventory_item_id === null || typeof ingredient.inventory_item_id === "string") &&
+      Number.isFinite(ingredient.use_amount) && typeof ingredient.unit === "string";
+  }) && recipe.steps.every((step) => typeof step === "string") &&
+    recipe.saves_expiring.every((item) => typeof item === "string");
 }
 
 export function useSavedRecipes() {
@@ -45,8 +53,12 @@ export function useSavedRecipes() {
         .order("created_at", { ascending: false });
       if (error) throw error;
       const rows: unknown[] = data ?? [];
-      if (!rows.every(isSavedRecipe)) throw new Error("Invalid saved recipe response");
-      return rows;
+      const validated = rows.filter(
+        (row): row is SavedRecipe =>
+          isSavedRecipe(row) && row.recipe.recipe_id === row.recipe_id,
+      );
+      if (validated.length !== rows.length) throw new Error("Invalid saved recipe response");
+      return validated;
     },
   });
 
