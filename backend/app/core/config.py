@@ -89,6 +89,9 @@ class Settings(BaseSettings):
 
     # Gemini (Phase 5)
     gemini_api_key: str = ""
+    openai_api_key: SecretStr = SecretStr("")
+    image_generation_enabled: bool = False
+    image_generation_monthly_cap_microusd: int = Field(default=0, ge=0)
 
     # LangSmith reads these environment variables directly when LangGraph
     # tracing is enabled. Declaring them here keeps the application settings
