@@ -52,7 +52,7 @@ it("renders the selected snapshot and sends its identity to the shared save acti
     { wrapper },
   );
   expect(screen.getByText("Spinach skillet")).toBeTruthy();
-  expect(screen.getByText("Need 100 g")).toBeTruthy();
+  expect(screen.getByText("100 g")).toBeTruthy();
   expect(screen.queryByText("In fridge")).toBeNull();
   expect(screen.queryByText("Buy")).toBeNull();
   expect(screen.getByText("Prep the greens")).toBeTruthy();
@@ -101,19 +101,16 @@ it("gives long ingredients the full row when text is enlarged", () => {
     />,
     { wrapper },
   );
-  expect(screen.getByTestId("recipe-detail-ingredient-0")).toHaveStyle({
-    width: "50%",
-  });
+  expect(screen.getByTestId("recipe-detail-ingredient-column-0")).toBeTruthy();
+  expect(screen.getByTestId("recipe-detail-ingredient-column-1")).toBeTruthy();
   act(() =>
     Dimensions.set({
       window: { ...dimensions, fontScale: 2 },
       screen: dimensions,
     }),
   );
-  expect(screen.getByTestId("recipe-detail-ingredient-0")).toHaveStyle({
-    width: "100%",
-  });
-  expect(screen.getByText("Chickpeas, drained and rinsed")).toBeTruthy();
+  expect(screen.queryByTestId("recipe-detail-ingredient-column-1")).toBeNull();
+  expect(screen.getByTestId("recipe-detail-ingredient-0")).toBeTruthy();
   screen.unmount();
   Dimensions.set({ window: original, screen: original });
 });

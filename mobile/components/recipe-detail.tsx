@@ -123,45 +123,62 @@ export default function RecipeDetail({
                   },
                 ]}
               >
-                {recipe.ingredients.map((item, index) => (
+                {(twoColumns
+                  ? [
+                      recipe.ingredients.slice(
+                        0,
+                        Math.ceil(recipe.ingredients.length / 2),
+                      ),
+                      recipe.ingredients.slice(
+                        Math.ceil(recipe.ingredients.length / 2),
+                      ),
+                    ]
+                  : [recipe.ingredients]
+                ).map((column, columnIndex) => (
                   <View
-                    key={`${item.name}-${index}`}
-                    testID={`recipe-detail-ingredient-${index}`}
-                    style={[
-                      styles.ingredient,
-                      { width: twoColumns ? "50%" : "100%" },
-                    ]}
+                    key={`ingredient-column-${columnIndex}`}
+                    testID={`recipe-detail-ingredient-column-${columnIndex}`}
+                    style={styles.ingredientColumn}
                   >
-                    <Text
-                      style={{
-                        color: colors.accent,
-                        fontSize: 18,
-                        lineHeight: 20,
-                      }}
-                    >
-                      •
-                    </Text>
-                    <View style={styles.ingredientText}>
-                      <Text
-                        selectable
-                        style={{
-                          color: colors.text,
-                          fontFamily: fonts.bodyStrong,
-                          fontSize: 14,
-                        }}
-                      >
-                        {item.name}
-                      </Text>
-                      <Text
-                        style={{
-                          color: colors.textMuted,
-                          fontFamily: fonts.body,
-                          fontSize: 12,
-                        }}
-                      >
-                        Need {Number(item.use_amount.toFixed(2))} {item.unit}
-                      </Text>
-                    </View>
+                    {column.map((item, index) => {
+                      const itemIndex = twoColumns
+                        ? columnIndex *
+                            Math.ceil(recipe.ingredients.length / 2) +
+                          index
+                        : index;
+                      return (
+                        <View
+                          key={`${item.name}-${itemIndex}`}
+                          testID={`recipe-detail-ingredient-${itemIndex}`}
+                          style={styles.ingredient}
+                        >
+                          <Text
+                            style={{
+                              color: colors.accent,
+                              fontSize: 18,
+                              lineHeight: 20,
+                            }}
+                          >
+                            •
+                          </Text>
+                          <Text
+                            selectable
+                            style={{
+                              color: colors.text,
+                              fontFamily: fonts.body,
+                              fontSize: 14,
+                              lineHeight: 20,
+                              flex: 1,
+                            }}
+                          >
+                            <Text style={{ fontFamily: fonts.bodyStrong }}>
+                              {Number(item.use_amount.toFixed(2))} {item.unit}
+                            </Text>{" "}
+                            {item.name}
+                          </Text>
+                        </View>
+                      );
+                    })}
                   </View>
                 ))}
               </View>
@@ -282,5 +299,5 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     gap: 6,
   },
-  ingredientText: { flex: 1, gap: 4 },
+  ingredientColumn: { flex: 1, minWidth: 0 },
 });

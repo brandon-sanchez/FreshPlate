@@ -23,27 +23,23 @@ export default function RecipeSteps({ steps }: { steps: string[] }) {
             style={{
               flexDirection: "row",
               gap: 12,
-              padding: 14,
-              borderRadius: 14,
-              backgroundColor: colors.surface,
-              borderWidth: 1,
-              borderColor: colors.border,
+              paddingVertical: 8,
             }}
           >
             <View
               style={{
-                width: 28,
-                height: 28,
-                borderRadius: 8,
+                width: 24,
+                height: 24,
+                borderRadius: 12,
                 alignItems: "center",
                 justifyContent: "center",
-                backgroundColor: colors.accent,
+                backgroundColor: colors.accentSoft,
                 flexShrink: 0,
               }}
             >
               <Text
                 style={{
-                  color: colors.accentInk,
+                  color: colors.accent,
                   fontFamily: fonts.bodyStrong,
                 }}
               >
