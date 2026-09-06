@@ -8,8 +8,10 @@ import {
   useWindowDimensions,
   type ViewToken,
 } from "react-native";
+import type { ReactNode } from "react";
 import Animated, { Easing, LinearTransition } from "react-native-reanimated";
 import Feather from "@expo/vector-icons/Feather";
+import FontAwesome from "@expo/vector-icons/FontAwesome";
 import RecipeCarousel from "@/components/recipe-carousel";
 import RecipeActionButton from "@/components/recipe-action-button";
 import RecipeIngredientsSheet from "@/components/recipe-ingredients-sheet";
@@ -37,6 +39,10 @@ type RecipeFeedProps = {
   onRetryMore: () => void;
   onAddItems: () => void;
   onEditAnswers: () => void;
+  savedIds?: Set<string>;
+  onToggleSave?: (recipe: RecipeSuggestion, saved: boolean) => void;
+  isSavePending?: boolean;
+  header?: ReactNode;
 };
 
 const replacementTransition = LinearTransition.duration(360).easing(
@@ -58,6 +64,10 @@ export default function RecipeFeed({
   onRetryMore,
   onAddItems,
   onEditAnswers,
+  savedIds = new Set<string>(),
+  onToggleSave = () => undefined,
+  isSavePending = false,
+  header,
 }: RecipeFeedProps) {
   const { colors } = useTheme();
   const { width, height, fontScale } = useWindowDimensions();
@@ -137,6 +147,9 @@ export default function RecipeFeed({
         animatedIds={animatedIds}
         onDismiss={dismissRecipe}
         onIngredients={setIngredientRecipe}
+        saved={savedIds.has(item.recipe_id)}
+        onToggleSave={onToggleSave}
+        isSavePending={isSavePending}
       />
     ),
     [
@@ -149,6 +162,9 @@ export default function RecipeFeed({
       revealedIds,
       stride,
       width,
+      onToggleSave,
+      savedIds,
+      isSavePending,
     ],
   );
   const footer = isPrefetching ? (
@@ -182,7 +198,7 @@ export default function RecipeFeed({
       key={fontScale}
       style={{ flex: 1, backgroundColor: colors.bg, paddingTop: topInset + 8 }}
     >
-      <RecipeScreenHeader />
+      {header ?? <RecipeScreenHeader />}
       <RecipeContextBar
         itemCount={itemCount}
         preferences={preferences}
@@ -282,6 +298,9 @@ const RecipeCard = memo(function RecipeCard({
   animatedIds,
   onDismiss,
   onIngredients,
+  saved,
+  onToggleSave,
+  isSavePending,
 }: {
   recipe: RecipeSuggestion;
   stride: number;
@@ -294,6 +313,9 @@ const RecipeCard = memo(function RecipeCard({
   animatedIds: Set<string>;
   onDismiss: (recipeId: string) => void;
   onIngredients: (recipe: RecipeSuggestion) => void;
+  saved: boolean;
+  onToggleSave: (recipe: RecipeSuggestion, saved: boolean) => void;
+  isSavePending: boolean;
 }) {
   const { colors, fonts } = useTheme();
   const [isDismissing, setIsDismissing] = useState(false);
@@ -425,6 +447,10 @@ const RecipeCard = memo(function RecipeCard({
                   Generated
                 </Text>
               </View>
+              <RecipePressable onPress={() => onToggleSave(recipe, saved)} disabled={isSavePending} accessibilityRole="button" accessibilityLabel={saved ? "Remove " + recipe.title + " from saved recipes" : "Save " + recipe.title + " to household cookbook"} testID={"recipe-card-save-" + recipe.recipe_id} style={[styles.saveButton, { backgroundColor: colors.surface }]}>
+                {saved ? <FontAwesome name="bookmark" size={19} color={colors.accent} /> : <Feather name="bookmark" size={19} color={colors.textMuted} />}
+                <Text style={{ color: saved ? colors.accent : colors.textMuted, fontFamily: fonts.bodyStrong, fontSize: 12 }}>{saved ? "Saved" : "Save"}</Text>
+              </RecipePressable>
             </View>
             <View
               style={[styles.cardContent, compact && { padding: 16, gap: 8 }]}
@@ -775,6 +801,19 @@ const styles = StyleSheet.create({
     gap: 16,
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingTop: 12,
+  },
+  saveButton: {
+    position: "absolute",
+    right: 14,
+    top: 14,
+    minHeight: 44,
+    paddingHorizontal: 10,
+    borderRadius: 22,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "rgba(255,255,255,0.82)",
+    zIndex: 2,
   },
   ending: {
     marginHorizontal: 32,

@@ -10,12 +10,14 @@ import {
 } from "react-native";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import Feather from "@expo/vector-icons/Feather";
+import Toast from "react-native-toast-message";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@/hooks/useTheme";
 import { useInventoryItems } from "@/hooks/useInventoryItems";
 import { useRecipeFeed } from "@/hooks/useRecipeFeed";
+import { useSavedRecipes } from "@/hooks/useSavedRecipes";
 import {
   buildRecipeFeedSessionRequest,
   countAnsweredPreferences,
@@ -40,9 +42,10 @@ export default function RecipesScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const inventory = useInventoryItems();
   const feed = useRecipeFeed();
+  const saved = useSavedRecipes();
+  const [tab, setTab] = useState<"for-you" | "saved">("for-you");
   const [preferences, setPreferences] = useState<RecipePreferences>({});
   const [flowOpen, setFlowOpen] = useState(false);
-
   const items = inventory.data ?? [];
 
   const generate = useCallback(
@@ -61,6 +64,14 @@ export default function RecipesScreen() {
     [feed, items],
   );
 
+  if (tab === "saved") {
+    return <View style={[styles.stateContainer, { backgroundColor: colors.bg, paddingTop: insets.top, paddingBottom: tabBarHeight }]}>
+      <RecipeScreenHeader subtitle="Your household cookbook" />
+      <RecipeTabs tab={tab} onChange={setTab} />
+      <SavedRecipesContent saved={saved} />
+    </View>;
+  }
+
   if (inventory.isPending) {
     return (
       <View
@@ -69,6 +80,8 @@ export default function RecipesScreen() {
           { backgroundColor: colors.bg, paddingTop: insets.top },
         ]}
       >
+        <RecipeScreenHeader subtitle="AI picks from your kitchen" />
+        <RecipeTabs tab={tab} onChange={setTab} />
         <LoadingState label="Loading your fridge..." />
       </View>
     );
@@ -82,6 +95,8 @@ export default function RecipesScreen() {
           { backgroundColor: colors.bg, paddingTop: insets.top },
         ]}
       >
+        <RecipeScreenHeader subtitle="AI picks from your kitchen" />
+        <RecipeTabs tab={tab} onChange={setTab} />
         <ErrorState onRetry={() => inventory.refetch()} />
       </View>
     );
@@ -101,6 +116,7 @@ export default function RecipesScreen() {
         ]}
       >
         <RecipeScreenHeader subtitle="Find something that feels right" />
+        <RecipeTabs tab={tab} onChange={setTab} />
         <RecipePreferenceFlow
           initialPreferences={preferences}
           onComplete={generate}
@@ -122,6 +138,8 @@ export default function RecipesScreen() {
           },
         ]}
       >
+        <RecipeScreenHeader subtitle="AI picks from your kitchen" />
+        <RecipeTabs tab={tab} onChange={setTab} />
         <RecipeGenerationLoader />
       </View>
     );
@@ -136,6 +154,7 @@ export default function RecipesScreen() {
         ]}
       >
         <RecipeScreenHeader subtitle="Start with what you have" />
+        <RecipeTabs tab={tab} onChange={setTab} />
         <EmptyState
           icon={
             <View
@@ -171,6 +190,7 @@ export default function RecipesScreen() {
         <RecipeScreenHeader
           subtitle={recipeContextLabel(items.length, preferences)}
         />
+        <RecipeTabs tab={tab} onChange={setTab} />
         <ErrorState
           title="We couldn't generate recipes"
           message="The AI kitchen is unavailable right now. Your answers are still here to try again."
@@ -183,6 +203,7 @@ export default function RecipesScreen() {
   if (feed.status === "ready") {
     return (
       <RecipeFeed
+        header={<><RecipeScreenHeader /><RecipeTabs tab={tab} onChange={setTab} /></>}
         recipes={feed.recipes}
         itemCount={items.length}
         preferences={preferences}
@@ -197,6 +218,13 @@ export default function RecipesScreen() {
         onRetryMore={feed.retryPrefetch}
         onAddItems={() => router.push("/(tabs)/inventory")}
         onEditAnswers={() => setFlowOpen(true)}
+        savedIds={saved.savedIds}
+        onToggleSave={(recipe, isSaved) => {
+          void saved.toggle({ recipe, saved: isSaved }).catch(() => {
+            Toast.show({ type: "error", text1: "Couldn't update saved recipes", text2: "Check your connection and try again." });
+          });
+        }}
+        isSavePending={saved.isToggling}
       />
     );
   }
@@ -216,6 +244,7 @@ export default function RecipesScreen() {
         keyboardDismissMode="interactive"
       >
         <RecipeScreenHeader subtitle="AI picks from your kitchen" />
+        <RecipeTabs tab={tab} onChange={setTab} />
 
         <View style={[styles.promptCard, { borderColor: colors.border }]}>
           <View style={styles.kitchenLabel}>
@@ -348,4 +377,34 @@ const styles = StyleSheet.create({
   secondaryActionText: {
     fontSize: 14,
   },
+  tabs: { flexDirection: "row", marginHorizontal: 24, padding: 4, borderRadius: 14, marginBottom: 18 },
+  tab: { flex: 1, minHeight: 40, borderRadius: 11, alignItems: "center", justifyContent: "center" },
+  tabText: { fontSize: 13 },
 });
+
+function SavedRecipeRow({ recipe, onRemove, disabled }: { recipe: import("@/types/recipes").RecipeSuggestion; onRemove: () => void; disabled: boolean }) {
+  const { colors, fonts } = useTheme();
+  return <View style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 12, gap: 8, borderWidth: 1, borderColor: colors.border, flexDirection: "row" }}>
+    <View style={{ width: 110, height: 110, borderRadius: 12, backgroundColor: colors.accentSoft, alignItems: "center", justifyContent: "center" }}><Feather name="image" size={28} color={colors.accent} style={{ opacity: 0.35 }} /></View>
+    <View style={{ flex: 1, gap: 8 }}>
+    <View style={{ flexDirection: "row", alignItems: "center" }}><Text style={{ flex: 1, color: colors.text, fontFamily: fonts.display, fontSize: 20 }}>{recipe.title}</Text><RecipePressable onPress={onRemove} disabled={disabled} accessibilityRole="button" accessibilityLabel={`Remove ${recipe.title} from saved recipes`} style={{ minHeight: 44, minWidth: 44, alignItems: "center", justifyContent: "center" }}><Feather name="bookmark" size={20} color={colors.accent} fill={colors.accent} /></RecipePressable></View>
+    <Text style={{ color: colors.textMuted, fontFamily: fonts.body, fontSize: 13 }}>{recipe.cook_time_minutes} min · {recipe.servings} servings · {recipe.match_percent}% match</Text>
+    <Text style={{ color: colors.accent, fontFamily: fonts.bodyStrong, fontSize: 12 }}>Household cookbook</Text>
+    </View>
+  </View>;
+}
+
+function RecipeTabs({ tab, onChange }: { tab: "for-you" | "saved"; onChange: (tab: "for-you" | "saved") => void }) {
+  const { colors, fonts } = useTheme();
+  return <View style={[styles.tabs, { backgroundColor: colors.surfaceAlt }]}>
+    {(["for-you", "saved"] as const).map((value) => <RecipePressable key={value} onPress={() => onChange(value)} accessibilityRole="tab" accessibilityLabel={value === "for-you" ? "For you recipes" : "Saved recipes"} accessibilityState={{ selected: tab === value }} style={[styles.tab, tab === value && { backgroundColor: colors.surface }]}><Text style={[styles.tabText, { color: tab === value ? colors.accent : colors.textMuted, fontFamily: fonts.bodyStrong }]}>{value === "for-you" ? "For you" : "Saved"}</Text></RecipePressable>)}
+  </View>;
+}
+
+function SavedRecipesContent({ saved }: { saved: ReturnType<typeof useSavedRecipes> }) {
+  const { colors } = useTheme();
+  if (saved.isPending) return <LoadingState label="Loading your cookbook..." />;
+  if (saved.isError) return <ErrorState onRetry={() => saved.refetch()} />;
+  if (!saved.data?.length) return <EmptyState icon={<View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: colors.accentSoft, alignItems: "center", justifyContent: "center" }}><Feather name="bookmark" size={24} color={colors.accent} /></View>} title="Nothing saved yet" message="Tap the bookmark on any recipe to keep it in your household cookbook" />;
+  return <ScrollView contentContainerStyle={{ padding: 24, gap: 12 }} showsVerticalScrollIndicator={false}>{saved.data.map((entry) => <SavedRecipeRow key={entry.recipe_id} recipe={entry.recipe} disabled={saved.isToggling} onRemove={() => { void saved.toggle({ recipe: entry.recipe, saved: true }).catch(() => Toast.show({ type: "error", text1: "Couldn't update saved recipes", text2: "Check your connection and try again." })); }} />)}</ScrollView>;
+}
