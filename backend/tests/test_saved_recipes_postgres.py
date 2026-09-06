@@ -1,4 +1,5 @@
 """Disposable PostgreSQL acceptance tests for saved recipe identity and RLS."""
+# ruff: noqa: E501
 
 from __future__ import annotations
 
