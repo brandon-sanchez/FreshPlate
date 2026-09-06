@@ -29,7 +29,7 @@ Open `/health` to check the server. Recipe requests also need a valid Supabase u
 
 ## Reset the demo household
 
-Create a dedicated demo user and household in Supabase, then set their UUIDs explicitly. An administrator must designate the household with `is_demo = true`; ordinary authenticated users cannot change this column. The account must own the household; the reset refuses mismatched or arbitrary household IDs.
+Create a dedicated demo user and household in Supabase, then set their UUIDs explicitly. An administrator must insert the household into `demo_households`; ordinary authenticated users cannot modify this registry. The account must own the household; the reset refuses mismatched or arbitrary household IDs.
 
 ```sh
 export DEMO_HOUSEHOLD_ID='household-uuid'
