@@ -7,7 +7,6 @@ import json
 import os
 import subprocess
 import uuid
-from urllib.parse import unquote, urlsplit
 
 ITEMS = [
     ("Baby spinach", 1, "bag", "Produce", 2, "fridge"),
@@ -59,16 +58,9 @@ def main() -> None:
     ]
     # PostgreSQL computes relative dates in the transaction, keeping the seed current.
     payload = json.dumps(items)
-    parsed = urlsplit(dsn)
-    if not parsed.hostname or not parsed.path.strip('/').strip():
-        raise SystemExit("DEMO_DATABASE_URL must include a database host")
     sql = "SELECT public.reset_demo_household(:'household_id'::uuid, :'user_id'::uuid, :'payload'::jsonb);"
     env = os.environ.copy()
-    env.update({"PGHOST": parsed.hostname, "PGPORT": str(parsed.port or 5432),
-                "PGUSER": unquote(parsed.username or "postgres"),
-                "PGDATABASE": parsed.path.lstrip("/")})
-    if parsed.password:
-        env["PGPASSWORD"] = unquote(parsed.password)
+    env["PGDATABASE"] = dsn
     try:
         subprocess.run(
         ["psql", "--no-psqlrc", "--tuples-only", "--set", "ON_ERROR_STOP=1",
