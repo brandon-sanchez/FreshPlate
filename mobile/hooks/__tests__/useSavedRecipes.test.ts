@@ -1,6 +1,6 @@
 import React from "react";
 import { act, cleanupAsync, renderHook, waitFor } from "@testing-library/react-native";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { RecipeSuggestion } from "@/types/recipes";
 
 const mockOrder = jest.fn();
@@ -36,18 +36,16 @@ const queryClients = new Set<QueryClient>();
 
 afterEach(async () => {
   await cleanupAsync();
-  await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-  });
   for (const client of queryClients) {
     for (const mutation of client.getMutationCache().getAll()) mutation.destroy();
     client.clear();
   }
   queryClients.clear();
+  notifyManager.setNotifyFunction((callback) => callback());
 });
 
 describe("useSavedRecipes", () => {
-  beforeEach(() => { jest.clearAllMocks(); deleteError = null; household.current = "household-a"; user.current = { id: "user-a" }; mockOrder.mockResolvedValue({ data: [], error: null }); });
+  beforeEach(() => { notifyManager.setNotifyFunction((callback) => { act(callback); }); jest.clearAllMocks(); deleteError = null; household.current = "household-a"; user.current = { id: "user-a" }; mockOrder.mockResolvedValue({ data: [], error: null }); });
 
   it("loads only the active household and exposes saved ids", async () => {
     mockOrder.mockResolvedValue({ data: [{ id: "s1", household_id: "household-a", recipe_id: recipe.recipe_id, recipe, saved_by: "user-a", created_at: "now" }], error: null });
