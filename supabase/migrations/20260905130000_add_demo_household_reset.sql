@@ -1,3 +1,5 @@
+ALTER TABLE public.households ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT false;
+
 CREATE OR REPLACE FUNCTION public.reset_demo_household(
     p_household_id uuid,
     p_user_id uuid,
@@ -13,7 +15,7 @@ DECLARE
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM public.households
-        WHERE id = p_household_id AND created_by = p_user_id
+        WHERE id = p_household_id AND created_by = p_user_id AND is_demo
     ) OR NOT EXISTS (
         SELECT 1 FROM public.household_members
         WHERE household_id = p_household_id AND user_id = p_user_id AND role = 'owner'

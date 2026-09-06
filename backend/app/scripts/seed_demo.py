@@ -60,8 +60,8 @@ def main() -> None:
     # PostgreSQL computes relative dates in the transaction, keeping the seed current.
     payload = json.dumps(items)
     parsed = urlsplit(dsn)
-    if not parsed.hostname or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
-        raise SystemExit("DEMO_DATABASE_URL must target an explicitly approved local database")
+    if not parsed.hostname:
+        raise SystemExit("DEMO_DATABASE_URL must include a database host")
     sql = "SELECT public.reset_demo_household(:'household_id'::uuid, :'user_id'::uuid, :'payload'::jsonb);"
     env = os.environ.copy()
     env.update({"PGHOST": parsed.hostname, "PGPORT": str(parsed.port or 5432), "PGUSER": parsed.username or "postgres", "PGDATABASE": parsed.path.lstrip("/")})

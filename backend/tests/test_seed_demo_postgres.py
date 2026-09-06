@@ -1,4 +1,5 @@
 """Contract tests for the demo reset RPC against a disposable local database."""
+# ruff: noqa: E501
 
 from __future__ import annotations
 
@@ -48,7 +49,7 @@ def db():
         run(
             dsn,
             """
-            CREATE TABLE households (id uuid PRIMARY KEY, created_by uuid NOT NULL);
+            CREATE TABLE households (id uuid PRIMARY KEY, created_by uuid NOT NULL, is_demo boolean NOT NULL DEFAULT false);
             CREATE TABLE household_members (household_id uuid, user_id uuid, role text);
             CREATE TABLE food_categories (id uuid PRIMARY KEY, name text UNIQUE);
             CREATE TABLE inventory_items (
@@ -103,7 +104,7 @@ def test_reset_repeat_and_isolate_households(db):
     other = "00000000-0000-0000-0000-000000000012"
     db[1](
         db[0],
-        f"INSERT INTO households VALUES ({sql(target)},{sql(user)}),({sql(other)},{sql(user)}); INSERT INTO household_members VALUES ({sql(target)},{sql(user)},'owner'),({sql(other)},{sql(user)},'owner');",  # noqa: E501
+        f"INSERT INTO households VALUES ({sql(target)},{sql(user)},true),({sql(other)},{sql(user)},true); INSERT INTO household_members VALUES ({sql(target)},{sql(user)},'owner'),({sql(other)},{sql(user)},'owner');",  # noqa: E501
     )
     db[1](
         db[0],
@@ -136,7 +137,7 @@ def test_invalid_target_payload_and_role_leave_data_unchanged(db):
     target = "00000000-0000-0000-0000-000000000021"
     db[1](
         db[0],
-        f"INSERT INTO households VALUES ({sql(target)},{sql(user)}); INSERT INTO household_members VALUES ({sql(target)},{sql(user)},'owner'); INSERT INTO inventory_items(household_id,added_by,name,quantity,unit,storage_location) VALUES ({sql(target)},{sql(user)},'Original',1,'each','fridge');",  # noqa: E501
+        f"INSERT INTO households VALUES ({sql(target)},{sql(user)},true); INSERT INTO household_members VALUES ({sql(target)},{sql(user)},'owner'); INSERT INTO inventory_items(household_id,added_by,name,quantity,unit,storage_location) VALUES ({sql(target)},{sql(user)},'Original',1,'each','fridge');",  # noqa: E501
     )
     assert call(db, target, user, items(14), check=False).returncode != 0
     assert call(db, target, user, items(), role="public", check=False).returncode != 0
