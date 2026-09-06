@@ -11,6 +11,7 @@ import {
 import type { ReactNode } from "react";
 import Animated, { Easing, LinearTransition } from "react-native-reanimated";
 import Feather from "@expo/vector-icons/Feather";
+import FontAwesome from "@expo/vector-icons/FontAwesome";
 import RecipeCarousel from "@/components/recipe-carousel";
 import RecipeActionButton from "@/components/recipe-action-button";
 import RecipeIngredientsSheet from "@/components/recipe-ingredients-sheet";
@@ -446,8 +447,8 @@ const RecipeCard = memo(function RecipeCard({
                   Generated
                 </Text>
               </View>
-              <RecipePressable onPress={() => onToggleSave(recipe, saved)} disabled={isSavePending} accessibilityRole="button" accessibilityLabel={saved ? "Remove " + recipe.title + " from saved recipes" : "Save " + recipe.title + " to household cookbook"} testID={"recipe-card-save-" + recipe.recipe_id} style={styles.saveButton}>
-                <Feather name="bookmark" size={19} color={saved ? colors.accent : colors.textMuted} fill={saved ? colors.accent : "transparent"} />
+              <RecipePressable onPress={() => onToggleSave(recipe, saved)} disabled={isSavePending} accessibilityRole="button" accessibilityLabel={saved ? "Remove " + recipe.title + " from saved recipes" : "Save " + recipe.title + " to household cookbook"} testID={"recipe-card-save-" + recipe.recipe_id} style={[styles.saveButton, { backgroundColor: colors.surface }]}>
+                {saved ? <FontAwesome name="bookmark" size={19} color={colors.accent} /> : <Feather name="bookmark" size={19} color={colors.textMuted} />}
                 <Text style={{ color: saved ? colors.accent : colors.textMuted, fontFamily: fonts.bodyStrong, fontSize: 12 }}>{saved ? "Saved" : "Save"}</Text>
               </RecipePressable>
             </View>

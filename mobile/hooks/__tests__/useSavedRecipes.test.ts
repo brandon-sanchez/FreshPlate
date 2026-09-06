@@ -37,7 +37,7 @@ const queryClients = new Set<QueryClient>();
 afterEach(async () => {
   await cleanupAsync();
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 50));
   });
   for (const client of queryClients) {
     for (const mutation of client.getMutationCache().getAll()) mutation.destroy();
