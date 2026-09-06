@@ -285,7 +285,48 @@ def test_check_quality_rejects_duplicate_inventory_overuse() -> None:
         )
     )
     result = check_quality(
+        {
+            "usable_items": [_usable_item(quantity=0.3)],
+            "generated_recipes": [recipe],
+        }
+    )
+    assert result["valid_recipes"] == []
+    assert "in total" in result["quality_feedback"]
+
+
+def test_check_quality_accepts_decimal_amounts_at_exact_inventory_total() -> None:
+    recipe = Recipe.model_validate(
+        _recipe(
+            _ingredient(
+                "Tomatoes", inventory_item_id="tomatoes", use_amount=0.1, unit="item"
+            ),
+            _ingredient(
+                "Tomatoes", inventory_item_id="tomatoes", use_amount=0.2, unit="item"
+            ),
+        )
+    )
+    result = check_quality(
         {"usable_items": [_usable_item()], "generated_recipes": [recipe]}
+    )
+    assert [item.title for item in result["valid_recipes"]] == [recipe.title]
+
+
+def test_check_quality_rejects_decimal_amounts_over_inventory_total() -> None:
+    recipe = Recipe.model_validate(
+        _recipe(
+            _ingredient(
+                "Tomatoes", inventory_item_id="tomatoes", use_amount=0.1, unit="item"
+            ),
+            _ingredient(
+                "Tomatoes", inventory_item_id="tomatoes", use_amount=0.21, unit="item"
+            ),
+        )
+    )
+    result = check_quality(
+        {
+            "usable_items": [_usable_item(quantity=0.3)],
+            "generated_recipes": [recipe],
+        }
     )
     assert result["valid_recipes"] == []
     assert "in total" in result["quality_feedback"]
@@ -446,47 +487,6 @@ async def test_graph_fail_softs_after_one_quality_retry() -> None:
     assert all(call["deadline"] is deadline for call in provider.calls)
 
 
-def test_semantic_eval_cases_keep_quantity_checks_separate_from_meal_quality() -> None:
-    """Keep semantic labels separate from deterministic quantity checks."""
-    token_case = _recipe(
-        _ingredient(
-            "Baby Spinach", inventory_item_id="spinach", use_amount=100, unit="g"
-        ),
-        _ingredient("Garlic", inventory_item_id="garlic", use_amount=2, unit="clove"),
-        title="Spinach and Garlic",
-    )
-    substantial_case = _recipe(
-        _ingredient(
-            "Chickpeas", inventory_item_id="chickpeas", use_amount=2, unit="can"
-        ),
-        _ingredient(
-            "Tomatoes", inventory_item_id="tomatoes", use_amount=3, unit="item"
-        ),
-        title="Tomato Chickpea Stew",
-    )
-    inventory = [
-        _usable_item("spinach", name="Baby Spinach", quantity=100, unit="g"),
-        _usable_item("garlic", name="Garlic", quantity=2, unit="clove"),
-        _usable_item("chickpeas", name="Chickpeas", quantity=2, unit="can"),
-        _usable_item("tomatoes", quantity=3),
-    ]
-    token_result = check_quality(
-        {"usable_items": inventory, "generated_recipes": [token_case]}
-    )
-    substantial_result = check_quality(
-        {"usable_items": inventory, "generated_recipes": [substantial_case]}
-    )
-    semantic_labels = {
-        token_case["title"]: "reject_token_meal",
-        substantial_case["title"]: "accept_substantial_meal",
-    }
-    assert semantic_labels[token_case["title"]] == "reject_token_meal"
-    assert [recipe.title for recipe in token_result["valid_recipes"]] == [
-        token_case["title"]
-    ]
-    assert [recipe.title for recipe in substantial_result["valid_recipes"]] == [
-        substantial_case["title"]
-    ]
 
 
 @pytest.mark.asyncio

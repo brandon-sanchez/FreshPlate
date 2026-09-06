@@ -7,6 +7,7 @@ import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Literal, Protocol
 
 from pydantic import ValidationError
@@ -426,7 +427,7 @@ def _quality_issues(
 ) -> list[str]:
     issues: list[str] = []
     grounded = False
-    requested_by_id: dict[str, float] = {}
+    requested_by_id: dict[str, Decimal] = {}
     for ingredient in recipe.ingredients:
         if ingredient.use_amount is None:
             issues.append(f"ingredient '{ingredient.name}' is missing use_amount")
@@ -467,12 +468,12 @@ def _quality_issues(
         if ingredient.use_amount is not None and math.isfinite(
             ingredient.use_amount
         ):
-            requested_by_id[item_id] = (
-                requested_by_id.get(item_id, 0) + ingredient.use_amount
-            )
+            requested_by_id[item_id] = requested_by_id.get(
+                item_id, Decimal("0")
+            ) + Decimal(str(ingredient.use_amount))
     for item_id, requested in requested_by_id.items():
         item = inventory_by_id[item_id]
-        if requested > item["quantity"]:
+        if requested > Decimal(str(item["quantity"])):
             issues.append(
                 f"ingredients mapped to inventory item '{item_id}' use {requested} "
                 f"in total, more than the available {item['quantity']}"
