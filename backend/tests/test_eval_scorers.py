@@ -28,7 +28,7 @@ def recipe() -> Recipe:
     )
 
 
-CASE_COVERAGE = {name: 50 for name in ("tomato pasta", "lemon rice", "miso soup", "salmon bowl", "apple salad", "egg fried rice", "bean chili", "coconut noodles", "greek salad", "corn quesadilla", "berry yogurt")}
+CASE_COVERAGE = {name: 67 for name in ("tomato pasta", "lemon rice", "miso soup", "salmon bowl", "apple salad", "egg fried rice", "bean chili", "coconut noodles", "greek salad", "corn quesadilla", "berry yogurt")}
 
 
 @pytest.mark.asyncio
@@ -40,13 +40,13 @@ async def test_scorers_and_curated_dataset_contract():
     for case in cases:
         usable = analyze_inventory({"inventory": case["inventory"]})["usable_items"]
         mapped = [RecipeIngredient(name=item["name"], inventory_item_id=item["id"], use_amount=1, unit=item["unit"]) for item in usable]
-        ingredients = [mapped[0], RecipeIngredient(name="olive oil", unit="tablespoon")] if case["name"] in CASE_COVERAGE else mapped
+        ingredients = [*mapped, RecipeIngredient(name="olive oil", unit="tablespoon")] if case["name"] in CASE_COVERAGE else mapped
         generated = recipe().model_copy(update={"ingredients": ingredients})
         generated = (await FakeProvider([{"recipes": [generated.model_dump()]}]).generate("eval", response_model=RecipeGenerationResponse)).recipes[0]
         score = ingredient_coverage_percent(generated, usable)
         assert score == (CASE_COVERAGE[case["name"]] if case["name"] in CASE_COVERAGE else 100)
         if case["name"] in CASE_COVERAGE:
-            assert case["expected_coverage"][1] >= score
+            assert case["expected_coverage"][0] <= score <= case["expected_coverage"][1]
         else:
             assert case["expected_coverage"][0] <= score <= case["expected_coverage"][1]
     assert completeness_percent(recipe()) == 100
