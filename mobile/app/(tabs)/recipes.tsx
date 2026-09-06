@@ -397,7 +397,7 @@ function SavedRecipeRow({ recipe, onRemove, disabled }: { recipe: import("@/type
 function RecipeTabs({ tab, onChange }: { tab: "for-you" | "saved"; onChange: (tab: "for-you" | "saved") => void }) {
   const { colors, fonts } = useTheme();
   return <View style={styles.tabs}>
-    {(["for-you", "saved"] as const).map((value) => <RecipePressable key={value} onPress={() => onChange(value)} style={[styles.tab, tab === value && { backgroundColor: colors.surface }]}><Text style={[styles.tabText, { color: tab === value ? colors.accent : colors.textMuted, fontFamily: fonts.bodyStrong }]}>{value === "for-you" ? "For you" : "Saved"}</Text></RecipePressable>)}
+    {(["for-you", "saved"] as const).map((value) => <RecipePressable key={value} onPress={() => onChange(value)} accessibilityRole="tab" accessibilityLabel={value === "for-you" ? "For you recipes" : "Saved recipes"} accessibilityState={{ selected: tab === value }} style={[styles.tab, tab === value && { backgroundColor: colors.surface }]}><Text style={[styles.tabText, { color: tab === value ? colors.accent : colors.textMuted, fontFamily: fonts.bodyStrong }]}>{value === "for-you" ? "For you" : "Saved"}</Text></RecipePressable>)}
   </View>;
 }
 

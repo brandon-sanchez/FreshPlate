@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/stores/auth";
@@ -40,6 +41,7 @@ function isRecipeSuggestion(value: unknown): value is RecipeSuggestion {
 export function useSavedRecipes() {
   const householdId = useAuthStore((state) => state.householdId);
   const queryClient = useQueryClient();
+  const inflightToggles = useRef(new Map<string, Promise<void>>());
   const queryKey = ["saved-recipes", householdId] as const;
   const query = useQuery({
     queryKey,
@@ -86,7 +88,16 @@ export function useSavedRecipes() {
       toggle.reset();
       return Promise.reject(new Error("not signed in"));
     }
-    return toggle.mutateAsync({ recipe, saved, householdId: targetHouseholdId, userId });
+    const key = `${targetHouseholdId}:${recipe.recipe_id}:${saved ? "remove" : "save"}`;
+    const existing = inflightToggles.current.get(key);
+    if (existing) return existing;
+    const request = toggle.mutateAsync({ recipe, saved, householdId: targetHouseholdId, userId });
+    inflightToggles.current.set(key, request);
+    request.then(
+      () => { if (inflightToggles.current.get(key) === request) inflightToggles.current.delete(key); },
+      () => { if (inflightToggles.current.get(key) === request) inflightToggles.current.delete(key); },
+    );
+    return request;
   };
   return { ...query, savedIds, toggle: toggleSaved, isToggling: toggle.isPending, toggleError: toggle.error };
 }

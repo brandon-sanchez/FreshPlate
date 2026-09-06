@@ -87,4 +87,23 @@ describe("useSavedRecipes", () => {
     await act(async () => { await expect(result.current.toggle({ recipe, saved: true })).rejects.toThrow("delete failed"); });
     await waitFor(() => expect(result.current.toggleError?.message).toBe("delete failed"));
   });
+
+  it("coalesces duplicate toggles before React renders the pending state", async () => {
+    let resolveInsert: ((value: { error: null }) => void) | undefined;
+    mockInsert.mockImplementationOnce(() => new Promise((resolve) => { resolveInsert = resolve; }));
+    const { result } = renderHook(() => useSavedRecipes(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    let first: Promise<void> | undefined;
+    let second: Promise<void> | undefined;
+    await act(async () => {
+      first = result.current.toggle({ recipe, saved: false });
+      second = result.current.toggle({ recipe, saved: false });
+    });
+    expect(second).toBe(first);
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolveInsert?.({ error: null });
+      await first;
+    });
+  });
 });

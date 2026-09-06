@@ -163,6 +163,7 @@ export default function RecipeFeed({
       width,
       onToggleSave,
       savedIds,
+      isSavePending,
     ],
   );
   const footer = isPrefetching ? (

@@ -73,14 +73,12 @@ SELECT count(*) FROM saved_recipes WHERE recipe_id='{rid}';"""
     assert result.returncode == 0 and result.stdout.strip() == "1"
     deleted = q(f"SET ROLE authenticated; SET request.jwt.claim.sub='{A}'; DELETE FROM saved_recipes WHERE recipe_id='{rid}'; SELECT count(*) FROM saved_recipes WHERE recipe_id='{rid}';")
     assert deleted.returncode == 0 and deleted.stdout.strip() == "0"
-    assert (
-        q(
-            f"SET ROLE authenticated; SET request.jwt.claim.sub='{A}'; INSERT INTO saved_recipes(household_id,recipe_id,recipe,saved_by) VALUES ('{foreign}','{rid}','{{\"recipe_id\":\"{rid}\"}}','{A}');"
-        ).returncode
-        != 0
-    )
+    seeded = q(f"INSERT INTO saved_recipes(household_id,recipe_id,recipe,saved_by) VALUES ('{foreign}','{rid}','{{\"recipe_id\":\"{rid}\",\"title\":\"Foreign soup\"}}','{A}');")
+    assert seeded.returncode == 0, seeded.stderr
     foreign_read = q(f"SET ROLE authenticated; SET request.jwt.claim.sub='{A}'; SELECT count(*) FROM saved_recipes WHERE household_id='{foreign}'; DELETE FROM saved_recipes WHERE household_id='{foreign}';")
     assert foreign_read.returncode == 0 and foreign_read.stdout.strip() == "0"
+    survives = q(f"SELECT count(*) FROM saved_recipes WHERE household_id='{foreign}' AND recipe_id='{rid}';")
+    assert survives.returncode == 0 and survives.stdout.strip() == "1"
     assert (
         q(
             f"INSERT INTO saved_recipes(household_id,recipe_id,recipe,saved_by) VALUES ('{h}','{rid}','{{\"recipe_id\":\"{rid}\"}}','{A}'),('{h}','{rid}','{{\"recipe_id\":\"{rid}\"}}','{A}');"
