@@ -72,6 +72,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Skip superseded main push
         id: freshness
         run: |
@@ -83,17 +84,17 @@ jobs:
           else
             echo "current=true" >> "$GITHUB_OUTPUT"
           fi
-      - name: Stop if superseded
-        if: steps.freshness.outputs.current != 'true'
-        run: exit 0
       - name: Authenticate to Google Cloud
+        if: steps.freshness.outputs.current == 'true'
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
       - name: Set up Google Cloud CLI
+        if: steps.freshness.outputs.current == 'true'
         uses: google-github-actions/setup-gcloud@v3
       - name: Deploy the API
+        if: steps.freshness.outputs.current == 'true'
         uses: google-github-actions/deploy-cloudrun@v3
         with:
           service: freshplate-api
@@ -102,7 +103,7 @@ jobs:
           source: backend
           flags: >-
             --service-account=${{ vars.GCP_CLOUD_RUN_SERVICE_ACCOUNT }}
-            --build-service-account=${{ vars.GCP_CLOUD_BUILD_SERVICE_ACCOUNT }}
+            --build-service-account=projects/${{ vars.GCP_PROJECT_ID }}/serviceAccounts/${{ vars.GCP_CLOUD_BUILD_SERVICE_ACCOUNT }}
             --port=8080
             --memory=512Mi
             --min-instances=0

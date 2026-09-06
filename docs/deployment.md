@@ -47,10 +47,9 @@ gcloud projects add-iam-policy-binding "$FRESHPLATE_PROJECT_ID" --member="servic
 gcloud projects add-iam-policy-binding "$FRESHPLATE_PROJECT_ID" --member="serviceAccount:$FRESHPLATE_BUILD_EMAIL" --role=roles/run.builder
 gcloud iam service-accounts add-iam-policy-binding "$FRESHPLATE_RUNTIME_EMAIL" --member="serviceAccount:$FRESHPLATE_DEPLOYER_EMAIL" --role=roles/iam.serviceAccountUser
 gcloud iam service-accounts add-iam-policy-binding "$FRESHPLATE_BUILD_EMAIL" --member="serviceAccount:$FRESHPLATE_DEPLOYER_EMAIL" --role=roles/iam.serviceAccountUser
-gcloud run services add-iam-policy-binding freshplate-api --region="$FRESHPLATE_REGION" --member=allUsers --role=roles/run.invoker || true
 ```
 
-The last command is a one-time administrator bootstrap for a public service. It scopes the public invoker grant to `freshplate-api`; the deployer does not receive project-wide `roles/run.admin`. If organization policy forbids public services, omit this command and deploy without public access.
+The public invoker grant is applied after the first successful deployment below. This keeps the bootstrap sequence valid before the service exists and scopes the grant to `freshplate-api`; the deployer does not receive project-wide `roles/run.admin`. If organization policy forbids public services, omit that grant and deploy without public access.
 
 Create or update these secrets from protected local files or stdin. Never put values in this document, shell history, GitHub logs, or the repository. `gcloud secrets versions add` creates a new version and does not overwrite existing versions.
 
@@ -85,7 +84,8 @@ gh variable set GCP_CLOUD_BUILD_SERVICE_ACCOUNT --repo="$FRESHPLATE_REPO_OWNER/$
 ## Manual deploy
 
 ```bash
-gcloud run deploy freshplate-api --project="$FRESHPLATE_PROJECT_ID" --region="$FRESHPLATE_REGION" --source=backend/ --service-account="$FRESHPLATE_RUNTIME_EMAIL" --build-service-account="$FRESHPLATE_BUILD_EMAIL" --port=8080 --memory=512Mi --min-instances=0 --max-instances=2 --set-env-vars='LANGCHAIN_TRACING_V2=true,LANGCHAIN_PROJECT=freshplate' --set-secrets='GEMINI_API_KEY=gemini-api-key:latest,SUPABASE_URL=supabase-url:latest,SUPABASE_PUBLISHABLE_KEY=supabase-publishable-key:latest,SUPABASE_SECRET_KEY=supabase-secret-key:latest,LANGSMITH_API_KEY=langsmith-api-key:latest'
+gcloud run deploy freshplate-api --project="$FRESHPLATE_PROJECT_ID" --region="$FRESHPLATE_REGION" --source=backend/ --service-account="$FRESHPLATE_RUNTIME_EMAIL" --build-service-account="projects/$FRESHPLATE_PROJECT_ID/serviceAccounts/$FRESHPLATE_BUILD_EMAIL" --port=8080 --memory=512Mi --min-instances=0 --max-instances=2 --set-env-vars='LANGCHAIN_TRACING_V2=true,LANGCHAIN_PROJECT=freshplate' --set-secrets='GEMINI_API_KEY=gemini-api-key:latest,SUPABASE_URL=supabase-url:latest,SUPABASE_PUBLISHABLE_KEY=supabase-publishable-key:latest,SUPABASE_SECRET_KEY=supabase-secret-key:latest,LANGSMITH_API_KEY=langsmith-api-key:latest'
+gcloud run services add-iam-policy-binding freshplate-api --project="$FRESHPLATE_PROJECT_ID" --region="$FRESHPLATE_REGION" --member=allUsers --role=roles/run.invoker
 ```
 
 The workflow uses the public access bootstrap described above, port `8080`, 512 MiB memory, zero minimum instances, and two maximum instances. This is a small free-tier-oriented configuration, not a guarantee of zero cost: Cloud Run, Cloud Build, Artifact Registry, Secret Manager, networking, and quotas vary by region and account, and usage beyond free allowances is billed. Verify the deployed service and revision with `gcloud run services describe freshplate-api --region="$FRESHPLATE_REGION" --format='value(status.url,status.latestReadyRevisionName)'` and `curl --fail --silent --show-error "$(gcloud run services describe freshplate-api --region="$FRESHPLATE_REGION" --format='value(status.url)')/health"`.
