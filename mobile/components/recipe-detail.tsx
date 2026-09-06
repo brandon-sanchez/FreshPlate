@@ -14,6 +14,7 @@ import { RecipePressable } from "@/components/recipe-motion";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
 import type { RecipeSuggestion } from "@/types/recipes";
+import RecipeSteps from "@/components/recipe-steps";
 
 type RecipeDetailProps = {
   recipe: RecipeSuggestion | null;
@@ -160,28 +161,6 @@ export default function RecipeDetail({
                       >
                         Need {Number(item.use_amount.toFixed(2))} {item.unit}
                       </Text>
-                      <View
-                        style={[
-                          styles.pill,
-                          {
-                            backgroundColor: item.inventory_item_id
-                              ? colors.accentSoft
-                              : colors.surfaceAlt,
-                          },
-                        ]}
-                      >
-                        <Text
-                          style={{
-                            color: item.inventory_item_id
-                              ? colors.accent
-                              : colors.textMuted,
-                            fontFamily: fonts.bodyStrong,
-                            fontSize: 12,
-                          }}
-                        >
-                          {item.inventory_item_id ? "In fridge" : "Buy"}
-                        </Text>
-                      </View>
                     </View>
                   </View>
                 ))}
@@ -194,34 +173,7 @@ export default function RecipeDetail({
               >
                 Steps
               </Text>
-              {recipe.steps.map((step, index) => (
-                <View key={`${index}-${step}`} style={styles.step}>
-                  <View
-                    style={[
-                      styles.stepNumber,
-                      { backgroundColor: colors.accent },
-                    ]}
-                  >
-                    <Text
-                      style={{
-                        color: colors.accentInk,
-                        fontFamily: fonts.bodyStrong,
-                      }}
-                    >
-                      {index + 1}
-                    </Text>
-                  </View>
-                  <Text
-                    selectable
-                    style={[
-                      styles.stepText,
-                      { color: colors.text, fontFamily: fonts.body },
-                    ]}
-                  >
-                    {step}
-                  </Text>
-                </View>
-              ))}
+              <RecipeSteps steps={recipe.steps} />
             </View>
           </ScrollView>
           <RecipePressable
@@ -331,19 +283,4 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   ingredientText: { flex: 1, gap: 4 },
-  pill: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 14,
-  },
-  step: { flexDirection: "row", gap: 12, marginBottom: 14 },
-  stepNumber: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  stepText: { flex: 1, fontSize: 14, lineHeight: 22 },
 });

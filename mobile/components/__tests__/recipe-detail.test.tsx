@@ -24,7 +24,7 @@ const recipe: RecipeSuggestion = {
     },
     { name: "Garlic", inventory_item_id: null, use_amount: 2, unit: "cloves" },
   ],
-  steps: ["Rinse the spinach.", "Sauté and serve."],
+  steps: ["Prep the greens\nRinse the spinach.", "Sauté and serve."],
   saves_expiring: ["Spinach"],
 };
 const wrapper = ({ children }: { children: React.ReactNode }) => (
@@ -53,9 +53,15 @@ it("renders the selected snapshot and sends its identity to the shared save acti
   );
   expect(screen.getByText("Spinach skillet")).toBeTruthy();
   expect(screen.getByText("Need 100 g")).toBeTruthy();
-  expect(screen.getByText("In fridge")).toBeTruthy();
-  expect(screen.getByText("Buy")).toBeTruthy();
+  expect(screen.queryByText("In fridge")).toBeNull();
+  expect(screen.queryByText("Buy")).toBeNull();
+  expect(screen.getByText("Prep the greens")).toBeTruthy();
+  expect(screen.getByText("Rinse the spinach.")).toBeTruthy();
   expect(screen.getByText("Sauté and serve.")).toBeTruthy();
+  expect(screen.queryByTestId("recipe-step-heading-1")).toBeNull();
+  expect(screen.getByTestId("recipe-step-body-1")).toHaveTextContent(
+    "Sauté and serve.",
+  );
   expect(screen.queryByText(recipe.recipe_id)).toBeNull();
   fireEvent.press(screen.getByLabelText("Save recipe"));
   expect(onToggleSave).toHaveBeenCalledWith(recipe, false);
