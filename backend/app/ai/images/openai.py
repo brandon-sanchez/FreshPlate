@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 from PIL import Image, UnidentifiedImageError
+from PIL.Image import DecompressionBombError
 from pydantic import SecretStr
 
 from app.ai.llm.errors import ProviderError
@@ -109,7 +110,12 @@ class OpenAIImageProvider:
                     decoded.verify()
                 with Image.open(BytesIO(image), formats=("PNG",)) as decoded:
                     decoded.load()
-            except (UnidentifiedImageError, OSError) as exc:
+            except (
+                DecompressionBombError,
+                SyntaxError,
+                UnidentifiedImageError,
+                OSError,
+            ) as exc:
                 raise ProviderError(
                     "Image provider returned an invalid PNG", cause=exc
                 ) from exc

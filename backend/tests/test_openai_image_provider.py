@@ -228,3 +228,36 @@ async def test_valid_eight_mib_png_is_accepted() -> None:
             "key", enabled=True, monthly_cap_microusd=1, client=client
         ).generate("x", kind="recipe")
     assert result == image
+
+
+@pytest.mark.asyncio
+async def test_corrupt_png_crc_is_normalized_to_provider_error() -> None:
+    corrupt = bytearray(PNG)
+    idat = corrupt.index(b"IDAT")
+    corrupt[idat + 5] ^= 1
+
+    async def handler(request):
+        return httpx.Response(200, content=envelope(bytes(corrupt)))
+
+    async with client_for(handler) as client:
+        with pytest.raises(ProviderError):
+            await OpenAIImageProvider(
+                "key", enabled=True, monthly_cap_microusd=1, client=client
+            ).generate("x", kind="recipe")
+
+
+@pytest.mark.asyncio
+async def test_oversized_png_header_is_rejected_before_decode() -> None:
+    width = height = 100_000
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    image = b"\x89PNG\r\n\x1a\n" + struct.pack(">I", len(ihdr)) + b"IHDR" + ihdr
+    image += struct.pack(">I", zlib.crc32(b"IHDR" + ihdr))
+
+    async def handler(request):
+        return httpx.Response(200, content=envelope(image))
+
+    async with client_for(handler) as client:
+        with pytest.raises(ProviderError):
+            await OpenAIImageProvider(
+                "key", enabled=True, monthly_cap_microusd=1, client=client
+            ).generate("x", kind="recipe")
