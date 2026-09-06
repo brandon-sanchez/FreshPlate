@@ -6,13 +6,11 @@ from typing import Any
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
-from app.ai.agents.meal_quality import assess_meals
+from app.ai.agents.meal_quality import review_recipes
 from app.ai.agents.nodes import (
     MAX_QUALITY_RETRIES,
-    RecipeProviderPort,
     RecipeRetrieverPort,
     analyze_inventory,
-    check_quality,
     generate_recipes,
     retrieve_recipes,
     route_after_quality,
@@ -23,13 +21,14 @@ from app.ai.agents.state import (
     RecipeState,
     RetrievalResult,
 )
+from app.ai.llm.protocol import LLMProvider
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.prompts.loader import PromptTemplate, load_prompt
 from app.ai.rag.vector_store import DEFAULT_MATCH_LIMIT
 
 
 def build_recipe_graph(
-    provider: RecipeProviderPort,
+    provider: LLMProvider,
     retriever: RecipeRetrieverPort,
     *,
     prompt: PromptTemplate | None = None,
@@ -46,9 +45,6 @@ def build_recipe_graph(
     _validate_quality_retry_limit(quality_retry_limit)
     template = prompt or load_prompt("generate_recipes")
     builder = StateGraph(RecipeState)
-
-    async def initialize_node(state: RecipeState) -> dict[str, Any]:
-        return {"deadline": _deadline_for_state(state)}
 
     async def analyze_node(
         state: RecipeState,
@@ -79,22 +75,9 @@ def build_recipe_graph(
         )
 
     async def quality_node(state: RecipeState) -> QualityResult:
-        result = check_quality(state)
-        if not result["valid_recipes"]:
-            return result
-        eligible, feedback, assessment_metadata = await assess_meals(
-            result["valid_recipes"],
-            state,
-            provider,
-            deadline=_deadline_for_state(state),
+        return await review_recipes(
+            state, provider, deadline=_deadline_for_state(state)
         )
-        return {
-            "valid_recipes": eligible,
-            "quality_feedback": "\n".join(
-                value for value in (result["quality_feedback"], feedback) if value
-            ) or None,
-            "metadata": {**state.get("metadata", {}), **assessment_metadata},
-        }
 
     def quality_route(state: RecipeState) -> str:
         return route_after_quality(
@@ -120,7 +103,7 @@ def build_recipe_graph(
 
 
 def build_recipe_generation_graph(
-    provider: RecipeProviderPort,
+    provider: LLMProvider,
     *,
     prompt: PromptTemplate | None = None,
     quality_retry_limit: int = MAX_QUALITY_RETRIES,
@@ -148,22 +131,9 @@ def build_recipe_generation_graph(
         )
 
     async def quality_node(state: RecipeState) -> QualityResult:
-        result = check_quality(state)
-        if not result["valid_recipes"]:
-            return result
-        eligible, feedback, assessment_metadata = await assess_meals(
-            result["valid_recipes"],
-            state,
-            provider,
-            deadline=_deadline_for_state(state),
+        return await review_recipes(
+            state, provider, deadline=_deadline_for_state(state)
         )
-        return {
-            "valid_recipes": eligible,
-            "quality_feedback": "\n".join(
-                value for value in (result["quality_feedback"], feedback) if value
-            ) or None,
-            "metadata": {**state.get("metadata", {}), **assessment_metadata},
-        }
 
     def quality_route(state: RecipeState) -> str:
         return route_after_quality(

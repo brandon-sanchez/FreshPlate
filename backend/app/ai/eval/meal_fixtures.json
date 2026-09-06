@@ -1,0 +1,112 @@
+[
+  {
+    "name": "token vegetable side",
+    "recipe": {
+      "title": "Garlicky spinach skillet",
+      "cook_time_minutes": 21,
+      "servings": 2,
+      "ingredients": [
+        {
+          "name": "Spinach",
+          "inventory_item_id": "spinach",
+          "use_amount": 100,
+          "unit": "g"
+        },
+        {
+          "name": "Garlic",
+          "inventory_item_id": "garlic",
+          "use_amount": 2,
+          "unit": "cloves"
+        }
+      ],
+      "steps": [
+        "Prepare the spinach\nRinse the spinach and mince the garlic.",
+        "Wilt the greens\nCook the garlic and spinach in a covered pan over low heat for 2–3 minutes until wilted. Divide between two plates."
+      ]
+    },
+    "expected_verdict": "insufficient",
+    "reason": "100 g spinach and two garlic cloves do not form substantial meals for two."
+  },
+  {
+    "name": "substantial vegetarian pasta",
+    "recipe": {
+      "title": "Garlic tomato pasta",
+      "cook_time_minutes": 25,
+      "servings": 2,
+      "ingredients": [
+        {
+          "name": "Pasta",
+          "inventory_item_id": "pasta",
+          "use_amount": 200,
+          "unit": "g"
+        },
+        {
+          "name": "Crushed tomatoes",
+          "inventory_item_id": "crushed-tomatoes",
+          "use_amount": 300,
+          "unit": "g"
+        },
+        {
+          "name": "Garlic",
+          "inventory_item_id": "garlic",
+          "use_amount": 2,
+          "unit": "cloves"
+        },
+        {
+          "name": "Olive oil",
+          "inventory_item_id": "olive-oil",
+          "use_amount": 1,
+          "unit": "tbsp"
+        }
+      ],
+      "steps": [
+        "Boil the pasta\nCook the pasta in a large pot of boiling water according to the packet instructions until al dente.",
+        "Make the sauce\nHeat the oil in a skillet over medium heat and stir in the minced garlic for 30–60 seconds until fragrant. Add the tomatoes and simmer for 10–12 minutes until slightly thickened.",
+        "Combine and serve\nDrain the pasta and toss it with the sauce. Divide between two bowls."
+      ]
+    },
+    "expected_verdict": "eligible",
+    "reason": "200 g dry pasta with a tomato sauce is a coherent meal for two without requiring a protein category."
+  },
+  {
+    "name": "unlisted fish in instructions",
+    "recipe": {
+      "title": "Salmon tomato pasta",
+      "cook_time_minutes": 25,
+      "servings": 2,
+      "ingredients": [
+        {
+          "name": "Pasta",
+          "inventory_item_id": "pasta",
+          "use_amount": 200,
+          "unit": "g"
+        },
+        {
+          "name": "Crushed tomatoes",
+          "inventory_item_id": "crushed-tomatoes",
+          "use_amount": 300,
+          "unit": "g"
+        },
+        {
+          "name": "Garlic",
+          "inventory_item_id": "garlic",
+          "use_amount": 2,
+          "unit": "cloves"
+        },
+        {
+          "name": "Olive oil",
+          "inventory_item_id": "olive-oil",
+          "use_amount": 1,
+          "unit": "tbsp"
+        }
+      ],
+      "steps": [
+        "Boil the pasta\nCook the pasta in a large pot of boiling water according to the packet instructions until al dente.",
+        "Make the sauce\nHeat the oil in a skillet over medium heat and stir in the minced garlic for 30–60 seconds until fragrant. Add the tomatoes and simmer for 10–12 minutes until slightly thickened.",
+        "Finish with salmon\nFold 300 g cooked salmon into the sauce before adding the drained pasta."
+      ]
+    },
+    "expected_verdict": "unsupported_ingredient",
+    "reason": "The title and instructions add salmon absent from the ingredient list."
+  }
+]

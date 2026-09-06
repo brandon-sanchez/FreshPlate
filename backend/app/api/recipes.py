@@ -16,12 +16,12 @@ from app.ai.agents.graph import build_recipe_generation_graph, build_recipe_grap
 from app.ai.agents.models import Recipe
 from app.ai.agents.nodes import (
     GENERATION_DOCS_CEILING,
-    RecipeProviderPort,
     RecipeRetrieverPort,
 )
 from app.ai.agents.state import RecipeState
 from app.ai.eval.scorers import ingredient_coverage_percent
 from app.ai.llm.errors import AI_UNAVAILABLE, ProviderError
+from app.ai.llm.protocol import LLMProvider
 from app.ai.llm.providers import GeminiProvider
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.prompts.loader import load_prompt
@@ -65,7 +65,7 @@ RECIPE_FEED_RETRIEVAL_POOL_LIMIT = (
 RECIPE_FEED_EMPTY_REASON_UNSUPPORTED_INVENTORY = "INVENTORY_UNSUPPORTED"
 
 
-def get_recipe_provider() -> RecipeProviderPort:
+def get_recipe_provider() -> LLMProvider:
     """Create the production provider for one request dependency graph."""
     return GeminiProvider()
 
@@ -93,7 +93,7 @@ def get_recipe_feed_store(request: Request) -> RecipeFeedStore:
 async def post_recipe_suggestions(
     payload: RecipeSuggestionRequest,
     _user_id: CurrentUserId,
-    provider: RecipeProviderPort = Depends(get_recipe_provider),
+    provider: LLMProvider = Depends(get_recipe_provider),
     retriever: RecipeRetrieverPort = Depends(get_recipe_retriever),
 ) -> RecipeSuggestionsResponse:
     """Generate one authenticated, session-scoped batch of recipe suggestions."""
@@ -128,7 +128,7 @@ async def post_recipe_feed_session(
     payload: RecipeFeedSessionRequest,
     _user_id: CurrentUserId,
     store: RecipeFeedStore = Depends(get_recipe_feed_store),
-    provider: RecipeProviderPort = Depends(get_recipe_provider),
+    provider: LLMProvider = Depends(get_recipe_provider),
     retriever: RecipeRetrieverPort = Depends(get_recipe_retriever),
 ) -> RecipeFeedResponse:
     """Create a feed session and persist its first bounded candidate pool."""
@@ -218,7 +218,7 @@ async def post_recipe_feed_page(
     payload: RecipeFeedPageRequest,
     _user_id: CurrentUserId,
     store: RecipeFeedStore = Depends(get_recipe_feed_store),
-    provider: RecipeProviderPort = Depends(get_recipe_provider),
+    provider: LLMProvider = Depends(get_recipe_provider),
 ) -> RecipeFeedResponse:
     """Return a stable cursor page, refilling the pool only at its tail."""
     cursor = _parse_feed_cursor(payload.cursor)
@@ -278,7 +278,7 @@ async def _refill_recipe_feed_session(
     session: RecipeFeedSession,
     user_id: str,
     store: RecipeFeedStore,
-    provider: RecipeProviderPort,
+    provider: LLMProvider,
     deadline: PipelineDeadline,
 ) -> tuple[RecipeFeedSession, bool]:
     """Generate one tail batch using the session's cached retrieval context."""
@@ -334,7 +334,7 @@ async def _generate_claimed_recipe_refill(
     session: RecipeFeedSession,
     user_id: str,
     store: RecipeFeedStore,
-    provider: RecipeProviderPort,
+    provider: LLMProvider,
     deadline: PipelineDeadline,
     claim_id: UUID,
 ) -> tuple[RecipeFeedSession, bool]:

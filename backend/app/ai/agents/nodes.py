@@ -21,6 +21,7 @@ from app.ai.agents.state import (
     RetrievalResult,
     UsableItem,
 )
+from app.ai.llm.protocol import LLMProvider
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.prompts.loader import PromptTemplate, load_prompt
 from app.ai.rag.vector_store import (
@@ -34,19 +35,6 @@ MAX_QUALITY_RETRIES = 1
 QUALITY_RETRY_MIN_BUDGET_SECONDS = 20.0
 GENERATION_DOCS_CEILING = 5
 _QUERY_TERM_SEPARATOR = re.compile(r"[^\w]+", flags=re.UNICODE)
-
-
-class RecipeProviderPort(Protocol):
-    """The structured-generation seam required by the recipe graph."""
-
-    async def generate(
-        self,
-        prompt: str,
-        *,
-        response_model: type[RecipeGenerationResponse],
-        system_instruction: str | None,
-        deadline: PipelineDeadline | None,
-    ) -> RecipeGenerationResponse: ...
 
 
 class RecipeRetrieverPort(Protocol):
@@ -163,7 +151,7 @@ async def retrieve_recipes(
 
 async def generate_recipes(
     state: Mapping[str, Any],
-    provider: RecipeProviderPort,
+    provider: LLMProvider,
     *,
     prompt: PromptTemplate | None = None,
     deadline: PipelineDeadline | None = None,

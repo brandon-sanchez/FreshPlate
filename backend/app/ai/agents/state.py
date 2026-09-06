@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from app.ai.agents.models import Recipe
 from app.ai.llm.retry import PipelineDeadline
@@ -64,6 +64,7 @@ class QualityResult(TypedDict):
 
     valid_recipes: list[Recipe]
     quality_feedback: str | None
+    metadata: NotRequired[dict[str, Any]]
 
 
 class RecipeState(TypedDict, total=False):
@@ -83,5 +84,3 @@ class RecipeState(TypedDict, total=False):
     errors: list[str]
     metadata: dict[str, Any]
     deadline: PipelineDeadline
-    assessment_prompt_name: str
-    assessment_prompt_version: str | int
