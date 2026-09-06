@@ -12,9 +12,9 @@ CREATE TABLE public.image_assets (
     cache_key TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('reserved', 'ready', 'failed')),
     object_path TEXT,
-    reservation_id UUID UNIQUE,
-    reserved_cost_microusd BIGINT NOT NULL DEFAULT 0 CHECK (reserved_cost_microusd >= 0),
-    reservation_month DATE REFERENCES public.image_generation_months(month_start),
+    reservation_id UUID NOT NULL UNIQUE,
+    reserved_cost_microusd BIGINT NOT NULL CHECK (reserved_cost_microusd > 0),
+    reservation_month DATE NOT NULL REFERENCES public.image_generation_months(month_start),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (kind, cache_key)
 );
