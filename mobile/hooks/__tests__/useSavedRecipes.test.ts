@@ -1,5 +1,5 @@
 import React from "react";
-import { act, renderHook, waitFor } from "@testing-library/react-native";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { RecipeSuggestion } from "@/types/recipes";
 
@@ -30,6 +30,10 @@ function wrapper({ children }: { children: React.ReactNode }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
   return React.createElement(QueryClientProvider, { client }, children);
 }
+
+afterEach(async () => {
+  cleanup();
+});
 
 describe("useSavedRecipes", () => {
   beforeEach(() => { jest.clearAllMocks(); deleteError = null; household.current = "household-a"; user.current = { id: "user-a" }; mockOrder.mockResolvedValue({ data: [], error: null }); });
