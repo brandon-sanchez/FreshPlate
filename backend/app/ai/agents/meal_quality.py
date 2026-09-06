@@ -9,8 +9,8 @@ from typing import Any, Literal, Mapping
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from app.ai.agents.models import Recipe
-from app.ai.agents.nodes import RecipeProviderPort
 from app.ai.llm.errors import ProviderError
+from app.ai.llm.protocol import LLMProvider
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.prompts.loader import PromptTemplate, load_prompt
 
@@ -32,7 +32,7 @@ class MealAssessment(BaseModel):
 async def assess_meals(
     recipes: list[Recipe],
     state: Mapping[str, Any],
-    provider: RecipeProviderPort,
+    provider: LLMProvider,
     *,
     prompt: PromptTemplate | None = None,
     deadline: PipelineDeadline | None = None,
@@ -60,15 +60,14 @@ async def assess_meals(
         raise
     except asyncio.CancelledError:
         raise
-    except BaseException as exc:
-        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-            raise
+    except Exception as exc:
         raise ProviderError("Meal assessment unavailable", cause=exc) from exc
 
     eligible: list[Recipe] = []
     failures: list[str] = []
-    for decision in assessment.decisions:
-        recipe = recipes[decision.candidate_index]
+    decisions_by_index = {d.candidate_index: d for d in assessment.decisions}
+    for index, recipe in enumerate(recipes):
+        decision = decisions_by_index[index]
         if decision.verdict == "eligible":
             eligible.append(recipe)
         else:

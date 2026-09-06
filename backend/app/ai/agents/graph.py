@@ -90,8 +90,10 @@ def build_recipe_graph(
         )
         return {
             "valid_recipes": eligible,
-            "quality_feedback": feedback or result["quality_feedback"],
-            **assessment_metadata,
+            "quality_feedback": "\n".join(
+                value for value in (result["quality_feedback"], feedback) if value
+            ) or None,
+            "metadata": {**state.get("metadata", {}), **assessment_metadata},
         }
 
     def quality_route(state: RecipeState) -> str:
@@ -103,7 +105,6 @@ def build_recipe_graph(
 
     builder.add_node("analyze_inventory", analyze_node)
     builder.add_node("retrieve_recipes", retrieve_node)
-    builder.add_node("initialize", initialize_node)
     builder.add_node("generate_recipes", generate_node)
     builder.add_node("check_quality", quality_node)
     builder.add_edge(START, "analyze_inventory")
@@ -158,8 +159,10 @@ def build_recipe_generation_graph(
         )
         return {
             "valid_recipes": eligible,
-            "quality_feedback": feedback or result["quality_feedback"],
-            **assessment_metadata,
+            "quality_feedback": "\n".join(
+                value for value in (result["quality_feedback"], feedback) if value
+            ) or None,
+            "metadata": {**state.get("metadata", {}), **assessment_metadata},
         }
 
     def quality_route(state: RecipeState) -> str:
@@ -170,6 +173,7 @@ def build_recipe_generation_graph(
         )
 
     builder.add_node("generate_recipes", generate_node)
+    builder.add_node("initialize", initialize_node)
     builder.add_node("check_quality", quality_node)
     builder.add_edge(START, "initialize")
     builder.add_edge("initialize", "generate_recipes")
