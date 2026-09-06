@@ -298,6 +298,7 @@ const RecipeCard = memo(function RecipeCard({
   onIngredients,
   saved,
   onToggleSave,
+  isSavePending,
 }: {
   recipe: RecipeSuggestion;
   stride: number;
