@@ -14,9 +14,19 @@ def test_load_prompt_reads_the_versioned_generate_recipes_prompt() -> None:
     prompt = load_prompt("generate_recipes")
 
     assert prompt.name == "generate_recipes"
-    assert prompt.version == 2
+    assert prompt.version == 3
     assert prompt.model == "gemini-3.6-flash"
     assert "inventory" in prompt.system.lower()
+
+
+def test_generate_prompt_requires_portions_and_observable_instruction_cues() -> None:
+    system = load_prompt("generate_recipes").system.lower()
+
+    assert "realistic servings" in system
+    assert "observable cue" in system
+    assert "165°f" in system
+    assert "145°f" in system
+    assert "do not pad" in system
 
 
 def test_load_prompt_rejects_a_prompt_without_a_version(
@@ -84,7 +94,7 @@ def test_trace_config_contains_prompt_and_request_metadata() -> None:
     assert set(config) == {"metadata"}
     assert config["metadata"] == {
         "prompt_name": "generate_recipes",
-        "prompt_version": 2,
+        "prompt_version": 3,
         "request_id": "request-123",
     }
 
