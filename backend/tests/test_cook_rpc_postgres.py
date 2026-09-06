@@ -5,11 +5,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -399,11 +401,21 @@ def test_mixed_valid_and_foreign_rows_roll_back(database):
     assert database.run(f"SELECT count(*) FROM cook_events WHERE operation_id={q(operation)}") == "0"
 
 
+@pytest.fixture
+def http_settings(monkeypatch):
+    monkeypatch.setattr(settings, "supabase_url", "https://supabase.test")
+    monkeypatch.setattr(settings, "supabase_publishable_key", "key")
+
+
 class RpcHttpClient:
-    def __init__(self, database): self.database = database
+    def __init__(self, database, overlap_barrier=None): self.database, self.overlap_barrier = database, overlap_barrier
     async def post(self, url, *, headers, json, timeout):
         user = jwt.get_unverified_claims(headers["Authorization"][7:])["sub"]
-        result = call(self.database, json["p_household_id"], json["p_operation_id"], json["p_recipe_id"], json["p_deductions"], snapshot=json["p_recipe_snapshot"], user=user, check=False)
+        def execute():
+            if self.overlap_barrier:
+                self.overlap_barrier.wait(timeout=5)
+            return call(self.database, json["p_household_id"], json["p_operation_id"], json["p_recipe_id"], json["p_deductions"], snapshot=json["p_recipe_snapshot"], user=user, check=False)
+        result = await asyncio.to_thread(execute)
         if result.returncode:
             return httpx.Response(409, request=httpx.Request("POST", url))
         return httpx.Response(200, request=httpx.Request("POST", url), content=__import__("json").dumps(json_module(result.stdout)).encode())
@@ -413,11 +425,9 @@ def json_module(value):
     return json.loads(value)
 
 
-def test_http_forwards_jwt_to_real_rpc(database, patch_jwks):
+def test_http_forwards_jwt_to_real_rpc(database, patch_jwks, http_settings):
     key = SigningKey("cook-http")
     patch_jwks([key])
-    settings.supabase_url = "https://supabase.test"
-    settings.supabase_publishable_key = "key"
     household, item, recipe, operation = seed(database, 2)
     app = create_app()
     with TestClient(app) as client:
@@ -438,7 +448,7 @@ def _http_body(household, item, recipe, operation, amount=1, title="Beans"):
 
 
 def test_http_two_users_forward_distinct_auth_uid_and_reject_foreign_household(
-    database, patch_jwks
+    database, patch_jwks, http_settings
 ):
     key = SigningKey("cook-users")
     patch_jwks([key])
@@ -450,7 +460,7 @@ def test_http_two_users_forward_distinct_auth_uid_and_reject_foreign_household(
     )
     app = create_app()
     with TestClient(app) as client:
-        client.app.state.supabase_http_client = RpcHttpClient(database)
+        client.app.state.supabase_http_client = RpcHttpClient(database, Barrier(2))
         headers_a = {"Authorization": f"Bearer {key.sign(sub=USER)}"}
         headers_b = {"Authorization": f"Bearer {key.sign(sub=other)}"}
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -465,6 +475,7 @@ def test_http_two_users_forward_distinct_auth_uid_and_reject_foreign_household(
                     ],
                 )
             )
+        client.app.state.supabase_http_client.overlap_barrier = None
         assert [response.status_code for response in responses] == [200, 200]
         foreign = client.post(
             "/api/cook/confirm",
@@ -479,7 +490,7 @@ def test_http_two_users_forward_distinct_auth_uid_and_reject_foreign_household(
     assert database.run(f"SELECT count(*) FROM cook_events WHERE household_id={q(household_b)} AND user_id={q(USER)}") == "0"
 
 
-def test_http_replay_after_delete_and_parallel_replay_deduct_once(database, patch_jwks):
+def test_http_replay_after_delete_and_parallel_replay_deduct_once(database, patch_jwks, http_settings):
     key = SigningKey("cook-replay")
     patch_jwks([key])
     household, item, recipe, operation = seed(database, 2)
@@ -491,13 +502,14 @@ def test_http_replay_after_delete_and_parallel_replay_deduct_once(database, patc
         first = client.post("/api/cook/confirm", headers=headers, json=body)
         assert first.status_code == 200
         database.run(f"DELETE FROM inventory_items WHERE id={q(item)}")
+        client.app.state.supabase_http_client.overlap_barrier = Barrier(2)
         with ThreadPoolExecutor(max_workers=2) as pool:
             responses = list(pool.map(lambda _: client.post("/api/cook/confirm", headers=headers, json=body), range(2)))
     assert all(response.status_code == 200 for response in responses)
     assert database.run(f"SELECT count(*) FROM cook_events WHERE operation_id={q(operation)}") == "1"
 
 
-def test_http_parallel_initial_same_operation_deducts_once(database, patch_jwks):
+def test_http_parallel_initial_same_operation_deducts_once(database, patch_jwks, http_settings):
     key = SigningKey("cook-http-concurrent")
     patch_jwks([key])
     household, item, recipe, operation = seed(database, 3)
@@ -505,7 +517,7 @@ def test_http_parallel_initial_same_operation_deducts_once(database, patch_jwks)
     headers = {"Authorization": f"Bearer {key.sign(sub=USER)}"}
     body = _http_body(household, item, recipe, operation, amount=2)
     with TestClient(app) as client:
-        client.app.state.supabase_http_client = RpcHttpClient(database)
+        client.app.state.supabase_http_client = RpcHttpClient(database, Barrier(2))
         with ThreadPoolExecutor(max_workers=2) as pool:
             responses = list(pool.map(lambda _: client.post("/api/cook/confirm", headers=headers, json=body), range(2)))
     assert all(response.status_code == 200 for response in responses)
@@ -513,7 +525,7 @@ def test_http_parallel_initial_same_operation_deducts_once(database, patch_jwks)
     assert database.run(f"SELECT count(*) FROM cook_events WHERE operation_id={q(operation)}") == "1"
 
 
-def test_http_same_title_recipes_keep_distinct_uuid_identity(database, patch_jwks):
+def test_http_same_title_recipes_keep_distinct_uuid_identity(database, patch_jwks, http_settings):
     key = SigningKey("cook-identity")
     patch_jwks([key])
     household, item_a, recipe_a, operation_a = seed(database, 2)
