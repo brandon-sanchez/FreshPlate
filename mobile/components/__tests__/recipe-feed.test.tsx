@@ -93,6 +93,21 @@ describe("RecipeFeed", () => {
     jest.restoreAllMocks();
   });
 
+  it("keeps bookmarking and touch release separate from opening a preview", () => {
+    mockReducedMotion.mockReturnValue(true);
+    const onToggleSave = jest.fn();
+    const screen = render(
+      <RecipeFeed {...defaultProps} recipes={[baseRecipe]} onToggleSave={onToggleSave} />,
+    );
+    fireEvent.press(screen.getByTestId("recipe-card-save-recipe-1"));
+    expect(onToggleSave).toHaveBeenCalledWith(baseRecipe, false);
+    expect(screen.queryByLabelText("View full recipe")).toBeNull();
+    fireEvent(screen.getByTestId("recipe-card-preview-recipe-1"), "touchEnd");
+    expect(screen.queryByLabelText("View full recipe")).toBeNull();
+    fireEvent.press(screen.getByTestId("recipe-card-preview-recipe-1"));
+    expect(screen.getByLabelText("View full recipe")).toBeTruthy();
+  });
+
   it("does not count offscreen cards as consumed when the list nears its end", () => {
     const onNearEnd = jest.fn();
     const { getByTestId } = render(
