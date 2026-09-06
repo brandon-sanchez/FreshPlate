@@ -18,6 +18,7 @@ ENDPOINT = "https://api.openai.com/v1/images/generations"
 MAX_PROMPT_BYTES = 8000
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 MAX_ENVELOPE_BYTES = 14 * 1024 * 1024
+MAX_IMAGE_DIMENSION = 4096
 MODEL = "gpt-image-2"
 
 
@@ -56,6 +57,7 @@ class OpenAIImageProvider:
             raise ValueError("Image kind must be recipe or ingredient")
         client = self._client or httpx.AsyncClient(follow_redirects=False)
         close_client = self._client is None
+        response: httpx.Response | None = None
         try:
             request = client.build_request(
                 "POST",
@@ -101,8 +103,12 @@ class OpenAIImageProvider:
             if len(image) > MAX_RESPONSE_BYTES:
                 raise ProviderError("Image provider returned an invalid PNG")
             try:
-                with Image.open(BytesIO(image)) as decoded:
+                with Image.open(BytesIO(image), formats=("PNG",)) as decoded:
+                    if max(decoded.size) > MAX_IMAGE_DIMENSION:
+                        raise ProviderError("Image provider returned an oversized PNG")
                     decoded.verify()
+                with Image.open(BytesIO(image), formats=("PNG",)) as decoded:
+                    decoded.load()
             except (UnidentifiedImageError, OSError) as exc:
                 raise ProviderError(
                     "Image provider returned an invalid PNG", cause=exc
@@ -113,7 +119,7 @@ class OpenAIImageProvider:
         except (httpx.HTTPError, ValueError, TypeError) as exc:
             raise ProviderError("Image provider unavailable", cause=exc) from exc
         finally:
-            if "response" in locals():
+            if response is not None:
                 await response.aclose()
             if close_client:
                 await client.aclose()

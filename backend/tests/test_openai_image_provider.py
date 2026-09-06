@@ -196,6 +196,21 @@ async def test_non_decodable_images_are_rejected(image) -> None:
 
 
 @pytest.mark.asyncio
+async def test_valid_jpeg_is_rejected() -> None:
+    output = BytesIO()
+    Image.new("RGB", (1, 1), "red").save(output, format="JPEG")
+
+    async def handler(request):
+        return httpx.Response(200, content=envelope(output.getvalue()))
+
+    async with client_for(handler) as client:
+        with pytest.raises(ProviderError):
+            await OpenAIImageProvider(
+                "key", enabled=True, monthly_cap_microusd=1, client=client
+            ).generate("x", kind="recipe")
+
+
+@pytest.mark.asyncio
 async def test_valid_eight_mib_png_is_accepted() -> None:
     output = BytesIO()
     Image.new("RGB", (1, 1), "red").save(output, format="PNG")
