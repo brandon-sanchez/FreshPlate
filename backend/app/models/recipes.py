@@ -117,3 +117,25 @@ class RecipeFeedResponse(BaseModel):
     """Envelope used by the cursor-backed recipe feed endpoints."""
 
     data: RecipeFeedData
+
+
+class CookDeduction(BaseModel):
+    inventory_item_id: UUID
+    confirmed_amount: float = Field(gt=0)
+
+
+class CookConfirmationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    household_id: UUID
+    operation_id: UUID
+    recipe_id: UUID
+    recipe_snapshot: dict[str, Any]
+    deductions: list[CookDeduction]
+
+    @field_validator("recipe_snapshot")
+    @classmethod
+    def snapshot_matches(cls, value: dict[str, Any], info):
+        recipe_id = info.data.get("recipe_id")
+        if value.get("recipe_id") != str(recipe_id):
+            raise ValueError("Recipe snapshot identity does not match recipe_id")
+        return value

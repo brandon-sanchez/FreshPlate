@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 
 from app.ai.prompts.loader import load_prompt
 from app.api.barcode import router as barcode_router
+from app.api.cook import router as cook_router
 from app.api.health import router as health_router
 from app.api.me import router as me_router
 from app.api.recipes import router as recipes_router
@@ -35,6 +36,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(me_router)
     app.include_router(barcode_router)
+    app.include_router(cook_router)
     app.include_router(recipes_router)
 
     return app
