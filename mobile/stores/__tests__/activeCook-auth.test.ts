@@ -47,8 +47,19 @@ it("does not rehydrate on a token refresh for the same scope", async () => {
   expect(storage.getItem).not.toHaveBeenCalled(); stop();
 });
 
-it("unsubscribes and clears memory on cleanup", () => {
+it("unsubscribes and clears memory on cleanup", async () => {
   const stop = bindActiveCookAuthLifecycle(); useAuthStore.setState({ user, householdId: "h1" }); stop();
-  useAuthStore.setState({ user: null, householdId: null });
+  storage.getItem.mockClear();
+  useAuthStore.setState({ user, householdId: "h2" });
+  await new Promise(setImmediate);
+  expect(storage.getItem).not.toHaveBeenCalled();
   expect(useActiveCookStore.getState().activeCook).toBeNull();
+});
+
+it("reconciles an initially signed-out auth state before allowing starts", async () => {
+  useActiveCookStore.setState({ activeCook: { userId: "old", householdId: "h1", operationId: "11111111-1111-4111-8111-111111111111", recipe }, hydrated: true });
+  const stop = bindActiveCookAuthLifecycle();
+  expect(useActiveCookStore.getState().activeCook).toBeNull();
+  await expect(useActiveCookStore.getState().start("old", "h1", recipe)).rejects.toThrow("Cooking account changed");
+  stop();
 });

@@ -251,11 +251,13 @@ export function bindActiveCookAuthLifecycle(
   authStore = useAuthStore,
 ): () => void {
   let scope: string | null = null;
+  let initialized = false;
   const sync = (state: AuthScopeState) => {
     const next = state.user?.id && state.householdId
       ? `${state.user.id}:${state.householdId}`
       : null;
-    if (next === scope) return;
+    if (initialized && next === scope) return;
+    initialized = true;
     scope = next;
     if (!next) {
       useActiveCookStore.getState().leaveScope();
