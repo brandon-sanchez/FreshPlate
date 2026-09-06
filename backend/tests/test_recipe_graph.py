@@ -291,6 +291,50 @@ def test_check_quality_rejects_duplicate_inventory_overuse() -> None:
     assert "in total" in result["quality_feedback"]
 
 
+def test_check_quality_rejects_null_inventory_id() -> None:
+    recipe = Recipe.model_validate(
+        _recipe(
+            _ingredient("Tomatoes", inventory_item_id=None, use_amount=1, unit="item")
+        )
+    )
+    result = check_quality(
+        {"usable_items": [_usable_item()], "generated_recipes": [recipe]}
+    )
+    assert result["valid_recipes"] == []
+    assert "not mapped to inventory" in result["quality_feedback"]
+
+
+def test_check_quality_rejects_name_spoofing() -> None:
+    recipe = Recipe.model_validate(
+        _recipe(
+            _ingredient(
+                "Shrimp", inventory_item_id="tomatoes", use_amount=1, unit="item"
+            )
+        )
+    )
+    result = check_quality(
+        {"usable_items": [_usable_item()], "generated_recipes": [recipe]}
+    )
+    assert result["valid_recipes"] == []
+    assert "does not match inventory item name" in result["quality_feedback"]
+
+
+def test_prompt_describes_empty_result_for_unsupported_meals() -> None:
+    provider = RecordingProvider([{"recipes": []}])
+    import asyncio
+
+    asyncio.run(
+        generate_recipes(
+            {"usable_items": [_usable_item()], "batch_ceiling": 1},
+            provider,
+            prompt=load_prompt("generate_recipes"),
+        )
+    )
+    prompt = provider.calls[0]["system_instruction"]
+    assert "return an empty recipes list" in prompt
+    assert "fixed protein, starch, or calorie pattern" in prompt
+
+
 @pytest.mark.asyncio
 async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() -> None:
     bad_response = {
@@ -376,6 +420,7 @@ async def test_graph_fail_softs_after_one_quality_retry() -> None:
     }
     provider = RecordingProvider([invalid_response, invalid_response])
     graph = build_recipe_graph(provider, RecordingRetriever())
+    deadline = PipelineDeadline(25.0)
 
     result = await graph.ainvoke(
         {
@@ -391,12 +436,57 @@ async def test_graph_fail_softs_after_one_quality_retry() -> None:
             "preferences": {},
             "exclude_titles": [],
             "batch_ceiling": 1,
+            "deadline": deadline,
         }
     )
 
     assert result["valid_recipes"] == []
     assert result["retry_count"] == 1
     assert len(provider.calls) == 2
+    assert all(call["deadline"] is deadline for call in provider.calls)
+
+
+def test_semantic_eval_cases_keep_quantity_checks_separate_from_meal_quality() -> None:
+    """Keep semantic labels separate from deterministic quantity checks."""
+    token_case = _recipe(
+        _ingredient(
+            "Baby Spinach", inventory_item_id="spinach", use_amount=100, unit="g"
+        ),
+        _ingredient("Garlic", inventory_item_id="garlic", use_amount=2, unit="clove"),
+        title="Spinach and Garlic",
+    )
+    substantial_case = _recipe(
+        _ingredient(
+            "Chickpeas", inventory_item_id="chickpeas", use_amount=2, unit="can"
+        ),
+        _ingredient(
+            "Tomatoes", inventory_item_id="tomatoes", use_amount=3, unit="item"
+        ),
+        title="Tomato Chickpea Stew",
+    )
+    inventory = [
+        _usable_item("spinach", name="Baby Spinach", quantity=100, unit="g"),
+        _usable_item("garlic", name="Garlic", quantity=2, unit="clove"),
+        _usable_item("chickpeas", name="Chickpeas", quantity=2, unit="can"),
+        _usable_item("tomatoes", quantity=3),
+    ]
+    token_result = check_quality(
+        {"usable_items": inventory, "generated_recipes": [token_case]}
+    )
+    substantial_result = check_quality(
+        {"usable_items": inventory, "generated_recipes": [substantial_case]}
+    )
+    semantic_labels = {
+        token_case["title"]: "reject_token_meal",
+        substantial_case["title"]: "accept_substantial_meal",
+    }
+    assert semantic_labels[token_case["title"]] == "reject_token_meal"
+    assert [recipe.title for recipe in token_result["valid_recipes"]] == [
+        token_case["title"]
+    ]
+    assert [recipe.title for recipe in substantial_result["valid_recipes"]] == [
+        substantial_case["title"]
+    ]
 
 
 @pytest.mark.asyncio

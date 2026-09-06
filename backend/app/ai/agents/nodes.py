@@ -445,6 +445,11 @@ def _quality_issues(
             )
             continue
         grounded = True
+        if normalize_query_term(ingredient.name) != normalize_query_term(item["name"]):
+            issues.append(
+                f"ingredient '{ingredient.name}' does not match inventory item "
+                f"name '{item['name']}'"
+            )
         if ingredient.unit.casefold() != item["unit"].casefold():
             issues.append(
                 f"ingredient '{ingredient.name}' uses unit '{ingredient.unit}', "
