@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@/hooks/useTheme";
 import { useInventoryItems } from "@/hooks/useInventoryItems";
 import { useRecipeFeed } from "@/hooks/useRecipeFeed";
+import { useSavedRecipes } from "@/hooks/useSavedRecipes";
 import {
   buildRecipeFeedSessionRequest,
   countAnsweredPreferences,
@@ -40,10 +41,29 @@ export default function RecipesScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const inventory = useInventoryItems();
   const feed = useRecipeFeed();
+  const saved = useSavedRecipes();
+  const [tab, setTab] = useState<"for-you" | "saved">("for-you");
   const [preferences, setPreferences] = useState<RecipePreferences>({});
   const [flowOpen, setFlowOpen] = useState(false);
 
   const items = inventory.data ?? [];
+
+  if (tab === "saved") {
+    return (
+      <View style={[styles.stateContainer, { backgroundColor: colors.bg, paddingTop: insets.top, paddingBottom: tabBarHeight }]}>
+        <RecipeScreenHeader subtitle="Your household cookbook" />
+        <View style={styles.tabs}>
+          <RecipePressable onPress={() => setTab("for-you")} style={styles.tab}><Text style={[styles.tabText, { color: colors.textMuted, fontFamily: fonts.bodyStrong }]}>For you</Text></RecipePressable>
+          <RecipePressable onPress={() => setTab("saved")} style={[styles.tab, { borderBottomColor: colors.accent, borderBottomWidth: 2 }]}><Text style={[styles.tabText, { color: colors.accent, fontFamily: fonts.bodyStrong }]}>Saved</Text></RecipePressable>
+        </View>
+        {saved.isPending ? <LoadingState label="Loading your cookbook..." /> : saved.isError ? <ErrorState onRetry={() => saved.refetch()} /> : saved.data?.length ? (
+          <ScrollView contentContainerStyle={{ padding: 24, gap: 12 }} showsVerticalScrollIndicator={false}>
+            {saved.data.map((entry) => <SavedRecipeRow key={entry.recipe_id} recipe={entry.recipe} onRemove={() => saved.toggle({ recipe: entry.recipe, saved: true })} />)}
+          </ScrollView>
+        ) : <EmptyState icon={<View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: colors.accentSoft, alignItems: "center", justifyContent: "center" }}><Feather name="bookmark" size={24} color={colors.accent} /></View>} title="Nothing saved yet" message="Tap the bookmark on any recipe to keep it in your household cookbook" />}
+      </View>
+    );
+  }
 
   const generate = useCallback(
     (nextPreferences: RecipePreferences) => {
@@ -197,6 +217,8 @@ export default function RecipesScreen() {
         onRetryMore={feed.retryPrefetch}
         onAddItems={() => router.push("/(tabs)/inventory")}
         onEditAnswers={() => setFlowOpen(true)}
+        savedIds={saved.savedIds}
+        onToggleSave={(recipe, isSaved) => saved.toggle({ recipe, saved: isSaved })}
       />
     );
   }
@@ -216,6 +238,10 @@ export default function RecipesScreen() {
         keyboardDismissMode="interactive"
       >
         <RecipeScreenHeader subtitle="AI picks from your kitchen" />
+        <View style={styles.tabs}>
+          <RecipePressable onPress={() => setTab("for-you")} style={[styles.tab, { borderBottomColor: colors.accent, borderBottomWidth: 2 }]}><Text style={[styles.tabText, { color: colors.accent, fontFamily: fonts.bodyStrong }]}>For you</Text></RecipePressable>
+          <RecipePressable onPress={() => setTab("saved")} style={styles.tab}><Text style={[styles.tabText, { color: colors.textMuted, fontFamily: fonts.bodyStrong }]}>Saved</Text></RecipePressable>
+        </View>
 
         <View style={[styles.promptCard, { borderColor: colors.border }]}>
           <View style={styles.kitchenLabel}>
@@ -348,4 +374,16 @@ const styles = StyleSheet.create({
   secondaryActionText: {
     fontSize: 14,
   },
+  tabs: { flexDirection: "row", marginHorizontal: 24, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#E2DED4", marginBottom: 18 },
+  tab: { flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center" },
+  tabText: { fontSize: 13 },
 });
+
+function SavedRecipeRow({ recipe, onRemove }: { recipe: import("@/types/recipes").RecipeSuggestion; onRemove: () => void }) {
+  const { colors, fonts } = useTheme();
+  return <View style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 18, gap: 8 }}>
+    <View style={{ flexDirection: "row", alignItems: "center" }}><Text style={{ flex: 1, color: colors.text, fontFamily: fonts.display, fontSize: 20 }}>{recipe.title}</Text><RecipePressable onPress={onRemove} accessibilityRole="button" accessibilityLabel={`Remove ${recipe.title} from saved recipes`} style={{ minHeight: 44, minWidth: 44, alignItems: "center", justifyContent: "center" }}><Feather name="bookmark" size={20} color={colors.accent} fill={colors.accent} /></RecipePressable></View>
+    <Text style={{ color: colors.textMuted, fontFamily: fonts.body, fontSize: 13 }}>{recipe.cook_time_minutes} min · {recipe.servings} servings · {recipe.match_percent}% match</Text>
+    <Text style={{ color: colors.accent, fontFamily: fonts.bodyStrong, fontSize: 12 }}>Household cookbook</Text>
+  </View>;
+}
