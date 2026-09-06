@@ -12,7 +12,7 @@ from typing import Any, Literal, Protocol
 from pydantic import ValidationError
 
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING, MAX_BATCH_CEILING
-from app.ai.agents.models import Recipe, RecipeGenerationResponse, RecipeIngredient
+from app.ai.agents.models import Recipe, RecipeGenerationResponse
 from app.ai.agents.state import (
     GenerationResult,
     InventoryAnalysis,
@@ -167,7 +167,7 @@ async def generate_recipes(
     prompt: PromptTemplate | None = None,
     deadline: PipelineDeadline | None = None,
 ) -> GenerationResult:
-    """Generate grounded recipes and enforce the inventory amount contract."""
+    """Generate recipes while preserving provider amounts for validation."""
     template = prompt or load_prompt("generate_recipes")
     batch_ceiling = _batch_ceiling(state)
     usable_items = _usable_items(state.get("usable_items", []))
@@ -179,14 +179,6 @@ async def generate_recipes(
         deadline=active_deadline,
     )
     validated_response = RecipeGenerationResponse.model_validate(response)
-    inventory_by_id = {item["id"]: item for item in usable_items}
-    recipes = [
-        _cap_recipe_amounts(
-            _untrack_unit_mismatches(recipe, inventory_by_id),
-            inventory_by_id,
-        )
-        for recipe in validated_response.recipes
-    ]
     retry_count = _retry_count(state)
     if state.get("quality_feedback"):
         # The router bounds retries against the caller's configured limit,
@@ -194,7 +186,7 @@ async def generate_recipes(
         # limit above the default retry forever.
         retry_count = retry_count + 1
     return {
-        "generated_recipes": recipes[:batch_ceiling],
+        "generated_recipes": validated_response.recipes[:batch_ceiling],
         "retry_count": retry_count,
     }
 
@@ -364,17 +356,15 @@ def _generation_prompt(
             "as templates."
         ),
         (
-            "Respect available amounts softly: scale servings or choose another "
-            "dish instead of assuming more inventory."
+            "Use only the listed inventory, in the listed units and amounts. "
+            "Never add untracked staples, shopping-list ingredients, or hidden "
+            "garnishes."
         ),
         (
             "For tracked ingredients, use the supplied inventory_item_id and "
             "express use_amount in that item's own unit."
         ),
-        (
-            "Untracked staples may use a null inventory_item_id. Return only the "
-            "structured response requested by the caller."
-        ),
+        "Every ingredient must map to one listed inventory_item_id.",
         (
             "Use the full batch ceiling when distinct grounded recipes are "
             "possible. Return fewer only when no additional grounded recipe "
@@ -430,63 +420,13 @@ def _generation_prompt(
     return "\n".join(lines)
 
 
-def _untrack_unit_mismatches(
-    recipe: Recipe,
-    inventory_by_id: Mapping[str, UsableItem],
-) -> Recipe:
-    """Demote unit-mismatched inventory links to untracked staples.
-
-    Barcode-sourced inventory often carries packaging units such as
-    "Container (14 servings)" that no sensible recipe cooks in, so the
-    model legitimately writes kitchen units instead. A mismatched link
-    would make the cook-flow deduction meaningless, but it does not make
-    the recipe wrong - so only the link is dropped. Grounding is then
-    judged on the ingredients whose units match the inventory.
-    """
-    ingredients: list[RecipeIngredient] = []
-    changed = False
-    for ingredient in recipe.ingredients:
-        item_id = ingredient.inventory_item_id
-        item = inventory_by_id.get(item_id) if item_id is not None else None
-        if item is not None and ingredient.unit.casefold() != item["unit"].casefold():
-            ingredients.append(
-                ingredient.model_copy(update={"inventory_item_id": None})
-            )
-            changed = True
-        else:
-            ingredients.append(ingredient)
-    if not changed:
-        return recipe
-    return recipe.model_copy(update={"ingredients": ingredients})
-
-
-def _cap_recipe_amounts(
-    recipe: Recipe,
-    inventory_by_id: Mapping[str, UsableItem],
-) -> Recipe:
-    ingredients: list[RecipeIngredient] = []
-    for ingredient in recipe.ingredients:
-        item_id = ingredient.inventory_item_id
-        item = inventory_by_id.get(item_id) if item_id is not None else None
-        if item is None or ingredient.use_amount is None:
-            ingredients.append(ingredient)
-            continue
-        ingredients.append(
-            ingredient.model_copy(
-                update={
-                    "use_amount": min(ingredient.use_amount, item["quantity"]),
-                }
-            )
-        )
-    return recipe.model_copy(update={"ingredients": ingredients})
-
-
 def _quality_issues(
     recipe: Recipe,
     inventory_by_id: Mapping[str, UsableItem],
 ) -> list[str]:
     issues: list[str] = []
     grounded = False
+    requested_by_id: dict[str, float] = {}
     for ingredient in recipe.ingredients:
         if ingredient.use_amount is None:
             issues.append(f"ingredient '{ingredient.name}' is missing use_amount")
@@ -495,6 +435,7 @@ def _quality_issues(
 
         item_id = ingredient.inventory_item_id
         if item_id is None:
+            issues.append(f"ingredient '{ingredient.name}' is not mapped to inventory")
             continue
         item = inventory_by_id.get(item_id)
         if item is None:
@@ -504,6 +445,11 @@ def _quality_issues(
             )
             continue
         grounded = True
+        if ingredient.unit.casefold() != item["unit"].casefold():
+            issues.append(
+                f"ingredient '{ingredient.name}' uses unit '{ingredient.unit}', "
+                f"but inventory item uses '{item['unit']}'"
+            )
         if (
             ingredient.use_amount is not None
             and math.isfinite(ingredient.use_amount)
@@ -512,6 +458,19 @@ def _quality_issues(
             issues.append(
                 f"ingredient '{ingredient.name}' uses more than the available "
                 f"{item['quantity']}"
+            )
+        if ingredient.use_amount is not None and math.isfinite(
+            ingredient.use_amount
+        ):
+            requested_by_id[item_id] = (
+                requested_by_id.get(item_id, 0) + ingredient.use_amount
+            )
+    for item_id, requested in requested_by_id.items():
+        item = inventory_by_id[item_id]
+        if requested > item["quantity"]:
+            issues.append(
+                f"ingredients mapped to inventory item '{item_id}' use {requested} "
+                f"in total, more than the available {item['quantity']}"
             )
     if not grounded:
         issues.append("recipe has no grounded inventory ingredients")

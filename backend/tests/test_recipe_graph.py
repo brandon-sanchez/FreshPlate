@@ -94,7 +94,8 @@ class RecordingRetriever:
 
 
 @pytest.mark.asyncio
-async def test_generate_recipes_builds_grounded_prompt_and_caps_mapped_amount() -> None:
+async def test_generate_recipes_preserves_provider_amounts_for_quality_validation(
+    ) -> None:
     provider = RecordingProvider(
         [
             {
@@ -136,13 +137,13 @@ async def test_generate_recipes_builds_grounded_prompt_and_caps_mapped_amount() 
     )
 
     ingredient = result["generated_recipes"][0].ingredients[0]
-    assert ingredient.use_amount == 3
+    assert ingredient.use_amount == 8
     assert ingredient.unit == "item"
     assert provider.calls[0]["deadline"] is deadline
     assert provider.calls[0]["system_instruction"] == prompt.system
     assert "3.0 item" in provider.calls[0]["prompt"]
     assert "inspiration" in provider.calls[0]["prompt"].lower()
-    assert "respect" in provider.calls[0]["prompt"].lower()
+    assert "only the listed inventory" in provider.calls[0]["prompt"].lower()
 
 
 def test_check_quality_drops_invalid_mappings_and_returns_feedback() -> None:
@@ -211,13 +212,7 @@ def test_check_quality_rejects_incomplete_staple_amounts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_recipes_untracks_unit_mismatched_inventory_links() -> None:
-    """A packaging-unit mismatch drops the link, never the recipe (#45).
-
-    Barcode-scanned inventory carries units like "Container (14 servings)"
-    that no recipe cooks in. The mismatched ingredient becomes an untracked
-    staple and the recipe stays valid, grounded by unit-consistent items.
-    """
+async def test_generate_recipes_preserves_unit_mismatched_inventory_links() -> None:
     butter_item = _usable_item(
         "butter-spread",
         name="Butter with Olive Oil & Sea Salt Spread",
@@ -262,11 +257,11 @@ async def test_generate_recipes_untracks_unit_mismatched_inventory_links() -> No
     )
 
     generated = result["generated_recipes"][0]
-    tracked, untracked = generated.ingredients
+    tracked, mismatched = generated.ingredients
     assert tracked.inventory_item_id == "tomatoes"
-    assert untracked.inventory_item_id is None
-    assert untracked.unit == "tbsp"
-    assert untracked.use_amount == 1
+    assert mismatched.inventory_item_id == "butter-spread"
+    assert mismatched.unit == "tbsp"
+    assert mismatched.use_amount == 1
 
     quality = check_quality(
         {
@@ -274,10 +269,26 @@ async def test_generate_recipes_untracks_unit_mismatched_inventory_links() -> No
             "generated_recipes": [generated],
         }
     )
-    assert [recipe.title for recipe in quality["valid_recipes"]] == [
-        generated.title
-    ]
-    assert quality["quality_feedback"] is None
+    assert quality["valid_recipes"] == []
+    assert "uses unit 'tbsp'" in quality["quality_feedback"]
+
+
+def test_check_quality_rejects_duplicate_inventory_overuse() -> None:
+    recipe = Recipe.model_validate(
+        _recipe(
+            _ingredient(
+                "Tomatoes", inventory_item_id="tomatoes", use_amount=2, unit="item"
+            ),
+            _ingredient(
+                "More tomatoes", inventory_item_id="tomatoes", use_amount=2, unit="item"
+            ),
+        )
+    )
+    result = check_quality(
+        {"usable_items": [_usable_item()], "generated_recipes": [recipe]}
+    )
+    assert result["valid_recipes"] == []
+    assert "in total" in result["quality_feedback"]
 
 
 @pytest.mark.asyncio
