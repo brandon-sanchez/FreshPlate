@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 from typing import Any
 
 import httpx
@@ -25,17 +26,21 @@ class OpenAIImageProvider:
         api_key: SecretStr | str,
         *,
         enabled: bool = False,
+        monthly_cap_microusd: int = 0,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self._api_key = (
             api_key.get_secret_value() if isinstance(api_key, SecretStr) else api_key
         )
         self._enabled = enabled
+        self._monthly_cap_microusd = monthly_cap_microusd
         self._client = client
 
     async def generate(self, prompt: str, *, kind: str) -> bytes | None:
-        if not self._enabled or not self._api_key:
+        if not self._enabled or not self._api_key or self._monthly_cap_microusd <= 0:
             return None
+        if not prompt.strip():
+            raise ValueError("Image prompt must not be blank")
         encoded = prompt.encode("utf-8")
         if len(encoded) > MAX_PROMPT_BYTES:
             raise ValueError("Image prompt exceeds 8000 UTF-8 bytes")
@@ -49,19 +54,38 @@ class OpenAIImageProvider:
         client = self._client or httpx.AsyncClient(follow_redirects=False)
         close_client = self._client is None
         try:
-            response = await client.post(
+            request = client.build_request(
+                "POST",
                 ENDPOINT,
                 headers={"Authorization": f"Bearer {self._api_key}"},
                 json=payload,
                 timeout=120.0,
             )
-            if response.status_code >= 400:
+            response = await client.send(request, stream=True, follow_redirects=False)
+            if response.status_code < 200 or response.status_code >= 300:
+                    raise ProviderError(
+                        "Image provider unavailable", status_code=response.status_code
+                    )
+            content_length = response.headers.get("content-length", "")
+            if (
+                    content_length.isdigit()
+                    and int(content_length) > MAX_RESPONSE_BYTES
+                ):
+                    raise ProviderError("Image provider response is too large")
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in response.aiter_bytes():
+                total += len(chunk)
+                if total > MAX_RESPONSE_BYTES:
+                    raise ProviderError("Image provider response is too large")
+                chunks.append(chunk)
+            await response.aclose()
+            try:
+                body = json.loads(b"".join(chunks))
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                 raise ProviderError(
-                    "Image provider unavailable", status_code=response.status_code
-                )
-            if len(response.content) > MAX_RESPONSE_BYTES:
-                raise ProviderError("Image provider response is too large")
-            body = response.json()
+                    "Image provider returned invalid JSON", cause=exc
+                ) from exc
             data = body.get("data") if isinstance(body, dict) else None
             if not isinstance(data, list) or len(data) != 1:
                 raise ProviderError("Image provider returned an invalid image")

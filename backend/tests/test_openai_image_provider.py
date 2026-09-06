@@ -8,7 +8,9 @@ from pydantic import SecretStr
 from app.ai.images.openai import ENDPOINT, OpenAIImageProvider
 from app.ai.llm.errors import ProviderError
 
-PNG = b"\x89PNG\r\n\x1a\nfixture"
+PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 def client_for(handler):
@@ -31,7 +33,7 @@ async def test_generate_sends_fixed_recipe_parameters_and_png() -> None:
 
     async with client_for(handler) as client:
         result = await OpenAIImageProvider(
-            SecretStr("key"), enabled=True, client=client
+            SecretStr("key"), enabled=True, monthly_cap_microusd=1, client=client
         ).generate("meal", kind="recipe")
     assert result == PNG
     assert seen["url"] == ENDPOINT
@@ -75,7 +77,9 @@ async def test_oversize_prompt_and_provider_errors_are_single_attempt() -> None:
         return httpx.Response(429, text="secret provider body")
 
     async with client_for(handler) as client:
-        provider = OpenAIImageProvider("key", enabled=True, client=client)
+        provider = OpenAIImageProvider(
+            "key", enabled=True, monthly_cap_microusd=1, client=client
+        )
         with pytest.raises(ValueError):
             await provider.generate("é" * 4001, kind="ingredient")
         with pytest.raises(ProviderError) as error:
