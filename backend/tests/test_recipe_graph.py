@@ -407,7 +407,21 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
             )
         ]
     }
-    provider = RecordingProvider([bad_response, good_response])
+    provider = RecordingProvider(
+        [
+            bad_response,
+            good_response,
+            {
+                "decisions": [
+                    {
+                        "candidate_index": 0,
+                        "verdict": "eligible",
+                        "reason": "substantial",
+                    }
+                ]
+            },
+        ]
+    )
     retriever = RecordingRetriever()
     prompt = load_prompt("generate_recipes")
     deadline = PipelineDeadline(25.0)
@@ -438,10 +452,9 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
         "Second attempt"
     ]
     assert result["retry_count"] == 1
-    assert len(provider.calls) == 2
+    assert len(provider.calls) == 3
     assert "missing" in provider.calls[1]["prompt"]
-    assert provider.calls[0]["deadline"] is deadline
-    assert provider.calls[1]["deadline"] is deadline
+    assert all(call["deadline"] is deadline for call in provider.calls)
     assert retriever.calls[0]["deadline"] is deadline
     assert result["metadata"]["prompt_name"] == "generate_recipes"
     assert result["metadata"]["prompt_version"] == 3

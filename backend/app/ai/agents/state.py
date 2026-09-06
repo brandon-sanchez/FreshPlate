@@ -83,3 +83,5 @@ class RecipeState(TypedDict, total=False):
     errors: list[str]
     metadata: dict[str, Any]
     deadline: PipelineDeadline
+    assessment_prompt_name: str
+    assessment_prompt_version: str | int

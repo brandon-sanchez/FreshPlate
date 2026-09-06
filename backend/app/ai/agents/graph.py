@@ -6,6 +6,7 @@ from typing import Any
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
+from app.ai.agents.meal_quality import assess_meals
 from app.ai.agents.nodes import (
     MAX_QUALITY_RETRIES,
     RecipeProviderPort,
@@ -46,6 +47,9 @@ def build_recipe_graph(
     template = prompt or load_prompt("generate_recipes")
     builder = StateGraph(RecipeState)
 
+    async def initialize_node(state: RecipeState) -> dict[str, Any]:
+        return {"deadline": _deadline_for_state(state)}
+
     async def analyze_node(
         state: RecipeState,
         config: RunnableConfig | None = None,
@@ -74,8 +78,21 @@ def build_recipe_graph(
             deadline=_deadline_for_state(state),
         )
 
-    def quality_node(state: RecipeState) -> QualityResult:
-        return check_quality(state)
+    async def quality_node(state: RecipeState) -> QualityResult:
+        result = check_quality(state)
+        if not result["valid_recipes"]:
+            return result
+        eligible, feedback, assessment_metadata = await assess_meals(
+            result["valid_recipes"],
+            state,
+            provider,
+            deadline=_deadline_for_state(state),
+        )
+        return {
+            "valid_recipes": eligible,
+            "quality_feedback": feedback or result["quality_feedback"],
+            **assessment_metadata,
+        }
 
     def quality_route(state: RecipeState) -> str:
         return route_after_quality(
@@ -86,6 +103,7 @@ def build_recipe_graph(
 
     builder.add_node("analyze_inventory", analyze_node)
     builder.add_node("retrieve_recipes", retrieve_node)
+    builder.add_node("initialize", initialize_node)
     builder.add_node("generate_recipes", generate_node)
     builder.add_node("check_quality", quality_node)
     builder.add_edge(START, "analyze_inventory")
@@ -117,6 +135,9 @@ def build_recipe_generation_graph(
     template = prompt or load_prompt("generate_recipes")
     builder = StateGraph(RecipeState)
 
+    async def initialize_node(state: RecipeState) -> dict[str, Any]:
+        return {"deadline": _deadline_for_state(state)}
+
     async def generate_node(state: RecipeState) -> GenerationResult:
         return await generate_recipes(
             state,
@@ -125,8 +146,21 @@ def build_recipe_generation_graph(
             deadline=_deadline_for_state(state),
         )
 
-    def quality_node(state: RecipeState) -> QualityResult:
-        return check_quality(state)
+    async def quality_node(state: RecipeState) -> QualityResult:
+        result = check_quality(state)
+        if not result["valid_recipes"]:
+            return result
+        eligible, feedback, assessment_metadata = await assess_meals(
+            result["valid_recipes"],
+            state,
+            provider,
+            deadline=_deadline_for_state(state),
+        )
+        return {
+            "valid_recipes": eligible,
+            "quality_feedback": feedback or result["quality_feedback"],
+            **assessment_metadata,
+        }
 
     def quality_route(state: RecipeState) -> str:
         return route_after_quality(
@@ -137,7 +171,8 @@ def build_recipe_generation_graph(
 
     builder.add_node("generate_recipes", generate_node)
     builder.add_node("check_quality", quality_node)
-    builder.add_edge(START, "generate_recipes")
+    builder.add_edge(START, "initialize")
+    builder.add_edge("initialize", "generate_recipes")
     builder.add_edge("generate_recipes", "check_quality")
     builder.add_conditional_edges(
         "check_quality",
