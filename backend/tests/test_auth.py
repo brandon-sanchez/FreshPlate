@@ -39,9 +39,7 @@ def test_malformed_token_returns_401(
     patch_jwks,
 ) -> None:
     patch_jwks([signing_key])
-    response = client.get(
-        "/api/me", headers={"Authorization": "Bearer not-a-real-jwt"}
-    )
+    response = client.get("/api/me", headers={"Authorization": "Bearer not-a-real-jwt"})
     assert response.status_code == 401
     assert response.json()["code"] == "AUTH_INVALID_TOKEN"
 

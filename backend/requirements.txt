@@ -7,6 +7,10 @@ pydantic-settings==2.7.1
 
 # HTTP client (for calling Gemini, Open Food Facts)
 httpx==0.28.1
+google-genai==2.13.0
+PyYAML==6.0.3
+pyarrow==18.1.0
+langgraph==1.2.9
 
 # Supabase auth token verification
 python-jose[cryptography]==3.3.0

@@ -28,9 +28,7 @@ def _b64url_uint(value: int, byte_length: int) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
-def _jwk_from_ec_private(
-    key: ec.EllipticCurvePrivateKey, kid: str
-) -> dict[str, Any]:
+def _jwk_from_ec_private(key: ec.EllipticCurvePrivateKey, kid: str) -> dict[str, Any]:
     """Build the public-half JWK (what JWKS would publish)."""
     public_numbers = key.public_key().public_numbers()
     return {

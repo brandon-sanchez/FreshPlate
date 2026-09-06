@@ -17,6 +17,7 @@ web-build/
 __pycache__/
 *.py[cod]
 *.egg-info/
+backend/FreshPlate/
 .venv/
 venv/
 

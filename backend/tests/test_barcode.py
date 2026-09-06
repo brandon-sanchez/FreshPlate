@@ -82,7 +82,11 @@ def _off_hit_payload() -> dict[str, Any]:
 
 
 def _off_miss_payload() -> dict[str, Any]:
-    return {"status": 0, "code": _UNKNOWN_BARCODE, "status_verbose": "product not found"}
+    return {
+        "status": 0,
+        "code": _UNKNOWN_BARCODE,
+        "status_verbose": "product not found",
+    }
 
 
 def test_happy_path_returns_product(
@@ -138,7 +142,9 @@ def test_missing_auth_returns_401(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Even without patching OFF, no auth means we should never reach the service.
-    counter = _install_fake_off(monkeypatch, response=_FakeResponse(200, _off_hit_payload()))
+    counter = _install_fake_off(
+        monkeypatch, response=_FakeResponse(200, _off_hit_payload())
+    )
 
     response = client.post("/api/barcode/lookup", json={"barcode": _VALID_BARCODE})
 
