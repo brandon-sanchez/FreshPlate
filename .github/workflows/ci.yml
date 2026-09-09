@@ -55,3 +55,58 @@ jobs:
         run: npx tsc --noEmit
       - name: Run Jest
         run: npm test -- --runInBand
+
+  deploy:
+    name: Deploy to Cloud Run
+    needs: [backend, mobile]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: freshplate-production-deploy
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Skip superseded main push
+        id: freshness
+        run: |
+          set -euo pipefail
+          latest_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [ "$latest_sha" != "${GITHUB_SHA}" ]; then
+            echo "This push is superseded by $latest_sha; skipping deployment."
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Authenticate to Google Cloud
+        if: steps.freshness.outputs.current == 'true'
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - name: Set up Google Cloud CLI
+        if: steps.freshness.outputs.current == 'true'
+        uses: google-github-actions/setup-gcloud@v3
+      - name: Deploy the API
+        if: steps.freshness.outputs.current == 'true'
+        uses: google-github-actions/deploy-cloudrun@v3
+        with:
+          service: freshplate-api
+          region: ${{ vars.GCP_REGION }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          source: backend
+          flags: >-
+            --service-account=${{ vars.GCP_CLOUD_RUN_SERVICE_ACCOUNT }}
+            --build-service-account=projects/${{ vars.GCP_PROJECT_ID }}/serviceAccounts/${{ vars.GCP_CLOUD_BUILD_SERVICE_ACCOUNT }}
+            --port=8080
+            --memory=512Mi
+            --min-instances=0
+            --max-instances=2
+            --set-env-vars=LANGCHAIN_TRACING_V2=true,LANGCHAIN_PROJECT=freshplate
+            --set-secrets=GEMINI_API_KEY=gemini-api-key:latest,SUPABASE_URL=supabase-url:latest,SUPABASE_PUBLISHABLE_KEY=supabase-publishable-key:latest,SUPABASE_SECRET_KEY=supabase-secret-key:latest,LANGSMITH_API_KEY=langsmith-api-key:latest
