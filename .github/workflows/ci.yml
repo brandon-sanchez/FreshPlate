@@ -2,7 +2,15 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+# A new push to a PR cancels that PR's older, now-outdated run. Pushes to main
+# get a unique group (the run id) so a main run is never cancelled: deploy
+# waits on it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -51,7 +59,27 @@ jobs:
           cache-dependency-path: mobile/package-lock.json
       - name: Install dependencies
         run: npm ci
+      - name: Run ESLint
+        run: npm run lint
       - name: Run TypeScript
         run: npx tsc --noEmit
       - name: Run Jest
         run: npm test -- --runInBand
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build the backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
