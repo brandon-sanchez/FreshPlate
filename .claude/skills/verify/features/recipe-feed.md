@@ -25,12 +25,12 @@ The Recipes tab generates recipe ideas grounded in what's in the household's kit
 Preconditions:
 
 - Baseline preconditions from the index, with at least 5 inventory items so meals are possible.
-- `api.log` exists in the run directory (launch started the API), so the requests can be quoted.
+- Know where the API log is, so the requests can be quoted. If `launch.sh` started the API, it's `api.log` in the run directory. If it reused one an earlier verify run started, `launch.sh` printed that run's log path. If it reused Brandon's server, the log is in his terminal: ask him for the lines, or cleanup and launch again so this run owns the API.
 - One generation per run. Each one costs Gemini calls.
 
 - **Open.** Tap the Recipes tab. "Let's find something to cook" with "Generate from my fridge" and "Ask me questions first" shows. `shot.sh feed-start`.
 - **Generate.** Tap "Generate from my fridge". The loader ("Generating recipes") shows, then the first card. Usually 8–15 s, and the budget is 30 s. `shot.sh feed-loading`, then `shot.sh feed-first-card`.
-- **API proof.** `grep -E 'POST /api/recipes/sessions' "$(readlink .verify/current)/api.log"` shows `POST /api/recipes/sessions` (and `/sessions/<id>/pages` on refill) with `200`.
+- **API proof.** `grep -E 'POST /api/recipes/sessions' <api log>` (the log found in the preconditions) shows `POST /api/recipes/sessions` (and `/sessions/<id>/pages` on refill) with `200`.
 - **Grounding.** Every ingredient on the card's preview is in the inventory (compare with `db.py inventory_items "household_id=eq.<id>&select=name"`). Pantry staples are the only exception.
 - **Carousel.** Swipe up on the card (start mid-screen) or tap "Next recipe". The next card centers. `shot.sh feed-next`.
 - **Preview and detail.** Tap the card ("Open <title>"), then "View full recipe". Steps render with timing and doneness cues. `shot.sh feed-detail`. Close with "Close recipe details".

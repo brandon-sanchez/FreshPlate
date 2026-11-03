@@ -26,7 +26,7 @@ Points measured on 2026-10-28 are in brackets. Re-measure if a screenshot shows 
 - **Open form.** Tap the Add item tab [220, 872]. "Add Item" shows with the Manual segment selected and "Add to inventory" disabled. `shot.sh add-open`.
 - **Fill.** Tap the "What are you adding?" field [220, 221] and type `verify-add-<id>`. Tap a category chip, e.g. "Produce" [55, 300]. Quantity defaults to 1 and unit to "item". Storage defaults to Fridge. "Expires in" shows a day count and the USDA hint. `shot.sh add-filled`.
 - **Save.** Tap "Add to inventory" [220, 736]. The app switches to Inventory, the header count goes up by one, and an "Added <name>" toast with "Tap to view in your inventory." shows. `shot.sh add-saved`.
-- **Stored row.** `db.py inventory_items "household_id=eq.<id>&name=ilike.verify-add*&select=id,name,quantity,unit,storage_location,expiration_date"` returns one row matching the form. Save it into the run directory.
+- **Stored row.** `db.py inventory_items "household_id=eq.<id>&name=ilike.verify-add-<id>&select=id,name,quantity,unit,storage_location,expiration_date"` returns one row matching the form. Match the full name, so a leftover item from an earlier failed run can't be mistaken for this one. Save it into the run directory.
 - **Second view.** Home's "In fridge" count shows the new total.
 - **Merge.** Add the same name, unit and storage again. The toast says "Added to your existing item.", and `db.py` still returns one row with the summed quantity.
 - **Clean up.** Remove the item as in [Inventory](./inventory.md). `db.py` returns `[]`.

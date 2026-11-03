@@ -71,6 +71,10 @@ sb_url=$(sed -n 's/^EXPO_PUBLIC_SUPABASE_URL=//p' "$REPO_ROOT/mobile/.env" 2>/de
 sb_code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$sb_url/auth/v1/health")
 if [ "$sb_code" = 000 ]; then
   bad "Supabase $sb_url unreachable; the project is probably paused (supabase projects list -o json shows INACTIVE). Brandon restores it from the dashboard."
+elif [ "$sb_code" -ge 500 ]; then
+  # 4xx is expected here because the request sends no apikey; 5xx means the
+  # project answered but its Auth service is unhealthy.
+  bad "Supabase $sb_url answered HTTP $sb_code; its Auth service is unhealthy"
 else
   ok "Supabase reachable (HTTP $sb_code)"
 fi
@@ -103,6 +107,15 @@ EOF
   else
     bad "signed out; Brandon must sign in with Google or Apple on the simulator"
   fi
+fi
+
+holder=$(lock_holder)
+if [ -z "$holder" ]; then
+  warn "verify lock is free (run launch.sh to take it)"
+elif [ "$holder" = "$REPO_ROOT" ]; then
+  ok "verify lock held by this checkout"
+else
+  bad "verify lock held by $holder; another session is driving the app"
 fi
 
 run=$(readlink "$CURRENT_RUN" 2>/dev/null) && ok "evidence dir $run" || warn "no active run dir"

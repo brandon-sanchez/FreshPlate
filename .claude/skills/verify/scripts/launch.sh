@@ -7,6 +7,8 @@
 set -euo pipefail
 source "$(dirname "$0")/env.sh"
 
+acquire_lock || exit 3
+
 name="${1:-run}"
 run="$RUNS_DIR/$(date +%Y%m%d-%H%M%S)-$name"
 mkdir -p "$run" "$STATE_DIR"

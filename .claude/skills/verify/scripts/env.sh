@@ -35,3 +35,43 @@ port_pid() {
 pid_cwd() {
   { lsof -a -p "$1" -d cwd -Fn 2>/dev/null || true; } | sed -n 's/^n//p'
 }
+
+# Every checkout and worktree shares one simulator, one Supabase household and
+# fixed ports, so only one verification run may drive the app at a time. The
+# lock lives in the git common directory, which all worktrees of the repo see.
+LOCK_DIR="$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir)/verify.lock"
+STALE_LOCK_SECONDS=300
+
+lock_holder() {
+  sed -n 1p "$LOCK_DIR/owner" 2>/dev/null
+}
+
+acquire_lock() {
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    printf '%s\n%s\n' "$REPO_ROOT" "$(date '+%F %T')" > "$LOCK_DIR/owner"
+    return 0
+  fi
+  local holder since age
+  holder=$(lock_holder)
+  since=$(sed -n 2p "$LOCK_DIR/owner" 2>/dev/null)
+  [ "$holder" = "$REPO_ROOT" ] && return 0
+  # A holder that crashed before cleanup leaves the lock behind. Treat it as
+  # stale only once it is old enough that its launch must have finished and
+  # nothing is serving the app anymore.
+  age=$(( $(date +%s) - $(stat -f %m "$LOCK_DIR/owner" 2>/dev/null || date +%s) ))
+  if [ "$age" -gt "$STALE_LOCK_SECONDS" ] && [ -z "$(port_pid "$API_PORT")" ] && [ -z "$(port_pid "$METRO_PORT")" ]; then
+    echo "verify lock: taking over a stale lock from $holder (held since $since; nothing is serving the app)" >&2
+    printf '%s\n%s\n' "$REPO_ROOT" "$(date '+%F %T')" > "$LOCK_DIR/owner"
+    return 0
+  fi
+  echo "verify lock: the simulator is in use by $holder (since $since)." >&2
+  echo "Wait and run launch.sh again in a few minutes. Never stop its servers or delete its lock." >&2
+  return 1
+}
+
+release_lock() {
+  if [ "$(lock_holder)" = "$REPO_ROOT" ]; then
+    rm -rf "$LOCK_DIR"
+    echo "verify lock: released"
+  fi
+}

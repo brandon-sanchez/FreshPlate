@@ -29,7 +29,7 @@ Preconditions:
 - **Search.** Tap "Search your fridge", type `verify-inv`. Only the test item remains. `shot.sh inventory-search`.
 - **Filter.** Clear the search, open the filter control, choose "Expiring this week". Only items expiring within 7 days remain. `shot.sh inventory-filter`.
 - **Open detail.** Tap the test item's row, scrolled above the tab bar first. To reach it without testing navigation, `route.sh item/<id>` with the id from `db.py`. The screen has a "< Inventory" back button, the name, a quantity stepper (− / +), unit, an "Expires in" slider, storage segments, notes, and "Remove" and "Save" buttons at the bottom. `shot.sh item-detail`.
-- **Edit.** Tap + on the quantity, then "Save". Back in the list the row shows the new quantity. Prove it with `db.py inventory_items "household_id=eq.<id>&name=ilike.verify-inv*&select=name,quantity,unit,expiration_date"`.
+- **Edit.** Tap + on the quantity, then "Save". Back in the list the row shows the new quantity. Prove it with `db.py inventory_items "household_id=eq.<id>&name=ilike.verify-inv-<id>&select=name,quantity,unit,expiration_date"`.
 - **Delete.** Tap "Remove" [116, 902]. A "Remove item?" dialog says "<name> will be removed from your fridge." Tap its "Remove" [294, 538]. The app returns to Inventory with a "Removed" toast, the header count drops by one, and the same `db.py` query returns `[]`. `shot.sh removed`.
 
 ## Gotchas

@@ -20,10 +20,10 @@ Saved recipes is the household's shared cookbook. Any member can save a recipe c
 Preconditions:
 
 - A feed with at least one card from [Recipe feed](./recipe-feed.md) in this run. Don't generate a new one just for this.
-- Note how many saved recipes exist first: `db.py saved_recipes "household_id=eq.<id>&select=recipe_id,title"`.
+- Note what's saved first: `db.py saved_recipes "household_id=eq.<id>&select=recipe_id,title:recipe->>title"`. There's no `title` column: each row stores the whole recipe as a `recipe` JSON snapshot, and `recipe->>title` reads the title out of it.
 
 - **Save.** On a feed card, tap the bookmark. Its label flips to "Saved". `shot.sh saved-toggle`.
-- **Stored row.** The `db.py saved_recipes` query now has the card's title.
+- **Stored row.** The same `db.py saved_recipes` query now includes the card's title.
 - **List.** Tap the "Saved" segment. The recipe is listed. `shot.sh saved-list`.
 - **Open.** Tap the saved recipe. Its preview opens with the same ingredients. `shot.sh saved-open`.
 - **Remove.** Tap the filled bookmark on the saved row. The row disappears, or "Nothing saved yet" shows, and `db.py` no longer returns it. `shot.sh saved-removed`.

@@ -11,7 +11,8 @@ All helpers live in `.claude/skills/verify/scripts/` and run from the repo root.
 
 ## Ground rules
 
-- **One shared instance.** There is one signed-in simulator, one Supabase project and one household. Two agents can't drive it at once. If `doctor.sh` shows servers you didn't start, they belong to Brandon or another session: reuse them, never kill them.
+- **One run at a time, across every session and worktree.** There is one signed-in simulator, one Supabase project and one household. `launch.sh` takes a lock in the shared git directory and exits with code 3 if another checkout holds it, naming the holder and when it started. When that happens, keep coding, then retry `launch.sh` every few minutes. Never stop another checkout's servers or delete its lock. `cleanup.sh` releases the lock, so always run it when your proof is done, including after a failed attempt. A lock left behind by a crashed run is taken over automatically after 5 minutes if nothing is serving the app.
+- **Servers you didn't start.** If `doctor.sh` shows servers you didn't start from this checkout, they belong to Brandon: reuse them, never kill them.
 - **Real data.** Supabase is the hosted project, not a local copy. Every add, delete, save and cook changes Brandon's real household. Name test items `verify-<something>` and remove them at the end of the run.
 - **No sign-in by agents.** Sign-in is Google or Apple only. If the app shows the login screen, stop and ask Brandon to sign in on the simulator. Never type credentials.
 - **AI calls cost money.** Recipe generation calls Gemini (paid tier) and recipe photos call a paid image API. Generate only when the feature under test needs it, and once per run, not in a loop.
