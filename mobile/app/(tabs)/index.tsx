@@ -1,3 +1,4 @@
+import ActiveCookBanner from "@/components/active-cook-banner";
 import { useMemo, useState } from "react";
 import {
   Pressable,
@@ -156,6 +157,8 @@ export default function HomeScreen() {
           <FontAwesome name="bell" size={15} color={colors.textMuted} />
         </Pressable>
       </View>
+
+      <ActiveCookBanner style={{ marginHorizontal: 16, marginTop: 18 }} />
 
       <View style={{ paddingHorizontal: 16, paddingTop: 18 }}>
         <View
