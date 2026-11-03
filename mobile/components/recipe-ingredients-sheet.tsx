@@ -1,6 +1,7 @@
 import { Modal, PanResponder, ScrollView, Text, View } from "react-native";
 import { useRef } from "react";
 import Feather from "@expo/vector-icons/Feather";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RecipePressable } from "@/components/recipe-motion";
@@ -13,10 +14,12 @@ export default function RecipeIngredientsSheet({
   recipe,
   onClose,
   onOpenDetail,
+  onCook,
 }: {
   recipe: RecipeSuggestion | null;
   onClose: () => void;
   onOpenDetail?: (recipe: RecipeSuggestion) => void;
+  onCook: (recipe: RecipeSuggestion) => void;
 }) {
   const { colors, fonts } = useTheme();
   const insets = useSafeAreaInsets();
@@ -75,7 +78,16 @@ export default function RecipeIngredientsSheet({
           <View
             {...panResponder.panHandlers}
             testID="recipe-preview-drag-handle"
-            accessibilityLabel="Drag up to expand recipe"
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel="View full recipe"
+            accessibilityHint="Drag up to expand the recipe"
+            accessibilityActions={[{ name: "activate" }]}
+            onAccessibilityAction={() => {
+              if (!recipe) return;
+              onClose();
+              onOpenDetail?.(recipe);
+            }}
             style={{
               alignSelf: "center",
               width: 44,
@@ -216,28 +228,30 @@ export default function RecipeIngredientsSheet({
           </ScrollView>
           {recipe && (
             <RecipePressable
-              onPress={() => {
-                onClose();
-                onOpenDetail?.(recipe);
-              }}
+              onPress={() => onCook(recipe)}
               accessibilityRole="button"
-              accessibilityLabel="View full recipe"
+              accessibilityLabel={`Cook ${recipe.title}`}
+              testID="recipe-preview-cook"
               style={{
                 margin: 20,
-                minHeight: 48,
-                borderRadius: 14,
+                minHeight: 52,
+                borderRadius: 16,
                 backgroundColor: colors.accent,
+                flexDirection: "row",
+                gap: 10,
                 alignItems: "center",
                 justifyContent: "center",
               }}
             >
+              <Ionicons name="flame" size={18} color={colors.accentInk} />
               <Text
                 style={{
                   color: colors.accentInk,
                   fontFamily: fonts.bodyStrong,
+                  fontSize: 16,
                 }}
               >
-                View full recipe
+                Cook this
               </Text>
             </RecipePressable>
           )}

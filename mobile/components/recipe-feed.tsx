@@ -10,7 +10,9 @@ import {
 } from "react-native";
 import type { ReactNode } from "react";
 import Animated, { Easing, LinearTransition } from "react-native-reanimated";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Feather from "@expo/vector-icons/Feather";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import RecipeCarousel from "@/components/recipe-carousel";
 import RecipeActionButton from "@/components/recipe-action-button";
@@ -44,7 +46,10 @@ type RecipeFeedProps = {
   isSavePending?: boolean;
   header?: ReactNode;
   onOpenDetail?: (recipe: RecipeSuggestion) => void;
+  onCook: (recipe: RecipeSuggestion) => void;
 };
+
+const COOK_SWIPE_THRESHOLD = 96;
 
 const replacementTransition = LinearTransition.duration(360).easing(
   Easing.inOut(Easing.cubic),
@@ -70,6 +75,7 @@ export default function RecipeFeed({
   isSavePending = false,
   header,
   onOpenDetail,
+  onCook,
 }: RecipeFeedProps) {
   const { colors } = useTheme();
   const { width, height, fontScale } = useWindowDimensions();
@@ -149,6 +155,7 @@ export default function RecipeFeed({
         animatedIds={animatedIds}
         onDismiss={dismissRecipe}
         onIngredients={setIngredientRecipe}
+        onCook={onCook}
         saved={savedIds.has(item.recipe_id)}
         onToggleSave={onToggleSave}
         isSavePending={isSavePending}
@@ -284,6 +291,10 @@ export default function RecipeFeed({
         recipe={ingredientRecipe}
         onClose={() => setIngredientRecipe(null)}
         onOpenDetail={onOpenDetail}
+        onCook={(recipe) => {
+          setIngredientRecipe(null);
+          onCook(recipe);
+        }}
       />
     </View>
   );
@@ -301,6 +312,7 @@ export default function RecipeFeed({
   animatedIds,
   onDismiss,
   onIngredients,
+  onCook,
   saved,
   onToggleSave,
   isSavePending,
@@ -316,6 +328,7 @@ export default function RecipeFeed({
   animatedIds: Set<string>;
   onDismiss: (recipeId: string) => void;
   onIngredients: (recipe: RecipeSuggestion) => void;
+  onCook: (recipe: RecipeSuggestion) => void;
   saved: boolean;
   onToggleSave: (recipe: RecipeSuggestion, saved: boolean) => void;
   isSavePending: boolean;
@@ -334,6 +347,30 @@ export default function RecipeFeed({
   ).current;
   const opacity = useRef(new NativeAnimated.Value(1)).current;
   const dismissY = useRef(new NativeAnimated.Value(0)).current;
+  const swipeX = useRef(new NativeAnimated.Value(0)).current;
+  const onCookRef = useRef(onCook);
+  onCookRef.current = onCook;
+  // Swipe right skips the preview sheet and starts cooking. Only rightward
+  // drags activate, and vertical movement hands the touch back to the feed.
+  const cookSwipe = useRef(
+    Gesture.Pan()
+      .withTestId(`recipe-card-cook-swipe-${recipe.recipe_id}`)
+      .runOnJS(true)
+      .activeOffsetX(24)
+      .failOffsetY([-16, 16])
+      .onUpdate(({ translationX }) => swipeX.setValue(Math.max(0, translationX)))
+      .onEnd(({ translationX }) => {
+        if (translationX > COOK_SWIPE_THRESHOLD) onCookRef.current(recipe);
+      })
+      .onFinalize(() => {
+        NativeAnimated.spring(swipeX, {
+          toValue: 0,
+          stiffness: 260,
+          damping: 28,
+          useNativeDriver: true,
+        }).start();
+      }),
+  ).current;
   useEffect(() => {
     if (reducedMotion) {
       entryOpacity.setValue(1);
@@ -407,7 +444,34 @@ export default function RecipeFeed({
   };
   return (
     <View style={{ height: stride, paddingHorizontal: 24 }}>
+      <GestureDetector gesture={cookSwipe}>
       <View>
+        <NativeAnimated.View
+          pointerEvents="none"
+          style={[
+            styles.cookReveal,
+            {
+              height: cardHeight,
+              backgroundColor: colors.accent,
+              opacity: swipeX.interpolate({
+                inputRange: [0, COOK_SWIPE_THRESHOLD],
+                outputRange: [0, 1],
+                extrapolate: "clamp",
+              }),
+            },
+          ]}
+        >
+          <Ionicons name="flame" size={23} color={colors.accentInk} />
+          <Text
+            style={{
+              color: colors.accentInk,
+              fontFamily: fonts.bodyStrong,
+              fontSize: 15,
+            }}
+          >
+            Cook this
+          </Text>
+        </NativeAnimated.View>
         <NativeAnimated.View
           testID={"recipe-card-" + recipe.recipe_id}
           style={{ opacity: entryOpacity, transform: [{ translateY: entryY }] }}
@@ -420,7 +484,7 @@ export default function RecipeFeed({
                 height: cardHeight,
                 backgroundColor: colors.surface,
                 opacity,
-                transform: [{ translateY: dismissY }],
+                transform: [{ translateY: dismissY }, { translateX: swipeX }],
               },
             ]}
           >
@@ -615,6 +679,7 @@ export default function RecipeFeed({
           </NativeAnimated.View>
         </NativeAnimated.View>
       </View>
+      </GestureDetector>
     </View>
   );
 });
@@ -785,6 +850,15 @@ function RecipeFeedTerminator({
 }
 
 const styles = StyleSheet.create({
+  cookReveal: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 24,
+    borderCurve: "continuous",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingLeft: 28,
+  },
   card: {
     borderRadius: 24,
     borderCurve: "continuous",
