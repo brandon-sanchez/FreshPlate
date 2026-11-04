@@ -46,6 +46,7 @@ from app.ai.rag.vector_store import RetrievedRecipe, SupabaseVectorStore
 RESULTS_DIR = Path(__file__).resolve().parents[2] / "docs" / "recipe-latency-runs"
 RUNS_FILE = RESULTS_DIR / "runs.jsonl"
 JUDGE_FILE = RESULTS_DIR / "judge.jsonl"
+JUDGE_BATCH_FILE = RESULTS_DIR / "judge_batches.jsonl"
 BATCH_SIZE = 5
 MIN_RECIPES = 3
 RETRIEVAL_LIMIT = 5
@@ -116,7 +117,31 @@ def _count_prompt(base: str) -> str:
     )
 
 
-VARIANTS = {"base": None, "count": _count_prompt}
+class OpenRecipes(BaseModel):
+    """The production response capped at the batch size with no forced minimum."""
+
+    model_config = ConfigDict(extra="forbid")
+    recipes: list[Recipe] = Field(min_length=1, max_length=BATCH_SIZE)
+
+
+def _soft_prompt(base: str) -> str:
+    return (
+        f"Suggest up to {BATCH_SIZE} distinct, substantial meals. Each recipe is a "
+        "separate option the cook chooses between, so every recipe may use the full "
+        "listed inventory, including the same main ingredient as another recipe. "
+        "Make each one a different dish, not a variation of another. Never pad the "
+        "list with thin dishes such as plain rice or a side; return fewer instead.\n\n"
+        + base.replace(
+            f"Batch ceiling: {BATCH_SIZE}", f"Target number of recipes: {BATCH_SIZE}"
+        )
+    )
+
+
+VARIANTS: dict[str, tuple[Any, type[BaseModel] | None]] = {
+    "base": (None, None),
+    "count": (_count_prompt, CountedRecipes),
+    "soft": (_soft_prompt, OpenRecipes),
+}
 
 
 async def _retrieval(fridge: str, usable_terms: list[str]) -> list[dict[str, Any]]:
@@ -198,12 +223,10 @@ async def generate(args: argparse.Namespace) -> None:
         for doc in await _retrieval(args.fridge, state["query_terms"])
     ]
     prompt = _generation_prompt(state, state["usable_items"])
-    variant = VARIANTS[args.variant]
-    response_model: type[BaseModel] = (
-        CountedRecipes if variant else _production_response_model()
-    )
-    if variant:
-        prompt = variant(prompt)
+    rewrite, response_model = VARIANTS[args.variant]
+    response_model = response_model or _production_response_model()
+    if rewrite:
+        prompt = rewrite(prompt)
     client = GeminiProvider()._get_client()
 
     for run in range(args.runs):
@@ -275,43 +298,76 @@ async def judge(args: argparse.Namespace) -> None:
     if not candidates:
         print("nothing to judge")
         return
-    state: dict[str, Any] = {"inventory": FRIDGES[args.fridge], "preferences": {}}
+    decisions, call = await _assess(args.fridge, [r for _, r in candidates], "default")
+    for (run_id, recipe), decision in zip(candidates, decisions, strict=True):
+        _append(JUDGE_FILE, {"run_id": run_id, "title": recipe.title, **decision})
+    print(
+        f"judged {len(candidates)} candidates for {args.fridge} in {call['seconds']} s"
+    )
+
+
+async def judge_batch(args: argparse.Namespace) -> None:
+    """Judge one generated batch in one call, the way production reviews it."""
+    run = next(r for r in _read(RUNS_FILE) if r["run_id"] == args.run_id)
+    recipes = [
+        Recipe.model_validate(raw)
+        for raw in run["recipes"]
+        if raw["title"] in run["inventory_passed_titles"]
+    ]
+    decisions, call = await _assess(run["fridge"], recipes, args.thinking)
+    record = {
+        "run_id": run["run_id"],
+        "fridge": run["fridge"],
+        "variant": run["variant"],
+        "judge_thinking": args.thinking,
+        "candidates": len(recipes),
+        "eligible": sum(d["verdict"] == "eligible" for d in decisions),
+        "seconds": call["seconds"],
+        "thinking_tokens": call["thinking_tokens"],
+        "decisions": [
+            {"title": recipe.title, **decision}
+            for recipe, decision in zip(recipes, decisions, strict=True)
+        ],
+    }
+    _append(JUDGE_BATCH_FILE, record)
+    print(
+        f"{run['fridge']} {run['variant']} judge={args.thinking} "
+        f"{record['eligible']}/{len(recipes)} eligible in {call['seconds']} s "
+        f"(thinking {call['thinking_tokens']})"
+    )
+
+
+async def _assess(
+    fridge: str, recipes: list[Recipe], thinking: str
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    state: dict[str, Any] = {"inventory": FRIDGES[fridge], "preferences": {}}
     state.update(analyze_inventory(state))
-    template = load_prompt("assess_meals")
     payload = {
         "candidates": [
             {"candidate_index": index, "recipe": recipe.model_dump(mode="json")}
-            for index, (_, recipe) in enumerate(candidates)
+            for index, recipe in enumerate(recipes)
         ],
         "inventory": state["usable_items"],
         "preferences": {},
     }
-    client = GeminiProvider()._get_client()
     call = await _stream(
-        client,
+        GeminiProvider()._get_client(),
         model=DEFAULT_GEMINI_MODEL,
         prompt=json.dumps(payload, sort_keys=True, default=str),
-        system=template.system,
+        system=load_prompt("assess_meals").system,
         response_model=MealAssessment,
-        thinking="default",
+        thinking=thinking,
     )
-    decisions = {d["candidate_index"]: d for d in json.loads(call["text"])["decisions"]}
-    for index, (run_id, recipe) in enumerate(candidates):
-        decision = decisions.get(
-            index, {"verdict": "missing", "reason": "no decision returned"}
-        )
-        _append(
-            JUDGE_FILE,
-            {
-                "run_id": run_id,
-                "title": recipe.title,
-                "verdict": decision["verdict"],
-                "reason": decision["reason"],
-            },
-        )
-    print(
-        f"judged {len(candidates)} candidates for {args.fridge} in {call['seconds']} s"
-    )
+    by_index = {d["candidate_index"]: d for d in json.loads(call["text"])["decisions"]}
+    missing = {"verdict": "missing", "reason": "no decision returned"}
+    decisions = [
+        {
+            "verdict": by_index.get(i, missing)["verdict"],
+            "reason": by_index.get(i, missing)["reason"],
+        }
+        for i in range(len(recipes))
+    ]
+    return decisions, call
 
 
 def report(_: argparse.Namespace) -> None:
@@ -433,12 +489,19 @@ def main() -> None:
     jud = commands.add_parser("judge")
     jud.add_argument("--fridge", choices=FRIDGES, required=True)
     jud.add_argument("--phase", type=int, default=1)
+    batch = commands.add_parser("judge-batch")
+    batch.add_argument("--run-id", required=True)
+    batch.add_argument("--thinking", choices=THINKING_LEVELS, default="default")
     commands.add_parser("report")
     args = parser.parse_args()
     if args.command == "report":
         report(args)
     else:
-        asyncio.run({"generate": generate, "judge": judge}[args.command](args))
+        asyncio.run(
+            {"generate": generate, "judge": judge, "judge-batch": judge_batch}[
+                args.command
+            ](args)
+        )
 
 
 if __name__ == "__main__":

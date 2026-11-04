@@ -84,3 +84,61 @@ The generation call then takes 6–13 s on every fridge. With retrieval, the jud
 - **Set the judge's thinking level too, and time it per batch as production does.** The production judge also runs on default thinking. Here it took 12–48 s to judge 7–27 recipes in one call. Per batch it might take seconds or tens of seconds, which is unmeasured and could eat the savings. MINIMAL judge calls took about 1.2 s in the earlier probe, but their accuracy at MINIMAL hasn't been checked against the default.
 
 Switching to Flash-Lite would save about 30% per batch and about 5 s, but step quality drops (#55). That's Brandon's call. It isn't recommended now.
+
+## Follow-up: softer count wording and judge thinking (14 more live calls)
+
+Brandon approved about 12 more calls to close the two open gaps. This round used 14: 5 generations and 9 judge calls.
+
+### Softer count wording (`soft` prompt)
+
+**Hypothesis.** On the medium fridge, the model read "use only the listed inventory, in the listed amounts" as one shared budget for the whole batch. After one dish took the chicken, the others got rice with no protein. The `soft` prompt says:
+
+- each recipe is a separate option and may use the full inventory, including the same main ingredient as another recipe;
+- suggest up to 5 distinct, substantial meals;
+- never pad with thin dishes or variations, and return fewer instead.
+
+The schema has `minItems: 1`, so nothing forces filler. Thinking is MINIMAL.
+
+| Fridge | Runs | Generation call | Returned | Pass inventory | Pass judge (default thinking) | Pass judge (MINIMAL) |
+|---|---|---|---|---|---|---|
+| small | 2 | 3.3, 3.7 s | 1, 1 | 1, 1 | not run | 1, 1 |
+| medium | 2 | 11.5, 9.8 s | 5, 5 | 5, 5 | 5 (run 1) | 5, 5 |
+| large | 1 | 14.7 s | 5 | 5 | 5 | 4 |
+
+- **Medium fridge, fixed.** The hypothesis held. All 10 recipes use the chicken, and the default judge approved 5 of 5. No thin filler appeared, except one "Simple Tomato Spinach Rice Bowl" that both judges accepted.
+- **Small fridge, now too few.** Without a forced minimum, the model returned 1 recipe on both runs. 3 distinct dishes are possible from chicken, rice and broccoli: 3.8 Flash produced a bowl, a congee and a braise, and the judge approved all three. So `minItems: 1` lets the model be too cautious.
+- **Large fridge.** Generation took 14.7 s for 5 recipes, about 3,100 output tokens. Longer recipes cost writing time.
+
+### Judge latency and strictness, per batch as in production
+
+| Batch | Default-thinking judge | MINIMAL judge |
+|---|---|---|
+| medium soft (5 recipes) | 14.2 s, 2,484 thinking tokens, 5/5 eligible | 1.9 s, 5/5 eligible |
+| large soft (5 recipes) | 7.8 s, 1,443 thinking tokens, 5/5 eligible | 2.6 s, 4/5 eligible |
+| other batches | not run | 1.4–2.5 s |
+
+- **The production judge is slow too.** At default thinking, judging one batch took 8–14 s. That's as much as the generation itself.
+- **MINIMAL makes the judge less reliable, in both directions.**
+  - On the two old medium `count` batches, it approved 3 dishes the default judge had rejected as thin: "Simmered Tomato Spinach Rice Stew", "Chicken and Spinach Skillet" and "Steamed Tomato Rice with Spinach". That is looser on #54.
+  - It also rejected a good dish ("Spanish-Style Chicken and Tomato Rice") because a step adds water, which isn't an inventory item. That's a false rejection.
+
+  One caveat: those old default verdicts came from one call that judged 13 recipes at once, not one call per batch.
+
+### End-to-end first response, estimated
+
+The estimate adds retrieval (0.8–1.0 s, measured) and saving the session (about 0.3 s, from the feed RPC) to the measured generation and judge times above.
+
+| Fridge | Generate (MINIMAL, soft) | + Judge at default | + Judge at MINIMAL | Judge-approved recipes |
+|---|---|---|---|---|
+| small | 3.3–3.7 s | not measured (1 recipe) | ≈ 6 s total | 1 |
+| medium | 9.8–11.5 s | ≈ 26 s total | ≈ 13–15 s total | 5 |
+| large | 14.7 s | ≈ 24 s total | ≈ 19 s total | 5 (default) / 4 (MINIMAL) |
+
+### What this means
+
+- **Generation is solved for medium and large.** MINIMAL thinking plus the `soft` wording gives 5 good, distinct recipes in about 10–15 s.
+- **The small fridge needs a floor.** Keep the `soft` wording, but restore `minItems: 3`. Untested; to confirm in the next round.
+- **The judge is now the bottleneck.** At default thinking it adds 8–14 s, and medium and large land at 24–26 s, too close to the 30 s budget. At MINIMAL it's fast but loosens #54. The untested middle option is LOW thinking for the judge.
+- **Next round, about 6 calls.**
+  - 2 small-fridge generations with `soft` wording plus `minItems: 3`.
+  - The judge at LOW on the 4 batches with known verdicts: the two old medium `count` batches with known rejections, the medium `soft` batch and the large `soft` batch. Pass bar: under about 4 s per batch, and the same verdicts as the default judge.
