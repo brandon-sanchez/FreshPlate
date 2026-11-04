@@ -321,7 +321,7 @@ function BarcodeScanner() {
             fontSize: 13,
           }}
         >
-          Hold steady. We'll auto-fill the details.
+          Hold steady. We&apos;ll auto-fill the details.
         </Text>
       ) : (
         <View style={{ width: "100%", marginTop: 16 }}>

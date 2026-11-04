@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Animated, Keyboard, Platform, View } from "react-native";
+import { Animated, Keyboard, Platform, Text, View } from "react-native";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@expo/vector-icons/Feather";
-import { Text } from "react-native";
 import GlassTabBackground from "@/components/glass-tab-background";
 import { RecipePressable } from "@/components/recipe-motion";
 import { useReducedMotion } from "@/hooks/useReducedMotion";

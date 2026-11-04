@@ -99,7 +99,7 @@ export default function InventoryScreen() {
     fresh: false,
   });
 
-  const items = inventory.data ?? [];
+  const items = useMemo(() => inventory.data ?? [], [inventory.data]);
   const categories = categoriesQuery.data ?? [];
 
   const filtered = useMemo(() => {
