@@ -74,7 +74,15 @@ def _recipe(title: str = "Spinach Pasta") -> dict[str, Any]:
 
 
 def _eligible(index: int = 0) -> dict[str, Any]:
-    return {"candidate_index": index, "verdict": "eligible", "reason": "complete meal"}
+    return {
+        "candidate_index": index,
+        "main_component": "pasta",
+        "portion_reasoning": "complete meal",
+        "unlisted_foods": [],
+        "is_full_meal": True,
+        "realistic_portions": True,
+        "coherent_method": True,
+    }
 
 
 class StubRetriever:
@@ -118,7 +126,7 @@ def test_authenticated_suggestion_returns_identity_match_and_expiry_badge(
             [
                 {"recipes": [_recipe()]},
                 {
-                    "decisions": [_eligible()]
+                    "checks": [_eligible()]
                 },
             ]
         ),
@@ -156,7 +164,7 @@ def test_same_title_regeneration_gets_a_new_recipe_id(
         [
             {"recipes": [_recipe()]},
             {
-                "decisions": [_eligible()]
+                "checks": [_eligible()]
             },
         ]
     )
@@ -215,7 +223,7 @@ def test_suggestion_honors_exclusions_and_batch_ceiling(
                     _recipe("Third Recipe"),
                 ]
             },
-            {"decisions": [
+            {"checks": [
                 _eligible(),
                 _eligible(1),
             ]},
@@ -320,19 +328,12 @@ class DelayedProvider:
         response_model: type[Any],
         system_instruction: str | None,
         deadline: Any,
+        thinking: str | None = None,
     ) -> Any:
-        del system_instruction, deadline
+        del system_instruction, deadline, thinking
         await asyncio.sleep(self.delay_seconds)
-        if response_model.__name__ == "MealAssessment":
-            return response_model(
-                decisions=[
-                    {
-                        "candidate_index": 0,
-                        "verdict": "eligible",
-                        "reason": "complete meal",
-                    }
-                ]
-            )
+        if response_model.__name__ == "MealChecklist":
+            return response_model(checks=[_eligible()])
         return RecipeGenerationResponse(recipes=[_recipe()])
 
 

@@ -13,8 +13,10 @@ Generation runs the production prompt and schema through the same nodes the
 feed uses (``analyze_inventory``, ``generate_recipes`` input, ``check_quality``),
 but streams the Gemini call so the first byte and the thinking tokens can be
 seen. Retrieval is cached per fridge so every config sees the same inspiration.
-The meal judge runs once per fridge over every candidate that passed the
-inventory check, with the production ``assess_meals`` prompt.
+The production prompt already carries the ``final`` wording, so ``--variant
+base`` reproduces it; the other variants are the earlier experiments and stack
+their preamble on top. The ``strict`` judge is the pre-checklist batch judge,
+kept here as the offline reference the checklist judge is compared against.
 """
 
 from __future__ import annotations
@@ -34,7 +36,6 @@ import httpx
 from google.genai import types
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.ai.agents.meal_quality import MealAssessment
 from app.ai.agents.models import Recipe
 from app.ai.agents.nodes import _generation_prompt, analyze_inventory, check_quality
 from app.ai.llm.providers import DEFAULT_GEMINI_MODEL, GeminiProvider
@@ -111,6 +112,28 @@ class CountedRecipes(BaseModel):
     model_config = ConfigDict(extra="forbid")
     recipes: list[Recipe] = Field(min_length=MIN_RECIPES, max_length=BATCH_SIZE)
 
+
+class MealDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    candidate_index: int
+    verdict: str
+    reason: str
+
+
+class MealAssessment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decisions: list[MealDecision]
+
+
+STRICT_JUDGE_SYSTEM = (
+    "Review each candidate meal against the supplied usable inventory and "
+    "preferences. Decide whether each candidate is an eligible substantial, coherent "
+    "meal for its stated servings. Reject candidates that are token quantities, "
+    "incoherent combinations, unsupported ingredients, or that mention unlisted "
+    "foods in the title or steps. Return exactly one decision for every candidate "
+    "index. Do not use fixed calorie, ingredient-count, protein, or starch rules. "
+    "Use unknown when the evidence is insufficient."
+)
 
 WATER = "water"
 WATER_RULE = (
@@ -519,7 +542,7 @@ async def _assess(
         GeminiProvider()._get_client(),
         model=DEFAULT_GEMINI_MODEL,
         prompt=json.dumps(payload, sort_keys=True, default=str),
-        system=load_prompt("assess_meals").system,
+        system=STRICT_JUDGE_SYSTEM,
         response_model=MealAssessment,
         thinking=thinking,
     )

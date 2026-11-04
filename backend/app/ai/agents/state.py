@@ -25,6 +25,7 @@ class InventoryItem(TypedDict, total=False):
     unit: str
     expiration_date: str | date | None
     depleted_at: Any
+    category: str | None
 
 
 class UsableItem(TypedDict):

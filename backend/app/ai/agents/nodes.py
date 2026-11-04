@@ -13,7 +13,11 @@ from typing import Any, Literal, Protocol
 from pydantic import ValidationError
 
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING, MAX_BATCH_CEILING
-from app.ai.agents.models import Recipe, RecipeGenerationResponse
+from app.ai.agents.models import (
+    Recipe,
+    RecipeGenerationResponse,
+    recipe_batch_model,
+)
 from app.ai.agents.state import (
     GenerationResult,
     InventoryAnalysis,
@@ -34,6 +38,17 @@ EXPIRING_WITHIN_DAYS = 5
 MAX_QUALITY_RETRIES = 1
 QUALITY_RETRY_MIN_BUDGET_SECONDS = 20.0
 GENERATION_DOCS_CEILING = 5
+# The retrieval query embeds item names. A long list of every pantry item blurs
+# the embedding and slows the search, so it carries only the names that should
+# steer the meal: expiring items first, then main components, then the rest.
+RETRIEVAL_QUERY_TERM_LIMIT = 30
+MAIN_COMPONENT_CATEGORIES = frozenset({"meat & seafood"})
+WATER = "water"
+WATER_RULE = (
+    "Water is always available: never list it as an ingredient, but steps may use "
+    "it. Every other ingredient, including salt, pepper, oil, butter and every "
+    "seasoning or fat, must come from the listed inventory."
+)
 _QUERY_TERM_SEPARATOR = re.compile(r"[^\w]+", flags=re.UNICODE)
 
 
@@ -59,7 +74,9 @@ def analyze_inventory(
 
     Expired, depleted, and zero-quantity rows never reach the generator. Rows
     expiring today through five days from ``today`` are placed first and carry
-    an explicit ``is_expiring`` flag for downstream prompt and UI work.
+    an explicit ``is_expiring`` flag for downstream prompt and UI work. The
+    retrieval query lists expiring items, then main components, then the rest,
+    capped at ``RETRIEVAL_QUERY_TERM_LIMIT`` names.
     """
     reference_date = today or date.today()
     raw_inventory = state.get("inventory", [])
@@ -69,6 +86,7 @@ def analyze_inventory(
         raise ValueError("Recipe state inventory must be a sequence")
 
     candidates: list[tuple[tuple[int, int, int], UsableItem, str]] = []
+    query_candidates: list[tuple[tuple[int, int, int], str]] = []
     for index, raw_item in enumerate(raw_inventory):
         if not isinstance(raw_item, Mapping):
             raise ValueError("Recipe state inventory items must be mappings")
@@ -112,11 +130,19 @@ def analyze_inventory(
         candidates.append(
             ((priority, days_priority, index), usable_item, normalized_name)
         )
+        query_priority = 0 if is_expiring else 1 if _is_main(raw_item) else 2
+        query_candidates.append(
+            ((query_priority, days_priority, index), normalized_name)
+        )
 
     candidates.sort(key=lambda candidate: candidate[0])
+    query_candidates.sort(key=lambda candidate: candidate[0])
     usable_items = [candidate[1] for candidate in candidates]
-    query_terms = _unique_terms(candidate[2] for candidate in candidates)
-    return {"usable_items": usable_items, "query_terms": query_terms}
+    query_terms = _unique_terms(candidate[1] for candidate in query_candidates)
+    return {
+        "usable_items": usable_items,
+        "query_terms": query_terms[:RETRIEVAL_QUERY_TERM_LIMIT],
+    }
 
 
 async def retrieve_recipes(
@@ -163,9 +189,10 @@ async def generate_recipes(
     active_deadline = deadline or _state_deadline(state)
     response = await provider.generate(
         _generation_prompt(state, usable_items),
-        response_model=RecipeGenerationResponse,
+        response_model=recipe_batch_model(batch_ceiling),
         system_instruction=template.system,
         deadline=active_deadline,
+        thinking=template.thinking,
     )
     validated_response = RecipeGenerationResponse.model_validate(response)
     retry_count = _retry_count(state)
@@ -203,13 +230,15 @@ def check_quality(state: Mapping[str, Any]) -> QualityResult:
         else:
             valid_recipes.append(recipe)
 
-    if not generated:
-        failures.append("No recipes were generated.")
-
     return {
         "valid_recipes": valid_recipes,
         "quality_feedback": "\n".join(failures) if failures else None,
     }
+
+
+def is_water(name: str) -> bool:
+    """Return whether an ingredient is water, the one ingredient always on hand."""
+    return normalize_query_term(name) == WATER
 
 
 def route_after_quality(
@@ -218,7 +247,11 @@ def route_after_quality(
     quality_retry_limit: int = MAX_QUALITY_RETRIES,
     retry_only_when_no_valid: bool = False,
 ) -> Literal["retry", "finish"]:
-    """Route quality failures while respecting the caller's retry budget."""
+    """Retry only when generated recipes were rejected, within the retry budget.
+
+    An empty batch is the generator's honest answer for a kitchen that cannot
+    make a meal, so it carries no quality feedback and never triggers a retry.
+    """
     if retry_only_when_no_valid and state.get("valid_recipes"):
         return "finish"
     if state.get("quality_feedback") and _retry_count(state) < quality_retry_limit:
@@ -281,6 +314,14 @@ def _is_depleted(value: Any) -> bool:
     return value is not None and value != ""
 
 
+def _is_main(item: Mapping[str, Any]) -> bool:
+    category = item.get("category")
+    return (
+        isinstance(category, str)
+        and category.strip().casefold() in MAIN_COMPONENT_CATEGORIES
+    )
+
+
 def _unique_terms(terms: Iterable[str]) -> list[str]:
     unique: list[str] = []
     seen: set[str] = set()
@@ -335,7 +376,17 @@ def _generation_prompt(
     usable_items: Sequence[UsableItem],
 ) -> str:
     """Build the grounded user prompt for the versioned system instruction."""
+    ceiling = _batch_ceiling(state)
     lines = [
+        (
+            f"Suggest up to {ceiling} distinct meals this kitchen can make. Each "
+            "recipe is a separate option the cook chooses between, so every recipe "
+            "may use the full listed inventory, including the same main ingredient "
+            "as another recipe. Make each one a different dish that varies in "
+            "cooking method or format, not a variation of another. If the kitchen "
+            f"cannot make a real meal, return an empty list. {WATER_RULE}"
+        ),
+        "",
         (
             "Create up to the requested number of recipe suggestions from the "
             "usable inventory."
@@ -402,7 +453,7 @@ def _generation_prompt(
         lines.extend(("", "Do not repeat these shown titles:"))
         lines.append(", ".join(str(title) for title in exclude_titles) or "None")
 
-    lines.extend(("", f"Batch ceiling: {_batch_ceiling(state)}"))
+    lines.extend(("", f"Maximum number of recipes: {ceiling}"))
     feedback = state.get("quality_feedback")
     if feedback:
         lines.extend(("", "Quality feedback from the previous attempt:", str(feedback)))
@@ -417,6 +468,8 @@ def _quality_issues(
     grounded = False
     requested_by_id: dict[str, Decimal] = {}
     for ingredient in recipe.ingredients:
+        if ingredient.inventory_item_id is None and is_water(ingredient.name):
+            continue
         if ingredient.use_amount is None:
             issues.append(f"ingredient '{ingredient.name}' is missing use_amount")
         elif not math.isfinite(ingredient.use_amount) or ingredient.use_amount <= 0:

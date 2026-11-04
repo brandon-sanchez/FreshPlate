@@ -7,7 +7,11 @@ from typing import Any
 
 import pytest
 
-from app.ai.agents.nodes import analyze_inventory, retrieve_recipes
+from app.ai.agents.nodes import (
+    RETRIEVAL_QUERY_TERM_LIMIT,
+    analyze_inventory,
+    retrieve_recipes,
+)
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.rag.vector_store import RetrievedRecipe
 
@@ -193,3 +197,28 @@ async def test_retrieve_recipes_returns_no_results_without_query_terms() -> None
 
     assert result == {"retrieved_recipes": []}
     assert retriever.calls == []
+
+
+def test_retrieval_query_leads_with_expiring_and_main_items_and_stays_bounded() -> None:
+    pantry = [
+        {"id": f"spice-{n}", "name": f"Spice {n}", "quantity": 1, "unit": "jar",
+         "category": "Condiments"}
+        for n in range(RETRIEVAL_QUERY_TERM_LIMIT)
+    ]
+    inventory = [
+        *pantry,
+        {"id": "salmon", "name": "Salmon", "quantity": 400, "unit": "g",
+         "category": "Meat & Seafood"},
+        {"id": "kale", "name": "Kale", "quantity": 1, "unit": "bunch",
+         "expiration_date": "2026-08-05", "category": "Produce"},
+        {"id": "rice", "name": "Rice", "quantity": 1, "unit": "kg"},
+    ]
+
+    result = analyze_inventory({"inventory": inventory}, today=date(2026, 8, 3))
+
+    assert len(result["usable_items"]) == len(inventory)
+    assert result["query_terms"][:2] == ["kale", "salmon"]
+    assert len(result["query_terms"]) == RETRIEVAL_QUERY_TERM_LIMIT
+    assert result["query_terms"][2:] == [
+        f"spice {n}" for n in range(RETRIEVAL_QUERY_TERM_LIMIT - 2)
+    ]
