@@ -300,3 +300,49 @@ async def test_generation_obeys_provider_retry_after() -> None:
     )
     await provider.generate("Dinner", response_model=Greeting)
     assert sleeps == [7.0]
+
+
+def _usage_response(text: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        text=text,
+        usage_metadata=SimpleNamespace(
+            prompt_token_count=1200,
+            candidates_token_count=340,
+            thoughts_token_count=None,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_gemini_provider_sends_the_requested_thinking_level() -> None:
+    models = FakeGeminiModels(response=_usage_response('{"answer":"a","confidence":1}'))
+    provider = GeminiProvider(api_key="test-key", client=fake_gemini_client(models))
+
+    await provider.generate("Q", response_model=Greeting, thinking="minimal")
+    await provider.generate("Q", response_model=Greeting)
+
+    minimal, default = (call["config"] for call in models.calls)
+    assert minimal.thinking_config.thinking_level == "MINIMAL"
+    assert default.thinking_config is None
+
+
+@pytest.mark.asyncio
+async def test_gemini_provider_logs_one_structured_record_per_call(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    models = FakeGeminiModels(response=_usage_response('{"answer":"a","confidence":1}'))
+    provider = GeminiProvider(api_key="test-key", client=fake_gemini_client(models))
+
+    with caplog.at_level("INFO", logger="freshplate.llm.provider"):
+        await provider.generate("Q", response_model=Greeting, thinking="minimal")
+
+    [record] = [r for r in caplog.records if hasattr(r, "gemini_call")]
+    call = record.gemini_call
+    assert call["model"] == DEFAULT_GEMINI_MODEL
+    assert call["thinking"] == "minimal"
+    assert call["response_model"] == "Greeting"
+    assert call["prompt_tokens"] == 1200
+    assert call["output_tokens"] == 340
+    assert call["thinking_tokens"] == 0
+    assert call["latency_ms"] >= 0
+    assert "thinking=minimal" in record.getMessage()

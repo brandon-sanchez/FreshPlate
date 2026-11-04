@@ -10,6 +10,8 @@ from pathlib import Path
 import yaml  # type: ignore[import-untyped]
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
+from app.ai.llm.protocol import ThinkingLevel
+
 PROMPTS_DIR = Path(__file__).parent
 _PROMPT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _VERSION_SUFFIX_PATTERN = re.compile(r"_v[0-9]+$")
@@ -27,6 +29,7 @@ class PromptTemplate(BaseModel):
     name: str = Field(min_length=1)
     version: StrictInt | StrictStr
     model: str = Field(min_length=1)
+    thinking: ThinkingLevel | None = None
     system: str = Field(min_length=1)
 
 
