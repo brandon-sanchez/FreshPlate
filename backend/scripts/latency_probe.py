@@ -699,6 +699,25 @@ def _read(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
+def recheck(_: argparse.Namespace) -> None:
+    """Re-run today's inventory check on every stored batch, with no live calls."""
+    print("| run | fridge | returned | passed then | passed now | still failing |")
+    print("|---|---|---|---|---|---|")
+    for run in _read(RUNS_FILE):
+        if run.get("variant") != "final" or "recipes" not in run:
+            continue
+        state: dict[str, Any] = {"inventory": FRIDGES[run["fridge"]]}
+        state.update(analyze_inventory(state))
+        quality = check_quality(
+            {"usable_items": state["usable_items"], "generated_recipes": run["recipes"]}
+        )
+        failing = (quality["quality_feedback"] or "").replace("\n", " / ")
+        print(
+            f"| {run['run_id']} | {run['fridge']} | {run['returned']} | "
+            f"{run['inventory_pass']} | {len(quality['valid_recipes'])} | {failing} |"
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -721,9 +740,10 @@ def main() -> None:
     batch.add_argument("--per-recipe", action="store_true")
     batch.add_argument("--include-inventory-failures", action="store_true")
     commands.add_parser("report")
+    commands.add_parser("recheck")
     args = parser.parse_args()
-    if args.command == "report":
-        report(args)
+    if args.command in ("report", "recheck"):
+        {"report": report, "recheck": recheck}[args.command](args)
     else:
         asyncio.run(
             {"generate": generate, "judge": judge, "judge-batch": judge_batch}[

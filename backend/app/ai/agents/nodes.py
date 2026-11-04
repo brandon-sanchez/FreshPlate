@@ -25,6 +25,7 @@ from app.ai.agents.state import (
     RetrievalResult,
     UsableItem,
 )
+from app.ai.agents.units import inventory_amount, same_food
 from app.ai.llm.protocol import LLMProvider
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.prompts.loader import PromptTemplate, load_prompt
@@ -487,41 +488,47 @@ def _quality_issues(
             )
             continue
         grounded = True
-        if normalize_query_term(ingredient.name) != normalize_query_term(item["name"]):
+        if not same_food(ingredient.name, item["name"]):
             issues.append(
                 f"ingredient '{ingredient.name}' does not match inventory item "
                 f"name '{item['name']}'"
             )
-        if ingredient.unit.casefold() != item["unit"].casefold():
+        if ingredient.use_amount is None or not math.isfinite(ingredient.use_amount):
+            continue
+        amount = inventory_amount(
+            Decimal(str(ingredient.use_amount)),
+            ingredient.unit,
+            item["unit"],
+            item["name"],
+        )
+        if amount is None:
             issues.append(
                 f"ingredient '{ingredient.name}' uses unit '{ingredient.unit}', "
-                f"but inventory item uses '{item['unit']}'"
+                f"which cannot be converted to the inventory unit '{item['unit']}'"
             )
-        if (
-            ingredient.use_amount is not None
-            and math.isfinite(ingredient.use_amount)
-            and ingredient.use_amount > item["quantity"]
-        ):
+            continue
+        available = Decimal(str(item["quantity"]))
+        if amount > available:
             issues.append(
                 f"ingredient '{ingredient.name}' uses more than the available "
-                f"{item['quantity']}"
+                f"{item['quantity']} {item['unit']}"
             )
-        if ingredient.use_amount is not None and math.isfinite(
-            ingredient.use_amount
-        ):
-            requested_by_id[item_id] = requested_by_id.get(
-                item_id, Decimal("0")
-            ) + Decimal(str(ingredient.use_amount))
+        requested_by_id[item_id] = requested_by_id.get(item_id, Decimal("0")) + amount
     for item_id, requested in requested_by_id.items():
         item = inventory_by_id[item_id]
         if requested > Decimal(str(item["quantity"])):
             issues.append(
-                f"ingredients mapped to inventory item '{item_id}' use {requested} "
-                f"in total, more than the available {item['quantity']}"
+                f"ingredients mapped to inventory item '{item_id}' use "
+                f"{_amount_text(requested)} {item['unit']} in total, more than the "
+                f"available {item['quantity']}"
             )
     if not grounded:
         issues.append("recipe has no grounded inventory ingredients")
     return issues
+
+
+def _amount_text(amount: Decimal) -> str:
+    return f"{amount.quantize(Decimal('0.001')).normalize():f}"
 
 
 def _batch_ceiling(state: Mapping[str, Any]) -> int:
