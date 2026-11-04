@@ -1,6 +1,6 @@
 # Recipe grading step: options
 
-Status: **proposed, waiting for Brandon.** No app code has changed.
+Status: **option A approved and tested; final settings proposed below.** No app code has changed.
 Evidence: [experiments](recipe-latency-experiments.md) (measured) and [grading research](recipe-grading-research.md) (sources).
 
 ## Where the grading step stands
@@ -63,3 +63,26 @@ If A fails the bar, fall back to B. It's slower but keeps today's accuracy.
 1. Approve option A and about 4 live calls to prove it on the known batches?
 2. Which foods may a recipe use without an inventory item? Water seems obviously fine. What about salt, pepper, cooking oil? Today the inventory check and the judge allow none, and the MINIMAL judge rejected a dish because a step adds water.
 3. Prompt wording sits between two tested extremes. `soft` gave 5 recipes on the medium fridge, one of them thin. `real` gave 2 but returned zero honestly on a near-empty fridge. OK to settle the final wording on the eval set rather than more one-off runs?
+
+## Results (round 4) and final proposed settings
+
+The checklist judge agreed with the strict batch judge on 15 of 17 known dishes in 2.7–3.5 s. Both disagreements are strict-judge inconsistencies. The fallback B (strict judge per recipe, in parallel) took 4.4–7.4 s and approved 3 of the 4 known thin dishes. Details are in [experiments, round 4](recipe-latency-experiments.md).
+
+**Proposed settings:**
+
+| Step | Setting |
+|---|---|
+| Generation | `gemini-3.6-flash`, `thinking_level=MINIMAL`. Wording: up to 5 distinct meals; each may use the full inventory; vary the cooking method or format; an empty list is fine. Water is the only ingredient not in inventory. Schema: `recipes` with `maxItems: 5` and no minimum |
+| Inventory check | As today, plus: an ingredient named "water" with no inventory id is allowed. Salt, pepper, oil and all other seasonings and fats must map to inventory |
+| Meal judge | The checklist judge at MINIMAL, reasoning fields first, verdict decided in code. Water never counts as an unlisted food |
+| Retry | Retry once only when candidates were generated and all were rejected, and at least 20 s remain. An honest empty list goes straight to the friendly "A little more to work with" state |
+| Offline | The strict default-thinking judge and a hand-labeled set (follow-up eval task) measure how often the checklist is wrong |
+
+Estimated first response: near-empty about 3 s; small about 9 s; medium and large about 10–17 s. That's retrieval about 1 s, generation 1.7–15 s, checklist 2–4 s, and saving 0.3 s.
+
+**One check before app code, about 7 live calls.** The generation wording in this table (the `soft` wording plus an empty-list allowance and the water rule, with no "never pad" sentence) hasn't been run as one combination. It needs one pass over the four fixed fridges, with the checklist judge on each non-empty batch. Pass bar:
+
+- near-empty returns 0;
+- small returns 2–3 approved meals;
+- medium and large return 4–5 approved meals;
+- no near-duplicates.

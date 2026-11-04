@@ -184,3 +184,54 @@ LOW ran on the 4 batches with known default-judge verdicts, plus the 2 new ones.
 **LOW is no better than MINIMAL.** It used 0 thinking tokens and approved all 4 dishes the default judge rejected, including a plain seasoned rice bowl. Its reasons only restate the inventory check ("uses available ingredients … coherent"). Right now, only the default-thinking judge enforces "substantial meal", and it costs 8–14 s per batch.
 
 Spend for this round: 4 generations and 6 judge calls.
+
+## Round 4: checklist judge, per-recipe strict judge, balanced wording (18 live calls)
+
+Brandon approved the checklist judge (option A), a "water only" pantry rule, and tuning the wording on fixed fridges. If A failed, the fallback was option B. The "real meals" reference below is the strict default-thinking judge's batch verdicts from earlier rounds.
+
+### Checklist judge (A), MINIMAL thinking, on the 4 known batches
+
+The new judge answers a checklist per recipe, with the reasoning fields first:
+
+- main component and amount per serving;
+- whether the portion is realistic;
+- foods named that aren't in the kitchen (water excepted);
+- full meal yes/no;
+- realistic portions yes/no;
+- coherent method yes/no.
+
+Code maps the answers to a verdict (`_checklist_verdict` in the probe).
+
+| Batch | Time | Agrees with the strict batch judge |
+|---|---|---|
+| medium count, run 1 | 2.7 s | 3/3 |
+| medium count, run 2 | 2.8 s | 3/4 |
+| medium soft | 3.5 s | 4/5 |
+| large soft | 3.1 s | 5/5 |
+
+The checklist agrees on 15 of 17 dishes in 2.7–3.5 s. Thin dishes rejected: 3 of 4. Good dishes approved: 12 of 13. That misses the literal bar (4/4, 13/13, under 3 s). Both disagreements are cases where the strict judge contradicts its own rules:
+
+- **"Chicken and Spinach Skillet" (112 g chicken per serving).** The strict judge rejected it for "lacks a starch component", a rule its prompt forbids. The checklist approved it.
+- **"Simple Tomato Spinach Rice Bowl."** The strict judge approved it, but in another batch it rejected the near-identical "Steamed Tomato Rice with Spinach" as lacking substance. The checklist rejected both as a plain grain with vegetables.
+
+### Fallback B: the strict judge, one recipe per call, in parallel (default thinking)
+
+| Batch | Time (slowest call) | Thin dishes rejected |
+|---|---|---|
+| medium count, run 1 | 4.4 s (3.3–4.4 s per call) | 0 of 1 |
+| medium count, run 2 | 7.4 s (5.2–7.3 s per call) | 1 of 3 |
+
+B is worse on both counts. It's slower than the checklist, and judged one at a time it approves thin dishes it rejected when it saw the batch together. The strict judge isn't a stable reference either: the same dish got different verdicts in different calls. That's why a hand-labeled set is the right long-term yardstick.
+
+### Balanced wording on the fixed fridges (MINIMAL generation, checklist judge)
+
+The `balanced` prompt asks for as many real meals as the kitchen supports, up to 5. It says each may reuse the main ingredient, that meals should differ in cooking method or format, never to pad, that an empty list is fine, and that water is the only free ingredient.
+
+| Fridge | Generation call | Returned | Checklist-approved | Checklist time |
+|---|---|---|---|---|
+| near-empty | 1.7 s | 0 | 0 | not needed |
+| small | 5.4 s | 2 | 2 | 2.7 s |
+| medium | 6.3 s | 2 | 2 | 2.2 s |
+| large | 10.2 s | 3 | 3 | 3.8 s |
+
+No padding and no thin dishes, but medium and large stay below what those fridges support. With the `soft` wording, the same fridges gave 5 meals, 4–5 of them genuine. The "never pad" instruction makes the generator cautious. The judge is the better place to enforce "no padding".

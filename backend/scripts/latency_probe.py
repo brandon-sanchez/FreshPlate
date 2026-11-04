@@ -109,6 +109,73 @@ class CountedRecipes(BaseModel):
     recipes: list[Recipe] = Field(min_length=MIN_RECIPES, max_length=BATCH_SIZE)
 
 
+WATER = "water"
+WATER_RULE = (
+    "Water is always available: never list it as an ingredient, but steps may use "
+    "it. Every other ingredient, including salt, pepper, oil, butter and every "
+    "seasoning or fat, must come from the listed inventory."
+)
+
+
+class MealCheck(BaseModel):
+    """One recipe's checklist answers, reasoning fields before the yes/no answers."""
+
+    model_config = ConfigDict(extra="forbid")
+    candidate_index: int
+    main_component: str = Field(
+        description="The food that makes this dish a meal, with its amount per serving."
+    )
+    portion_reasoning: str = Field(
+        description="Is the amount of food per serving what a person would eat as a "
+        "meal? Compare the main component and total food to the stated servings."
+    )
+    unlisted_foods: list[str] = Field(
+        description="Foods named in the title or steps that are not in the "
+        "inventory. Water never counts."
+    )
+    is_full_meal: bool = Field(
+        description="True if this is a dish a person would serve as their meal. "
+        "False for a side dish, a plain or lightly flavored grain or starch with a "
+        "few vegetables, or one ingredient plus seasoning."
+    )
+    realistic_portions: bool
+    coherent_method: bool = Field(
+        description="True if the steps form a sensible way to cook this dish."
+    )
+
+
+class MealChecklist(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    checks: list[MealCheck]
+
+
+CHECKLIST_SYSTEM = (
+    "You check whether each candidate recipe is a real meal that can be cooked from "
+    "the supplied inventory. Answer the checklist for every candidate index, filling "
+    "the reasoning fields before the yes/no fields. A real meal is a dish a person "
+    "would serve as their meal: it has a substantial main component (for example "
+    "meat, fish, eggs, legumes, tofu, cheese, or pasta or noodles with a hearty "
+    "sauce) in a realistic amount per serving. Any cuisine or format can qualify. A "
+    "side dish, a plain or lightly flavored grain with a few vegetables, or one "
+    "ingredient plus seasoning is not a meal. " + WATER_RULE
+)
+
+
+def _checklist_verdict(check: MealCheck) -> tuple[str, str]:
+    unlisted = [
+        food for food in check.unlisted_foods if food.strip().casefold() != WATER
+    ]
+    if unlisted:
+        return "unsupported_ingredient", f"names foods not in the kitchen: {unlisted}"
+    if not check.is_full_meal:
+        return "insufficient", f"not a full meal; main: {check.main_component}"
+    if not check.realistic_portions:
+        return "insufficient", check.portion_reasoning
+    if not check.coherent_method:
+        return "incoherent", "steps do not form a sensible method"
+    return "eligible", check.main_component
+
+
 def _count_prompt(base: str) -> str:
     return (
         f"Return exactly {BATCH_SIZE} distinct recipes: different dishes, not "
@@ -165,7 +232,26 @@ def _real_meals_prompt(base: str) -> str:
     )
 
 
+def _balanced_prompt(base: str) -> str:
+    return (
+        f"Suggest as many distinct, real meals as this kitchen genuinely supports, up "
+        f"to {BATCH_SIZE}. Each recipe is a separate option the cook chooses between, "
+        "so every recipe may use the full listed inventory, including the same main "
+        "ingredient as another recipe. When the inventory has a substantial main "
+        "ingredient, it usually supports several meals that differ in cooking method "
+        "or format; give each one, not new names for the same dish. Every recipe must "
+        "be a real meal with a substantial main component and enough food for its "
+        "servings. Never pad the list: no side dishes, plain grains, or one ingredient "
+        "plus seasoning. Return fewer, or an empty list, when that is all the kitchen "
+        f"supports. {WATER_RULE}\n\n"
+        + base.replace(
+            f"Batch ceiling: {BATCH_SIZE}", f"Maximum number of recipes: {BATCH_SIZE}"
+        )
+    )
+
+
 VARIANTS: dict[str, tuple[Any, type[BaseModel] | None]] = {
+    "balanced": (_balanced_prompt, RealMealRecipes),
     "real": (_real_meals_prompt, RealMealRecipes),
     "base": (None, None),
     "count": (_count_prompt, CountedRecipes),
@@ -281,6 +367,7 @@ async def generate(args: argparse.Namespace) -> None:
             text = call.pop("text")
             record.update(call)
             recipes = json.loads(text).get("recipes", [])
+            recipes = [_without_water(recipe) for recipe in recipes]
             quality = check_quality(
                 {"usable_items": state["usable_items"], "generated_recipes": recipes}
             )
@@ -299,6 +386,19 @@ async def generate(args: argparse.Namespace) -> None:
             record["error"] = f"{type(exc).__name__}: {exc}"[:300]
         _append(RUNS_FILE, record)
         print(_summary(record), flush=True)
+
+
+def _without_water(recipe: dict[str, Any]) -> dict[str, Any]:
+    """Water is always available, so it never needs an inventory item."""
+    ingredients = [
+        item
+        for item in recipe.get("ingredients", [])
+        if not (
+            item.get("inventory_item_id") is None
+            and item.get("name", "").strip().casefold() == WATER
+        )
+    ]
+    return {**recipe, "ingredients": ingredients}
 
 
 def _production_response_model() -> type[BaseModel]:
@@ -343,8 +443,23 @@ async def judge_batch(args: argparse.Namespace) -> None:
         for raw in run["recipes"]
         if raw["title"] in run["inventory_passed_titles"]
     ]
-    decisions, call = await _assess(run["fridge"], recipes, args.thinking)
+    assess = _assess_checklist if args.judge == "checklist" else _assess
+    if args.per_recipe:
+        started = time.monotonic()
+        results = await asyncio.gather(
+            *(assess(run["fridge"], [recipe], args.thinking) for recipe in recipes)
+        )
+        decisions = [result[0][0] for result in results]
+        call = {
+            "seconds": round(time.monotonic() - started, 2),
+            "thinking_tokens": sum(result[1]["thinking_tokens"] for result in results),
+            "per_call_seconds": [result[1]["seconds"] for result in results],
+        }
+    else:
+        decisions, call = await assess(run["fridge"], recipes, args.thinking)
     record = {
+        "judge": args.judge + ("-per-recipe" if args.per_recipe else ""),
+        "per_call_seconds": call.get("per_call_seconds"),
         "run_id": run["run_id"],
         "fridge": run["fridge"],
         "variant": run["variant"],
@@ -360,7 +475,7 @@ async def judge_batch(args: argparse.Namespace) -> None:
     }
     _append(JUDGE_BATCH_FILE, record)
     print(
-        f"{run['fridge']} {run['variant']} judge={args.thinking} "
+        f"{run['fridge']} {run['variant']} judge={args.judge}/{args.thinking} "
         f"{record['eligible']}/{len(recipes)} eligible in {call['seconds']} s "
         f"(thinking {call['thinking_tokens']})"
     )
@@ -396,6 +511,43 @@ async def _assess(
         }
         for i in range(len(recipes))
     ]
+    return decisions, call
+
+
+async def _assess_checklist(
+    fridge: str, recipes: list[Recipe], thinking: str
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    state: dict[str, Any] = {"inventory": FRIDGES[fridge], "preferences": {}}
+    state.update(analyze_inventory(state))
+    payload = {
+        "candidates": [
+            {"candidate_index": index, "recipe": recipe.model_dump(mode="json")}
+            for index, recipe in enumerate(recipes)
+        ],
+        "inventory": state["usable_items"],
+    }
+    call = await _stream(
+        GeminiProvider()._get_client(),
+        model=DEFAULT_GEMINI_MODEL,
+        prompt=json.dumps(payload, sort_keys=True, default=str),
+        system=CHECKLIST_SYSTEM,
+        response_model=MealChecklist,
+        thinking=thinking,
+    )
+    checks = {
+        check.candidate_index: check
+        for check in MealChecklist.model_validate_json(call["text"]).checks
+    }
+    decisions: list[dict[str, Any]] = []
+    for index in range(len(recipes)):
+        check = checks.get(index)
+        if check is None:
+            decisions.append({"verdict": "missing", "reason": "no checklist returned"})
+            continue
+        verdict, reason = _checklist_verdict(check)
+        decisions.append(
+            {"verdict": verdict, "reason": reason, "checks": check.model_dump()}
+        )
     return decisions, call
 
 
@@ -521,6 +673,8 @@ def main() -> None:
     batch = commands.add_parser("judge-batch")
     batch.add_argument("--run-id", required=True)
     batch.add_argument("--thinking", choices=THINKING_LEVELS, default="default")
+    batch.add_argument("--judge", choices=("strict", "checklist"), default="strict")
+    batch.add_argument("--per-recipe", action="store_true")
     commands.add_parser("report")
     args = parser.parse_args()
     if args.command == "report":
