@@ -142,3 +142,45 @@ The estimate adds retrieval (0.8–1.0 s, measured) and saving the session (abou
 - **Next round, about 6 calls.**
   - 2 small-fridge generations with `soft` wording plus `minItems: 3`.
   - The judge at LOW on the 4 batches with known verdicts: the two old medium `count` batches with known rejections, the medium `soft` batch and the large `soft` batch. Pass bar: under about 4 s per batch, and the same verdicts as the default judge.
+
+## Round 3: real-meals wording and the judge at LOW (10 more live calls)
+
+Brandon's policy is to return only realistic, proper meals. "One ingredient plus a seasoning" is never a meal, and zero recipes is a valid answer. There is no forced floor.
+
+### Real-meals wording (`real` prompt)
+
+The prompt asks for:
+
+- up to 5 distinct, real meals;
+- each recipe may use the full inventory;
+- a substantial main component, and enough food for the stated servings;
+- never one ingredient plus seasoning, a side dish, or a plain grain;
+- fewer recipes, or an empty list, rather than padding.
+
+The schema has `minItems: 0`. Thinking is MINIMAL.
+
+| Fridge | Runs | Generation call | Returned | Recipes | Judge (LOW) |
+|---|---|---|---|---|---|
+| near-empty (spinach, salt) | 1 | 1.3 s | 0 | none | not needed |
+| small (chicken, rice, broccoli) | 1 | 5.8 s | 2 | Steamed Chicken, Broccoli and Rice; Poached Chicken and Rice Soup with Broccoli | 2/2 |
+| medium | 2 | 7.2, 7.6 s | 2, 2 | two tomato-chicken-rice dishes each time | 2/2 |
+
+- **Near-empty fridge.** It returns zero in about 1.3 s. That is the honest answer, and the app already routes it to the friendly state. `POST /sessions` returns 200 with `empty_reason: INVENTORY_UNSUPPORTED`, and the mobile terminator shows "A little more to work with" with Add items and Edit answers buttons. The existing test `test_session_with_zero_valid_recipes_returns_explicit_empty_state` covers it.
+  - **Gap.** When the generator honestly returns zero, the graph still runs its one quality retry. That costs one more generation (about 1–10 s), and the retry could pad. The retry should run only when the judge or the inventory check rejected candidates, not when the generator returned an empty list.
+- **Small fridge.** 2 genuine, different meals. No padding and no near-duplicates.
+- **Medium fridge.** The wording is too cautious here: 2 recipes per run, against 5 good ones with the `soft` wording, and the second run's two dishes are close variations. The `soft` wording's 5 included one thin "Simple Tomato Spinach Rice Bowl", which the default judge approved. The right wording sits between `soft` and `real`. That's prompt tuning, and the fixed eval set should settle it rather than more ad-hoc runs.
+
+### Judge at LOW thinking
+
+LOW ran on the 4 batches with known default-judge verdicts, plus the 2 new ones.
+
+| Batch | LOW judge time | LOW verdicts | Default verdicts |
+|---|---|---|---|
+| medium count (run 1) | 2.0 s | 3/3 eligible | 2/3 (rejected "Simmered Tomato Spinach Rice Stew") |
+| medium count (run 2) | 1.7 s | 4/4 eligible | 1/4 (rejected "Chicken and Spinach Skillet", "Garlic Onion Jasmine Rice Bowl", "Steamed Tomato Rice with Spinach") |
+| medium soft | 2.0 s | 5/5 | 5/5 |
+| large soft | 2.0 s | 5/5 | 5/5 |
+
+**LOW is no better than MINIMAL.** It used 0 thinking tokens and approved all 4 dishes the default judge rejected, including a plain seasoned rice bowl. Its reasons only restate the inventory check ("uses available ingredients … coherent"). Right now, only the default-thinking judge enforces "substantial meal", and it costs 8–14 s per batch.
+
+Spend for this round: 4 generations and 6 judge calls.

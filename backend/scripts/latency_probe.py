@@ -68,6 +68,10 @@ def _item(
 
 
 FRIDGES: dict[str, list[dict[str, Any]]] = {
+    "near-empty": [
+        _item("i-spinach", "spinach", 200, "g", 2),
+        _item("i-salt", "salt", 500, "g"),
+    ],
     "small": [
         _item("i-chicken-breast", "chicken breast", 500, "g", 2),
         _item("i-rice", "jasmine rice", 1000, "g"),
@@ -137,7 +141,32 @@ def _soft_prompt(base: str) -> str:
     )
 
 
+class RealMealRecipes(BaseModel):
+    """The production response capped at the batch size; an empty list is valid."""
+
+    model_config = ConfigDict(extra="forbid")
+    recipes: list[Recipe] = Field(min_length=0, max_length=BATCH_SIZE)
+
+
+def _real_meals_prompt(base: str) -> str:
+    return (
+        f"Suggest up to {BATCH_SIZE} distinct, real meals that a person would "
+        "actually serve as a meal. Each recipe is a separate option the cook chooses "
+        "between, so every recipe may use the full listed inventory, including the "
+        "same main ingredient as another recipe. A meal needs a substantial main "
+        "component and enough food for its stated servings. One ingredient plus "
+        "seasoning is never a meal, and neither is a side dish or a plain grain. "
+        "Make each one a different dish, not a variation of another. Return only as "
+        "many as the inventory genuinely supports: fewer, or an empty list, rather "
+        "than padding or stretching.\n\n"
+        + base.replace(
+            f"Batch ceiling: {BATCH_SIZE}", f"Maximum number of recipes: {BATCH_SIZE}"
+        )
+    )
+
+
 VARIANTS: dict[str, tuple[Any, type[BaseModel] | None]] = {
+    "real": (_real_meals_prompt, RealMealRecipes),
     "base": (None, None),
     "count": (_count_prompt, CountedRecipes),
     "soft": (_soft_prompt, OpenRecipes),

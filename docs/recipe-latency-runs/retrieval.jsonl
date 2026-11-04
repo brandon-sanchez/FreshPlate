@@ -1,3 +1,4 @@
 {"fridge": "medium", "seconds": 0.83, "docs": 5}
 {"fridge": "large", "seconds": 0.84, "docs": 5}
 {"fridge": "small", "seconds": 0.96, "docs": 5}
+{"fridge": "near-empty", "seconds": 2.34, "docs": 5}
