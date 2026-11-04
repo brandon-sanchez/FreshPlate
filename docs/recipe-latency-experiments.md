@@ -258,3 +258,30 @@ There's no "never pad" sentence, the schema has no minimum, generation is MINIMA
 No thin dishes, no near-duplicates, and every dish passed both the inventory check and the checklist. Estimated first response, adding retrieval (about 1 s) and saving (about 0.3 s): about 2.5 s near-empty, about 9 s small, about 12.5 s medium, about 19.5 s large.
 
 **On the medium miss.** The medium fridge has one protein (chicken thighs), rice, spinach, garlic, onion and canned tomatoes. The 3 dishes are a braise, a pilaf and a soup, all different methods. Earlier `soft` runs returned 5 on this fridge. Reading them, two were close variations (two tomato-braised chicken-and-rice dishes), and one was a thin rice bowl. So 3 may be the honest count for this fridge. That's a product call, and the 4–5 bar was set before seeing it. This was a single run.
+
+## Round 6: realistic and extreme kitchens (11 live calls)
+
+The fixtures come from [household-inventory-research.md](household-inventory-research.md). A scanner study of 80 families averaged 147–194 food items per home, and a 160-family study ranged up to 389. The fixtures are built in `backend/scripts/inventory_fixtures.py` and span fridge, freezer and pantry, including spices, oils and condiments. Settings are the final ones: `final` wording, MINIMAL generation, checklist judge at MINIMAL.
+
+| Kitchen | Items (expiring ≤5 d) | Retrieval | Generation (first byte) | Checklist judge | Est. first response | Prompt tokens gen / judge | Cost per batch (gen + judge) | Returned | Pass inventory check | Judge-approved (of all 5) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| typical | 150 (16) | 2.9 s | 13.7 s (1.1 s) | 3.3 s | ≈ 20 s | 5.2k / 12.2k | $0.016 + $0.011 | 5 | **0** | 5 |
+| well-stocked | 250 (28) | 2.6 s | 12.7 s (1.5 s) | not run | ≈ 19 s | 7.0k / – | $0.016 + – | 5 | **0** | – |
+| post-Costco | 320 (37) | 2.5 s | 13.2 s (1.3 s) | 2.2 s | ≈ 18 s | 8.3k / 20.9k | $0.017 + $0.016 | 5 | **1** | 1 of 1 judged |
+| extreme | 500 (60) | 2.5 s | 12.3 s (1.5 s) | 3.1 s | ≈ 18 s | 12.5k / 34.5k | $0.021 + $0.027 | 5 | **0** | 4 |
+
+For the typical and extreme kitchens, the judge scored all 5 recipes even though they failed the inventory check, so meal quality could still be measured.
+
+**What works.**
+
+- **Latency is flat.** Generation stays at 12–14 s whatever the kitchen size, because writing the output dominates. Nothing truncated, and no run came near the 30 s budget.
+- **Recipes use abundance well.** Every batch has 5 different proteins and varied methods: stew, tacos, sheet-pan roast, stir-fry, skillet hash, steamed mussels. They pick expiring items first: 10 of 16 expiring items used on the typical kitchen, and the expiring proteins (salmon, shrimp, ground beef, chicken thighs) on the larger ones.
+- **The judge stays fast** at 2.2–3.3 s, even with a 500-item inventory in its input.
+- **One judge rejection.** On the extreme kitchen it rejected "Garlic Butter Pan-Seared Scallops" (2 servings, scallops only) as not a full meal.
+
+**What breaks.**
+
+1. **The inventory check rejects most real recipes.** This is [issue #72](https://github.com/brandon-sanchez/FreshPlate/issues/72). The check requires the inventory's exact unit and name. Real kitchens store garlic as `1 head` and olive oil as `1 l`, while recipes say `3 cloves` and `15 ml`. "lemon" fails against "lemons". Across the four batches, the failures were 36 unit or over-quantity issues and 2 name issues. It affects `main` today, and on a full kitchen the feed would end in the empty state. Fixing it is a prerequisite for the latency work to help real users.
+2. **The judge payload carries the whole inventory.** At 500 items that's 34.5k prompt tokens, and the judge costs more than generation ($0.027 against $0.021). The judge only needs the inventory items each recipe references. Sending just those would cut its prompt to about 1–2k tokens. Not built.
+3. **Retrieval slows down and blurs.** The query is every item name joined together (6,400 characters at 500 items). Retrieval went from about 0.9 s on small fridges to 2.5–2.9 s, and the embedding of a 500-ingredient list says little about what to cook. Embedding only the priority items would bound it: expiring items plus main components (proteins, produce), capped at about 30 names. Not built.
+4. **The generation prompt grows linearly** (5k to 12.5k tokens). That's acceptable today: the first byte stayed at about 1.1–1.5 s, and the cost is about $0.009 of input at 500 items. If it ever matters, the same priority ordering could cap the list. Spices and oils could become a compact name-only line.

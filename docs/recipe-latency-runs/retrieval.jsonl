@@ -2,3 +2,7 @@
 {"fridge": "large", "seconds": 0.84, "docs": 5}
 {"fridge": "small", "seconds": 0.96, "docs": 5}
 {"fridge": "near-empty", "seconds": 2.34, "docs": 5}
+{"fridge": "post-costco", "seconds": 2.53, "docs": 5}
+{"fridge": "extreme", "seconds": 2.54, "docs": 5}
+{"fridge": "well-stocked", "seconds": 2.57, "docs": 5}
+{"fridge": "typical", "seconds": 2.91, "docs": 5}

@@ -42,6 +42,7 @@ from app.ai.prompts.loader import load_prompt
 from app.ai.rag.embeddings import EmbeddingClient
 from app.ai.rag.retriever import RecipeRetriever
 from app.ai.rag.vector_store import RetrievedRecipe, SupabaseVectorStore
+from scripts.inventory_fixtures import FIXTURE_SIZES, household_inventory
 
 RESULTS_DIR = Path(__file__).resolve().parents[2] / "docs" / "recipe-latency-runs"
 RUNS_FILE = RESULTS_DIR / "runs.jsonl"
@@ -93,6 +94,8 @@ FRIDGES["large"] = [
     _item("i-cheddar", "cheddar cheese", 200, "g", 10),
     _item("i-pepper", "red bell pepper", 3, "each", 4),
 ]
+
+FRIDGES.update({size: household_inventory(size) for size in FIXTURE_SIZES})
 
 THINKING_LEVELS = {
     "default": None,
@@ -456,7 +459,8 @@ async def judge_batch(args: argparse.Namespace) -> None:
     recipes = [
         Recipe.model_validate(raw)
         for raw in run["recipes"]
-        if raw["title"] in run["inventory_passed_titles"]
+        if args.include_inventory_failures
+        or raw["title"] in run["inventory_passed_titles"]
     ]
     assess = _assess_checklist if args.judge == "checklist" else _assess
     if args.per_recipe:
@@ -483,6 +487,8 @@ async def judge_batch(args: argparse.Namespace) -> None:
         "eligible": sum(d["verdict"] == "eligible" for d in decisions),
         "seconds": call["seconds"],
         "thinking_tokens": call["thinking_tokens"],
+        "prompt_tokens": call.get("prompt_tokens"),
+        "output_tokens": call.get("output_tokens"),
         "decisions": [
             {"title": recipe.title, **decision}
             for recipe, decision in zip(recipes, decisions, strict=True)
@@ -690,6 +696,7 @@ def main() -> None:
     batch.add_argument("--thinking", choices=THINKING_LEVELS, default="default")
     batch.add_argument("--judge", choices=("strict", "checklist"), default="strict")
     batch.add_argument("--per-recipe", action="store_true")
+    batch.add_argument("--include-inventory-failures", action="store_true")
     commands.add_parser("report")
     args = parser.parse_args()
     if args.command == "report":
