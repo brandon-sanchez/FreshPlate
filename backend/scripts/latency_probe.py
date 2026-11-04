@@ -250,7 +250,22 @@ def _balanced_prompt(base: str) -> str:
     )
 
 
+def _final_prompt(base: str) -> str:
+    return (
+        f"Suggest up to {BATCH_SIZE} distinct meals this kitchen can make. Each "
+        "recipe is a separate option the cook chooses between, so every recipe may "
+        "use the full listed inventory, including the same main ingredient as another "
+        "recipe. Make each one a different dish that varies in cooking method or "
+        "format, not a variation of another. If the kitchen cannot make a real meal, "
+        f"return an empty list. {WATER_RULE}\n\n"
+        + base.replace(
+            f"Batch ceiling: {BATCH_SIZE}", f"Maximum number of recipes: {BATCH_SIZE}"
+        )
+    )
+
+
 VARIANTS: dict[str, tuple[Any, type[BaseModel] | None]] = {
+    "final": (_final_prompt, RealMealRecipes),
     "balanced": (_balanced_prompt, RealMealRecipes),
     "real": (_real_meals_prompt, RealMealRecipes),
     "base": (None, None),

@@ -28,3 +28,7 @@
 | 5 | gemini-3.6-flash | minimal | balanced | small | 1 | 1.22 | 5.37 | 0 | 899 | 2 | 2 | pending | 0 |
 | 5 | gemini-3.6-flash | minimal | balanced | medium | 1 | 1.39 | 6.31 | 0 | 1082 | 2 | 2 | pending | 0 |
 | 5 | gemini-3.6-flash | minimal | balanced | large | 1 | 1.58 | 10.18 | 0 | 1962 | 3 | 3 | pending | 0 |
+| 6 | gemini-3.6-flash | minimal | final | near-empty | 1 | 1.07 | 1.09 | 0 | 9 | 0 | 0 | 0 | 0 |
+| 6 | gemini-3.6-flash | minimal | final | small | 1 | 1.31 | 5.16 | 0 | 868 | 2 | 2 | pending | 0 |
+| 6 | gemini-3.6-flash | minimal | final | medium | 1 | 1.32 | 8.14 | 0 | 1653 | 3 | 3 | pending | 0 |
+| 6 | gemini-3.6-flash | minimal | final | large | 1 | 1.21 | 14.02 | 0 | 3109 | 5 | 5 | pending | 0 |

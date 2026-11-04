@@ -235,3 +235,26 @@ The `balanced` prompt asks for as many real meals as the kitchen supports, up to
 | large | 10.2 s | 3 | 3 | 3.8 s |
 
 No padding and no thin dishes, but medium and large stay below what those fridges support. With the `soft` wording, the same fridges gave 5 meals, 4–5 of them genuine. The "never pad" instruction makes the generator cautious. The judge is the better place to enforce "no padding".
+
+## Round 5: final combined wording check (7 live calls)
+
+The `final` prompt asks for:
+
+- up to 5 distinct meals;
+- each may use the full inventory;
+- vary the cooking method or format, not variations of one dish;
+- an empty list if the kitchen can't make a real meal;
+- water as the only free ingredient.
+
+There's no "never pad" sentence, the schema has no minimum, generation is MINIMAL, and the checklist judge runs at MINIMAL.
+
+| Fridge | Generation call | Returned | Checklist-approved | Checklist time | Bar | Result |
+|---|---|---|---|---|---|---|
+| near-empty | 1.1 s | 0 | 0 | not needed | 0 | pass |
+| small | 5.2 s | 2 (steamed rice bowl, rice porridge) | 2 | 2.2 s | 2–3 | pass |
+| medium | 8.1 s | 3 (braise, pilaf, soup) | 3 | 3.0 s | 4–5 | **miss by 1** |
+| large | 14.0 s | 5 (skillet spaghetti, rice bowl, spaghetti bake, egg fried rice, frittata) | 5 | 4.1 s | 4–5 | pass |
+
+No thin dishes, no near-duplicates, and every dish passed both the inventory check and the checklist. Estimated first response, adding retrieval (about 1 s) and saving (about 0.3 s): about 2.5 s near-empty, about 9 s small, about 12.5 s medium, about 19.5 s large.
+
+**On the medium miss.** The medium fridge has one protein (chicken thighs), rice, spinach, garlic, onion and canned tomatoes. The 3 dishes are a braise, a pilaf and a soup, all different methods. Earlier `soft` runs returned 5 on this fridge. Reading them, two were close variations (two tomato-braised chicken-and-rice dishes), and one was a thin rice bowl. So 3 may be the honest count for this fridge. That's a product call, and the 4–5 bar was set before seeing it. This was a single run.
