@@ -1,6 +1,6 @@
 # Recipe generation latency: design
 
-Status: **proposed, waiting for Brandon's approval.** No implementation code exists yet.
+Status: **on hold.** Brandon asked to try small changes first. They fixed the speed without a new architecture ([experiments](recipe-latency-experiments.md)). Kept for reference only. Brandon also ruled out a fixed dish-style list.
 Read with [the diagnosis](recipe-latency-diagnosis.md) and [the research](recipe-latency-research.md).
 
 ## Problem
