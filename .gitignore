@@ -39,3 +39,6 @@ DESIGN.md
 .mcp.json
 AGENTS.md
 .codex/config.toml
+
+# Verification run evidence and process state (see .claude/skills/verify)
+.verify/
