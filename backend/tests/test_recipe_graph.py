@@ -234,7 +234,7 @@ async def test_generate_recipes_preserves_unit_mismatched_inventory_links() -> N
                         _ingredient(
                             "Butter spread",
                             inventory_item_id="butter-spread",
-                            use_amount=1,
+                            use_amount=2,
                             unit="tbsp",
                         ),
                     )
@@ -262,7 +262,7 @@ async def test_generate_recipes_preserves_unit_mismatched_inventory_links() -> N
     assert tracked.inventory_item_id == "tomatoes"
     assert mismatched.inventory_item_id == "butter-spread"
     assert mismatched.unit == "tbsp"
-    assert mismatched.use_amount == 1
+    assert mismatched.use_amount == 2
 
     quality = check_quality(
         {
@@ -271,7 +271,9 @@ async def test_generate_recipes_preserves_unit_mismatched_inventory_links() -> N
         }
     )
     assert quality["valid_recipes"] == []
-    assert "uses unit 'tbsp'" in quality["quality_feedback"]
+    assert "from an unmeasured 'Container (14 servings)'" in quality[
+        "quality_feedback"
+    ]
 
 
 def test_check_quality_rejects_duplicate_inventory_overuse() -> None:

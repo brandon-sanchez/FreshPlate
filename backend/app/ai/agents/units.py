@@ -82,6 +82,23 @@ def inventory_amount(
     return amount * recipe.size / item.size
 
 
+def unmeasured_package_amount(
+    amount: Decimal, recipe_unit: str, item_unit: str, food: str
+) -> Decimal | None:
+    """Return grams or millilitres drawn from a package the kitchen didn't weigh.
+
+    Households record salt, spices and spreads as "1 container" or "1 jar",
+    which no recipe amount converts into. The caller lets such a package cover
+    a seasoning-sized amount. This returns ``None`` when the item has a real
+    measure or the recipe amount isn't a weight or volume.
+    """
+    recipe = _measure(recipe_unit, food)
+    item = _measure(item_unit, food)
+    if item.dimension != "count" or recipe.dimension == "count":
+        return None
+    return amount * recipe.size
+
+
 def same_food(a: str, b: str) -> bool:
     """Return whether two food names match, ignoring case, punctuation and plurals."""
     return _food_key(a) == _food_key(b)

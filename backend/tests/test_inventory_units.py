@@ -145,3 +145,27 @@ def test_a_different_food_still_fails_even_with_a_matching_unit() -> None:
     recipe = _recipe(("salmon", "shrimp", 200, "g"))
     result = check_quality({"usable_items": KITCHEN, "generated_recipes": [recipe]})
     assert "does not match inventory item name" in result["quality_feedback"]
+
+
+@pytest.mark.parametrize(
+    ("ingredients", "passes"),
+    [
+        ([("salt", "kosher salt", 4, "g")], True),
+        ([("salt", "kosher salt", 1, "tbsp")], True),
+        ([("salt", "kosher salt", 2, "tbsp")], False),
+        ([("salt", "kosher salt", 10, "g"), ("salt", "kosher salt", 10, "g")], False),
+        ([("butter-tub", "butter spread", 15, "g")], True),
+        ([("garlic", "garlic", 5, "g")], True),
+        ([("salmon", "salmon fillets", 1, "each")], False),
+    ],
+)
+def test_an_unmeasured_package_covers_at_most_a_tablespoon(ingredients, passes) -> None:
+    kitchen = [
+        *KITCHEN,
+        _item("butter-tub", "butter spread", 1, "Container (14 servings)"),
+    ]
+    recipe = _recipe(*ingredients)
+    result = check_quality({"usable_items": kitchen, "generated_recipes": [recipe]})
+    assert (result["valid_recipes"] == [recipe]) is passes
+    if not passes:
+        assert result["quality_feedback"]

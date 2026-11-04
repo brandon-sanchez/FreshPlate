@@ -25,7 +25,11 @@ from app.ai.agents.state import (
     RetrievalResult,
     UsableItem,
 )
-from app.ai.agents.units import inventory_amount, same_food
+from app.ai.agents.units import (
+    inventory_amount,
+    same_food,
+    unmeasured_package_amount,
+)
 from app.ai.llm.protocol import LLMProvider
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.prompts.loader import PromptTemplate, load_prompt
@@ -38,6 +42,9 @@ from app.ai.rag.vector_store import (
 EXPIRING_WITHIN_DAYS = 5
 MAX_QUALITY_RETRIES = 1
 QUALITY_RETRY_MIN_BUDGET_SECONDS = 20.0
+# A package the kitchen didn't weigh ("1 container" of salt) covers at most
+# one tablespoon of it per recipe, measured in grams or millilitres.
+UNMEASURED_PACKAGE_ALLOWANCE = Decimal("15")
 GENERATION_DOCS_CEILING = 5
 # The retrieval query embeds item names. A long list of every pantry item blurs
 # the embedding and slows the search, so it carries only the names that should
@@ -468,6 +475,7 @@ def _quality_issues(
     issues: list[str] = []
     grounded = False
     requested_by_id: dict[str, Decimal] = {}
+    unmeasured_by_id: dict[str, Decimal] = {}
     for ingredient in recipe.ingredients:
         if ingredient.inventory_item_id is None and is_water(ingredient.name):
             continue
@@ -495,12 +503,18 @@ def _quality_issues(
             )
         if ingredient.use_amount is None or not math.isfinite(ingredient.use_amount):
             continue
+        use_amount = Decimal(str(ingredient.use_amount))
         amount = inventory_amount(
-            Decimal(str(ingredient.use_amount)),
-            ingredient.unit,
-            item["unit"],
-            item["name"],
+            use_amount, ingredient.unit, item["unit"], item["name"]
         )
+        unmeasured = unmeasured_package_amount(
+            use_amount, ingredient.unit, item["unit"], item["name"]
+        )
+        if amount is None and unmeasured is not None:
+            unmeasured_by_id[item_id] = (
+                unmeasured_by_id.get(item_id, Decimal("0")) + unmeasured
+            )
+            continue
         if amount is None:
             issues.append(
                 f"ingredient '{ingredient.name}' uses unit '{ingredient.unit}', "
@@ -514,6 +528,14 @@ def _quality_issues(
                 f"{item['quantity']} {item['unit']}"
             )
         requested_by_id[item_id] = requested_by_id.get(item_id, Decimal("0")) + amount
+    for item_id, unmeasured in unmeasured_by_id.items():
+        item = inventory_by_id[item_id]
+        if unmeasured > UNMEASURED_PACKAGE_ALLOWANCE:
+            issues.append(
+                f"ingredients mapped to inventory item '{item_id}' use "
+                f"{_amount_text(unmeasured)} g or ml from an unmeasured "
+                f"'{item['unit']}', more than the 15 g or ml it can cover"
+            )
     for item_id, requested in requested_by_id.items():
         item = inventory_by_id[item_id]
         if requested > Decimal(str(item["quantity"])):
