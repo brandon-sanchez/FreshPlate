@@ -96,7 +96,7 @@ async def test_embedding_client_normalizes_a_768_dimension_query_embedding() -> 
 
     embedding = await client.embed(
         "cilantro",
-        deadline=PipelineDeadline(5.0),
+        deadline=PipelineDeadline(5.0, clock=lambda: 0.0),
     )
 
     assert len(embedding) == EMBEDDING_DIMENSIONS
@@ -124,7 +124,7 @@ async def test_embedding_client_embeds_documents_in_one_ordered_batch() -> None:
 
     embeddings = await client.embed_many(
         ["Coriander pasta", "Roasted carrots"],
-        deadline=PipelineDeadline(5.0),
+        deadline=PipelineDeadline(5.0, clock=lambda: 0.0),
     )
 
     assert len(embeddings) == 2
