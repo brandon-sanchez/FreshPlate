@@ -47,18 +47,18 @@ GitHub does not enforce any of this on `main` today. When branch protection is o
 
 ## Run the checks before you push
 
-To catch failures before CI does, run the same commands locally.
+To catch failures before CI does, run the same commands from the repository root. Each command runs in a subshell, so your shell stays in the root.
 
 1. Check the backend:
 
 	```bash
-	cd backend && ruff check . && pytest
+	(cd backend && ruff check . && pytest)
 	```
 
 2. Check the app:
 
 	```bash
-	cd mobile && npm run lint && npx tsc --noEmit && npm test
+	(cd mobile && npm run lint && npx tsc --noEmit && npm test)
 	```
 
 3. Build the image:
