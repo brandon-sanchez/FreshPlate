@@ -45,7 +45,7 @@ export default function HomeScreen() {
     firstNameFromMetadata(user);
   const greeting = greetingFor(new Date().getHours());
 
-  const items: InventoryItem[] = inventory.data ?? [];
+  const items: InventoryItem[] = useMemo(() => inventory.data ?? [], [inventory.data]);
   const expired = useMemo(
     () =>
       items

@@ -82,7 +82,7 @@ export default function LoginScreen() {
     };
 
     animate();
-  }, []);
+  }, [brandOpacity, brandTranslateY, buttonsOpacity, buttonsTranslateY]);
 
   const handleGoogleSignIn = async () => {
     setIsLoading("google");

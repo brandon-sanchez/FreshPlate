@@ -251,7 +251,7 @@ export default function ProfileScreen() {
             color: colors.textSubtle,
           }}
         >
-          These won't be saved until preferences ship — placeholder for now.
+          These won&apos;t be saved until preferences ship — placeholder for now.
         </Text>
       </Section>
 
