@@ -1,6 +1,6 @@
 ## TL;DR
 
-<!-- One or two sentences: what this PR does and why it matters. -->
+<!-- What this PR does and why, in one or two sentences. -->
 
 ## What changed
 
@@ -8,7 +8,7 @@
 
 ## How it was tested
 
-<!-- Commands you ran, screens you checked, and what you saw. -->
+<!-- The commands you ran, the screens you checked, and what you saw. -->
 
 -
 
