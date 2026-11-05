@@ -67,7 +67,7 @@ The `production` environment allows deploys only from `main`. It holds these var
 
 ## Cost
 
-Demo traffic fits within Cloud Run's free tier, because the service scales to zero and runs at most two instances. Google bills these past their free tiers:
+Light traffic fits within Cloud Run's free tier, because the service scales to zero and runs at most two instances. Google bills these items past their free tiers:
 
 - Cloud Build minutes.
 - Artifact Registry storage above 0.5 GB.

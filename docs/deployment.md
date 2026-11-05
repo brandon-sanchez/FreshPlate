@@ -43,7 +43,7 @@ gcloud iam service-accounts create freshplate-cloud-build --display-name='FreshP
 
 ## 4. Let GitHub sign in as the deployer
 
-This block creates a Workload Identity Federation pool and provider for GitHub. The provider accepts a token only from the `Deploy` workflow on `main` of this repository, running in the `production` environment. It also matches the repository and owner by numeric ID, because someone else could later create a repository with the same name.
+This block creates a Workload Identity Federation pool and provider for GitHub. The provider accepts a token only from the `Deploy` workflow on `main` of this repository, running in the `production` environment. The provider also matches the repository and owner by numeric ID, because someone else could later create a repository with the same name.
 
 ```bash
 gcloud iam workload-identity-pools create github --location=global --display-name='FreshPlate GitHub'
@@ -61,7 +61,7 @@ gcloud iam service-accounts add-iam-policy-binding "$FRESHPLATE_DEPLOYER_EMAIL" 
 
 ## 5. Grant the deploy and build roles
 
-These are the roles that Google documents for deploying from source. The deployer cannot change IAM policy, so it cannot make the service public. You do that once in step 8.
+These are the roles that Google documents for deploying from source. The deployer cannot change IAM policy, so it cannot make the service public. Step 8 makes the service public once, with your account.
 
 ```bash
 gcloud projects add-iam-policy-binding "$FRESHPLATE_PROJECT_ID" --member="serviceAccount:$FRESHPLATE_DEPLOYER_EMAIL" --role=roles/run.sourceDeveloper --condition=None
@@ -133,7 +133,7 @@ The `curl` command prints `{"status":"healthy","service":"freshplate-api"}`.
 
 ## 9. Create the production environment
 
-The `Deploy` workflow runs in a GitHub environment named `production` and reads its variables from there. The first command creates the environment, and the next two allow only `main` to deploy to it.
+The `Deploy` workflow runs in a GitHub environment named `production` and reads its variables from there. The first two commands create the environment and allow only `main` to deploy to it. The other commands set its six variables.
 
 ```bash
 gh api -X PUT "repos/$FRESHPLATE_REPO/environments/production" -F 'deployment_branch_policy[protected_branches]=false' -F 'deployment_branch_policy[custom_branch_policies]=true'
@@ -168,7 +168,7 @@ gcloud billing budgets create \
 
 ## Check a deployment
 
-To see the live URL and the revision that serves it, and the last five deploy runs, run:
+The first command prints the live URL and the revision that serves it. The second lists the last five deploy runs.
 
 ```bash
 gcloud run services describe freshplate-api --region="$FRESHPLATE_REGION" --format='value(status.url,status.latestReadyRevisionName)'
