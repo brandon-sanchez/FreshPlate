@@ -20,5 +20,5 @@ cachetools==5.5.0
 Pillow==12.3.0
 
 # Tests
-pytest==8.3.4
-pytest-asyncio==0.25.2
+pytest==9.2.0
+pytest-asyncio==1.4.1.post1
