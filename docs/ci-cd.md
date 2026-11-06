@@ -37,7 +37,7 @@ Runs on `main` are never cancelled. Each one gets its own concurrency group, key
 
 Dependabot (`.github/dependabot.yml`) checks Python (`backend/`), npm (`mobile/`), and GitHub Actions once a week. Each ecosystem gets at most two grouped PRs a week: one with all its minor and patch updates, and one with all its major updates. Majors are the updates that need code changes, so they stay apart, and a broken major never blocks the safe ones.
 
-Some npm packages must match the Expo SDK version: `expo`, `expo-*`, `react-native`, `jest`, `eslint`, `typescript`, and a few more listed in the config. Dependabot offers only patch updates for them. `react`, `react-dom`, and `react-test-renderer` get no updates at all, because React must exactly match the renderer bundled in `react-native`. Upgrade the SDK by hand instead. The last section shows how.
+Some npm packages must match the Expo SDK version exactly: `expo`, `expo-*`, `react`, `react-native`, `jest`, `eslint`, `typescript`, and a few more listed in the config. Dependabot never updates them, because even a patch release outside the SDK's set can break the app. To update them, run `npx expo install --fix` in `mobile/`, or upgrade the SDK. The last section shows how.
 
 A green Dependabot PR proves that the code still lints, type-checks, and passes its tests. It does not prove that the app runs on a phone, because Jest replaces native modules with mocks. Before you merge an update to a native package, run the app.
 
