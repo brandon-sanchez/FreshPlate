@@ -1,7 +1,8 @@
 version: 2
 
-# Each ecosystem gets one weekly PR for minor and patch updates. Major updates
-# arrive as their own PRs, so one breaking bump never blocks the safe ones.
+# Each ecosystem gets at most two weekly PRs: one for minor and patch updates,
+# and one for major updates. Keeping majors apart means a breaking bump never
+# blocks the safe ones, and bundling them keeps the PR count low.
 updates:
   - package-ecosystem: pip
     directory: /backend
@@ -11,6 +12,9 @@ updates:
       python:
         patterns: ["*"]
         update-types: [minor, patch]
+      python-major:
+        patterns: ["*"]
+        update-types: [major]
 
   - package-ecosystem: npm
     directory: /mobile
@@ -19,6 +23,14 @@ updates:
     # These packages must match the Expo SDK, so SDK upgrades are done by hand
     # with `npx expo install --fix`. Dependabot only offers their patch releases.
     ignore:
+      # React must exactly match the renderer bundled in react-native, so even
+      # its patch releases wait for the next Expo SDK upgrade.
+      - dependency-name: react
+      - dependency-name: react-dom
+      - dependency-name: react-test-renderer
+      # Each major release targets a newer React than the Expo SDK ships.
+      - dependency-name: "@testing-library/react-native"
+        update-types: ["version-update:semver-major"]
       - dependency-name: expo
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "expo-*"
@@ -28,12 +40,6 @@ updates:
       - dependency-name: "@expo-google-fonts/*"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "*-expo"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-      - dependency-name: react
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-      - dependency-name: react-dom
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-      - dependency-name: react-test-renderer
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "@types/react"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
@@ -55,6 +61,9 @@ updates:
       npm:
         patterns: ["*"]
         update-types: [minor, patch]
+      npm-major:
+        patterns: ["*"]
+        update-types: [major]
 
   - package-ecosystem: github-actions
     directory: /
@@ -64,3 +73,6 @@ updates:
       actions:
         patterns: ["*"]
         update-types: [minor, patch]
+      actions-major:
+        patterns: ["*"]
+        update-types: [major]
