@@ -35,15 +35,15 @@ Runs on `main` are never cancelled. Each one gets its own concurrency group, key
 
 ## Dependabot sends weekly grouped updates
 
-Dependabot (`.github/dependabot.yml`) checks Python (`backend/`), npm (`mobile/`), and GitHub Actions once a week. Each ecosystem gets one grouped PR with all its minor and patch updates. Each major update gets its own PR, because majors are the updates that need code changes, and one broken major should not block the safe ones.
+Dependabot (`.github/dependabot.yml`) checks Python (`backend/`), npm (`mobile/`), and GitHub Actions once a week. Each ecosystem gets at most two grouped PRs a week: one with all its minor and patch updates, and one with all its major updates. Majors are the updates that need code changes, so they stay apart, and a broken major never blocks the safe ones.
 
-Some npm packages must match the Expo SDK version: `expo`, `expo-*`, `react`, `react-native`, `jest`, `eslint`, `typescript`, and a few more listed in the config. Dependabot offers only patch updates for them. Upgrade the SDK by hand instead. The last section shows how.
+Some npm packages must match the Expo SDK version: `expo`, `expo-*`, `react-native`, `jest`, `eslint`, `typescript`, and a few more listed in the config. Dependabot offers only patch updates for them. `react`, `react-dom`, and `react-test-renderer` get no updates at all, because React must exactly match the renderer bundled in `react-native`. Upgrade the SDK by hand instead. The last section shows how.
 
 A green Dependabot PR proves that the code still lints, type-checks, and passes its tests. It does not prove that the app runs on a phone, because Jest replaces native modules with mocks. Before you merge an update to a native package, run the app.
 
-## Branch protection on `main` is not on yet
+## Branch protection on `main`
 
-GitHub does not enforce any of this on `main` today. When branch protection is on, every change must reach `main` through a PR, and the `Backend`, `Mobile`, and `Docker build` checks must pass first. The rule applies to admins too. To see the current rules, open **Settings** > **Branches** on GitHub.
+Every change must reach `main` through a PR, and the `Backend`, `Mobile`, and `Docker build` checks must pass first. Force pushes to `main` and deleting it are blocked. The rule applies to admins too. To see the current rules, open **Settings** > **Branches** on GitHub.
 
 ## Run the checks before you push
 
