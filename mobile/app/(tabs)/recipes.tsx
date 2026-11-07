@@ -79,7 +79,6 @@ export default function RecipesScreen() {
     });
   };
   const startCook = async (recipe: RecipeSuggestion) => {
-    setPreviewRecipe(null);
     if (await cook.start(recipe)) setDetailRecipe(recipe);
   };
   const detail = (

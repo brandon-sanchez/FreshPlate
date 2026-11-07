@@ -228,7 +228,10 @@ export default function RecipeIngredientsSheet({
           </ScrollView>
           {recipe && (
             <RecipePressable
-              onPress={() => onCook(recipe)}
+              onPress={() => {
+                onClose();
+                onCook(recipe);
+              }}
               accessibilityRole="button"
               accessibilityLabel={`Cook ${recipe.title}`}
               testID="recipe-preview-cook"

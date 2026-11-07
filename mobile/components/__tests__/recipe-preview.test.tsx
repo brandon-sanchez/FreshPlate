@@ -58,11 +58,13 @@ describe("recipe preview sheet", () => {
     expect(onOpen).toHaveBeenCalledWith(recipe);
   });
 
-  it("starts cooking the previewed recipe from its primary action", () => {
+  it("closes and starts cooking the previewed recipe from its primary action", () => {
     const onOpen = jest.fn();
+    const onClose = jest.fn();
     const onCook = jest.fn();
-    const screen = renderSheet(onOpen, jest.fn(), onCook);
+    const screen = renderSheet(onOpen, onClose, onCook);
     fireEvent.press(screen.getByLabelText("Cook Pasta"));
+    expect(onClose).toHaveBeenCalled();
     expect(onCook).toHaveBeenCalledWith(recipe);
     expect(onOpen).not.toHaveBeenCalled();
   });

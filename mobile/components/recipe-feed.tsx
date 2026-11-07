@@ -292,10 +292,7 @@ export default function RecipeFeed({
         recipe={ingredientRecipe}
         onClose={() => setIngredientRecipe(null)}
         onOpenDetail={onOpenDetail}
-        onCook={(recipe) => {
-          setIngredientRecipe(null);
-          onCook(recipe);
-        }}
+        onCook={onCook}
       />
     </View>
   );
