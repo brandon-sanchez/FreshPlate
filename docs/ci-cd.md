@@ -1,6 +1,6 @@
 # How CI checks every change
 
-GitHub Actions runs the `CI` workflow (`.github/workflows/ci.yml`) on every pull request and on every commit that reaches `main`. A PR is ready to merge when all three of its jobs pass. This page explains what each job checks, when the workflow runs, and how dependency updates arrive. Deployment is a separate workflow and is not covered here.
+GitHub Actions runs the `CI` workflow (`.github/workflows/ci.yml`) on every pull request and on every commit that reaches `main`. A PR is ready to merge when all three of its jobs pass. This page explains what each job checks, when the workflow runs, and how dependency updates arrive. Deployment is a separate workflow, described in [Cloud Run deployment reference](deployment-reference.md).
 
 ## Three jobs check the backend, the app, and the image
 

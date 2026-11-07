@@ -10,7 +10,7 @@ The `Deploy` workflow in `.github/workflows/deploy.yml` deploys the backend to C
 - Runs one deploy at a time. Before deploying, a separate `freshness` job checks through the GitHub API that the tested commit is still the tip of `main`. If it is not, the deploy is skipped, so an older commit never replaces a newer one, and a skipped run never creates a `production` deployment.
 - Fails at its first deploy step, and names each missing variable, if any `production` variable is unset.
 - Gets a short-lived GitHub OIDC token, then signs in to Google Cloud as `github-deployer` through Workload Identity Federation. No service account key exists.
-- Runs `gcloud run deploy --source=backend`. Cloud Build builds the image from `backend/Dockerfile`, and `backend/.gcloudignore` keeps `.env`, tests, and local data out of the upload.
+- Deploys `backend/` from source with `google-github-actions/deploy-cloudrun`. Cloud Build builds the image from `backend/Dockerfile`, and `backend/.gcloudignore` keeps `.env`, tests, and local data out of the upload.
 - Fails if the new revision does not serve 100% of traffic, which happens when traffic was pinned during a rollback.
 - Calls `/health` on the service up to five times, 10 seconds apart. The job fails if no call returns 200 with `"service": "freshplate-api"` in the body.
 
