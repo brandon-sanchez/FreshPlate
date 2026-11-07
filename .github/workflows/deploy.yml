@@ -104,18 +104,24 @@ jobs:
             --max-instances=2
             --set-env-vars=LANGSMITH_TRACING=true,LANGSMITH_PROJECT=freshplate
             --set-secrets=GEMINI_API_KEY=gemini-api-key:latest,SUPABASE_URL=supabase-url:latest,SUPABASE_PUBLISHABLE_KEY=supabase-publishable-key:latest,SUPABASE_SECRET_KEY=supabase-secret-key:latest,LANGSMITH_API_KEY=langsmith-api-key:latest
+      # After a manual rollback pins traffic to an older revision, Cloud Run
+      # keeps that split for every later deploy, so a new revision would get no
+      # traffic while the service URL still answers from the old one.
+      - name: Check the new revision serves all traffic
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+        run: |
+          set -euo pipefail
+          if ! gcloud run services describe freshplate-api --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json \
+            | jq -e '.status.latestReadyRevisionName as $rev | any(.status.traffic[]; .revisionName == $rev and .percent == 100)' >/dev/null; then
+            echo "::error::The new revision is not serving 100% of traffic. If traffic was pinned during a rollback, see the Roll back section of docs/deployment.md."
+            exit 1
+          fi
       - name: Smoke test the deployed API
         env:
           SERVICE_URL: ${{ steps.deploy.outputs.url }}
         run: |
           set -euo pipefail
-          for attempt in 1 2 3 4 5; do
-            if body="$(curl --fail --silent --show-error --max-time 30 "$SERVICE_URL/health")" && grep -q '"service": *"freshplate-api"' <<<"$body"; then
-              echo "$body"
-              exit 0
-            fi
-            echo "Smoke test attempt $attempt failed; retrying."
-            sleep 10
-          done
-          echo "::error::$SERVICE_URL/health did not return the freshplate-api health response."
-          exit 1
+          curl --fail --silent --show-error --max-time 30 --retry 4 --retry-delay 10 --retry-all-errors "$SERVICE_URL/health" \
+            | jq -e '.service == "freshplate-api"'

@@ -186,3 +186,20 @@ gcloud secrets versions list "$FRESHPLATE_SECRET" --filter=state=enabled --sort-
 ```
 
 Running instances keep the old value. The next deploy, from a push to `main` or the step 8 command, starts instances that read the new value.
+
+## Roll back
+
+To send all traffic back to an earlier revision, list the revisions, then pin traffic to the one you want.
+
+```bash
+gcloud run revisions list --service=freshplate-api --region="$FRESHPLATE_REGION" --limit=5
+gcloud run services update-traffic freshplate-api --region="$FRESHPLATE_REGION" --to-revisions=<revision-name>=100
+```
+
+Pinned traffic stays pinned. Later deploys create new revisions that get no traffic, and the `Deploy` workflow fails until you send traffic back to the latest revision. After the fix reaches `main`, run:
+
+```bash
+gcloud run services update-traffic freshplate-api --region="$FRESHPLATE_REGION" --to-latest
+```
+
+The image cleanup policy in step 6 keeps only the two newest images, so the previous revision is the only rollback target that is sure to still start. To roll back further, revert the commit on `main` and let it deploy.
