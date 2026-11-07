@@ -24,6 +24,7 @@ class RecipeInventoryContext(BaseModel):
     unit: str = Field(default="item", min_length=1)
     expiration_date: date | None = None
     depleted_at: str | None = None
+    category: str | None = None
 
     @field_validator("id", "name", "unit")
     @classmethod

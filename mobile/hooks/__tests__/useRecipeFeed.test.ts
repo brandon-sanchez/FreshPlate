@@ -30,6 +30,7 @@ const request: RecipeFeedSessionRequest = {
       quantity: 1,
       unit: "bag",
       expiration_date: "2026-08-06",
+      category: "Produce",
     },
   ],
   preferences: { meal: "Dinner" },
