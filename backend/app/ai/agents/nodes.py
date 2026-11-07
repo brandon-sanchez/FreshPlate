@@ -192,7 +192,11 @@ async def generate_recipes(
 
 
 def check_quality(state: Mapping[str, Any]) -> QualityResult:
-    """Keep only complete recipes grounded in the analyzed inventory."""
+    """Keep only complete recipes grounded in the analyzed inventory.
+
+    An empty batch is the generator's honest answer for a kitchen that cannot
+    make a meal, so it produces no quality feedback and never triggers a retry.
+    """
     usable_items = _usable_items(state.get("usable_items", []))
     inventory_by_id = {item["id"]: item for item in usable_items}
     generated = state.get("generated_recipes", [])
@@ -231,11 +235,7 @@ def route_after_quality(
     quality_retry_limit: int = MAX_QUALITY_RETRIES,
     retry_only_when_no_valid: bool = False,
 ) -> Literal["retry", "finish"]:
-    """Retry only when generated recipes were rejected, within the retry budget.
-
-    An empty batch is the generator's honest answer for a kitchen that cannot
-    make a meal, so it carries no quality feedback and never triggers a retry.
-    """
+    """Retry only when generated recipes were rejected, within the retry budget."""
     if retry_only_when_no_valid and state.get("valid_recipes"):
         return "finish"
     if state.get("quality_feedback") and _retry_count(state) < quality_retry_limit:

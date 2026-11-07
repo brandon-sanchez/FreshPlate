@@ -140,8 +140,8 @@ def _kitchen_items(
     """
     items: dict[str, dict[str, Any]] = {}
     for ingredient in recipe.ingredients:
-        item = inventory_by_id.get(ingredient.inventory_item_id or "")
-        if item is not None:
+        if ingredient.inventory_item_id in inventory_by_id:
+            item = inventory_by_id[ingredient.inventory_item_id]
             items[item["id"]] = {
                 "name": item["name"],
                 "quantity": item["quantity"],
