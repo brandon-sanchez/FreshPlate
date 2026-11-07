@@ -4,7 +4,7 @@ import { useAuthStore } from "@/stores/auth";
 import type { RecipeSuggestion } from "@/types/recipes";
 
 /**
- * Screen-facing access to the single active cook. Starting is scoped to the
+ * Access to the single active cook. Starting is scoped to the
  * signed-in user and household; failures surface as toasts so callers only
  * branch on whether the cook is now active.
  */

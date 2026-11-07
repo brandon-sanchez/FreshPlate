@@ -348,8 +348,8 @@ export default function RecipeFeed({
   const swipeX = useRef(new NativeAnimated.Value(0)).current;
   const onCookRef = useRef(onCook);
   onCookRef.current = onCook;
-  // Swipe right skips the preview sheet and starts cooking. Only rightward
-  // drags activate, and vertical movement hands the touch back to the feed.
+  // Swipe right skips the preview sheet and starts cooking. Vertical drags
+  // stay with the feed's scroll.
   const cookSwipe = useRef(
     Gesture.Pan()
       .withTestId(`recipe-card-cook-swipe-${recipe.recipe_id}`)
