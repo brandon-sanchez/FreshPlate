@@ -16,7 +16,7 @@ psycopg[binary]==3.3.7
 
 # Supabase auth token verification
 python-jose[cryptography]==3.5.0
-cachetools==5.5.0
+cachetools==7.2.8
 Pillow==13.0.0
 
 # Tests
