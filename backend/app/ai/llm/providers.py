@@ -163,13 +163,21 @@ class GeminiProvider:
                 ),
             )
         except Exception as exc:
+            status_code = status_code_from_error(exc)
+            self._log_call(
+                None,
+                response_model,
+                thinking,
+                started,
+                outcome=f"error:{status_code or type(exc).__name__}",
+            )
             raise ProviderError(
                 "Gemini generation failed",
                 cause=exc,
-                status_code=status_code_from_error(exc),
+                status_code=status_code,
                 retry_after_seconds=retry_after_seconds_from_error(exc),
             ) from exc
-        self._log_call(response, response_model, thinking, started)
+        self._log_call(response, response_model, thinking, started, outcome="ok")
 
         try:
             response_text = response.text
@@ -191,13 +199,20 @@ class GeminiProvider:
         response_model: type[BaseModel],
         thinking: ThinkingLevel | None,
         started: float,
+        *,
+        outcome: str,
     ) -> None:
-        """Log one structured record per Gemini call for latency and spend."""
+        """Log one structured record per Gemini call for latency and spend.
+
+        Failed calls are logged too, with zero tokens, because a timeout that
+        used up the deadline is the slowest call a request can make.
+        """
         usage = getattr(response, "usage_metadata", None)
         call = {
             "model": self.model,
             "thinking": thinking or "default",
             "response_model": response_model.__name__,
+            "outcome": outcome,
             "prompt_tokens": _token_count(usage, "prompt_token_count"),
             "output_tokens": _token_count(usage, "candidates_token_count"),
             "thinking_tokens": _token_count(usage, "thoughts_token_count"),
