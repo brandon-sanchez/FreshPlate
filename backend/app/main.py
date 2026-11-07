@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 import httpx
@@ -31,6 +32,7 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.debug else None,
     )
 
+    configure_logging()
     configure_exception_handlers(app)
 
     app.include_router(health_router)
@@ -40,6 +42,22 @@ def create_app() -> FastAPI:
     app.include_router(recipes_router)
 
     return app
+
+
+def configure_logging() -> None:
+    """Send the app's INFO records to stderr beside uvicorn's own logs.
+
+    Uvicorn configures only its own loggers, so without this the per-call
+    Gemini timing and token records and the feed summaries are dropped.
+    """
+    logger = logging.getLogger("freshplate")
+    logger.setLevel(logging.INFO)
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(
+            logging.Formatter("%(levelname)s:     %(name)s %(message)s")
+        )
+        logger.addHandler(handler)
 
 
 def configure_exception_handlers(app: FastAPI) -> None:
