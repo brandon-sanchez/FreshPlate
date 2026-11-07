@@ -194,7 +194,7 @@ async def generate_recipes(
 def check_quality(state: Mapping[str, Any]) -> QualityResult:
     """Keep only complete recipes grounded in the analyzed inventory.
 
-    An empty batch is the generator's honest answer for a kitchen that cannot
+    An empty batch is how the generator reports a kitchen that cannot
     make a meal, so it produces no quality feedback and never triggers a retry.
     """
     usable_items = _usable_items(state.get("usable_items", []))

@@ -463,7 +463,6 @@ def test_honest_empty_session_reaches_the_empty_state_without_a_retry(
     signing_key: SigningKey,
     patch_jwks,
 ) -> None:
-    """A kitchen that cannot make a meal gets one generation call, then 200."""
     patch_jwks([signing_key])
     provider = FakeProvider([{"recipes": []}])
     app = create_app()
