@@ -29,6 +29,12 @@ class RecordingProvider(FakeProvider):
         return await super().generate(prompt, **kwargs)
 
 
+def _kind(response_model):
+    if issubclass(response_model, RecipeGenerationResponse):
+        return RecipeGenerationResponse
+    return response_model
+
+
 class EmptyRetriever:
     async def search(self, query, **kwargs):
         return []
@@ -80,7 +86,7 @@ async def test_both_graphs_regenerate_rejected_meals_under_one_deadline(refill):
     result = await graph.ainvoke(state)
     assert [r.model_dump() for r in result["valid_recipes"]] == [substantial]
     assert result["retry_count"] == 1
-    assert [call["response_model"] for call in provider.calls] == [
+    assert [_kind(call["response_model"]) for call in provider.calls] == [
         RecipeGenerationResponse, MealAssessment,
         RecipeGenerationResponse, MealAssessment,
     ]
