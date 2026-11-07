@@ -507,15 +507,15 @@ def _quality_issues(
         amount = inventory_amount(
             use_amount, ingredient.unit, item["unit"], item["name"]
         )
-        unmeasured = unmeasured_package_amount(
-            use_amount, ingredient.unit, item["unit"], item["name"]
-        )
-        if amount is None and unmeasured is not None:
-            unmeasured_by_id[item_id] = (
-                unmeasured_by_id.get(item_id, Decimal("0")) + unmeasured
-            )
-            continue
         if amount is None:
+            unmeasured = unmeasured_package_amount(
+                use_amount, ingredient.unit, item["unit"], item["name"]
+            )
+            if unmeasured is not None:
+                unmeasured_by_id[item_id] = (
+                    unmeasured_by_id.get(item_id, Decimal("0")) + unmeasured
+                )
+                continue
             issues.append(
                 f"ingredient '{ingredient.name}' uses unit '{ingredient.unit}', "
                 f"which cannot be converted to the inventory unit '{item['unit']}'"
