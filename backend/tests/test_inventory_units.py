@@ -64,6 +64,12 @@ KITCHEN = [
         (2, "cans", "Can", "black beans", "2"),
         (300, "g", "Containers (150 g each)", "yogurt", "2"),
         (1, "item", "each", "onion", "1"),
+        (2, "kgs", "g", "rice", "2000"),
+        (500, "mls", "l", "milk", "0.5"),
+        (1, "lbs", "oz", "butter", "16"),
+        (5, "kg", "Bag (2.5 lb each)", "rice", "4.4092"),
+        (1.5, "l", "Bottles (.75 l each)", "wine", "2"),
+        (2, "tbsp.", "fl. oz.", "olive oil", "1"),
     ],
 )
 def test_compatible_units_convert_into_the_inventory_unit(

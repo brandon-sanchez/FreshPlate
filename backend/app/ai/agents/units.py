@@ -57,9 +57,13 @@ _COUNT_ALIASES = {
 _FOOD_COUNTS = {("garlic", "head"): ("clove", Decimal("10"))}
 
 _PACKAGE_SIZE = re.compile(
-    r"^(?P<unit>.*?)\s*\(\s*(?P<size>\d+(?:\.\d+)?)\s*(?P<inner>[^\d()]+?)\s+each\s*\)$"
+    r"^(?P<unit>.*?)\s*\(\s*(?P<size>\d*\.?\d+)\s*(?P<inner>[^\d()]+?)\s+each\s*\)$"
 )
 _WORD = re.compile(r"[^\w\s]+", flags=re.UNICODE)
+# Abbreviation periods ("tbsp.", "fl. oz.") are dropped; decimal points are not.
+_ABBREVIATION_PERIOD = re.compile(r"\.(?!\d)")
+# Plural abbreviations too short for the general plural rule in _singular.
+_PLURAL_ABBREVIATIONS = {"gs": "g", "kgs": "kg", "lbs": "lb", "mls": "ml", "ozs": "oz"}
 
 
 @dataclass(frozen=True)
@@ -105,7 +109,7 @@ def same_food(a: str, b: str) -> bool:
 
 
 def _measure(unit: str, food: str) -> Measure:
-    text = " ".join(unit.casefold().replace(".", "").split())
+    text = " ".join(_ABBREVIATION_PERIOD.sub("", unit.casefold()).split())
     package = _PACKAGE_SIZE.match(text)
     if package is not None:
         inner = _measure(package["inner"], food)
@@ -117,8 +121,6 @@ def _measure(unit: str, food: str) -> Measure:
         return Measure("mass", "g", _MASS[word])
     if word in _VOLUME:
         return Measure("volume", "ml", _VOLUME[word])
-    if word in {"lbs", "ozs"}:
-        return Measure("mass", "g", _MASS[word[:-1]])
     count = _COUNT_ALIASES.get(word, word)
     food_count = _FOOD_COUNTS.get((_food_key(food), count))
     if food_count is not None:
@@ -135,6 +137,8 @@ def _singular_phrase(text: str) -> str:
 
 
 def _singular(word: str) -> str:
+    if word in _PLURAL_ABBREVIATIONS:
+        return _PLURAL_ABBREVIATIONS[word]
     if len(word) <= 3 or word.endswith(("ss", "us", "is")):
         return word
     if word.endswith("ies"):
