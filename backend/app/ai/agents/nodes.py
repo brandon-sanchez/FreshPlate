@@ -13,7 +13,11 @@ from typing import Any, Literal, Protocol
 from pydantic import ValidationError
 
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING, MAX_BATCH_CEILING
-from app.ai.agents.models import Recipe, RecipeGenerationResponse
+from app.ai.agents.models import (
+    Recipe,
+    RecipeGenerationResponse,
+    recipe_batch_model,
+)
 from app.ai.agents.state import (
     GenerationResult,
     InventoryAnalysis,
@@ -34,6 +38,12 @@ EXPIRING_WITHIN_DAYS = 5
 MAX_QUALITY_RETRIES = 1
 QUALITY_RETRY_MIN_BUDGET_SECONDS = 20.0
 GENERATION_DOCS_CEILING = 5
+WATER = "water"
+WATER_RULE = (
+    "Water is always available: never list it as an ingredient, but steps may use "
+    "it. Every other ingredient, including salt, pepper, oil, butter and every "
+    "seasoning or fat, must come from the listed inventory."
+)
 _QUERY_TERM_SEPARATOR = re.compile(r"[^\w]+", flags=re.UNICODE)
 
 
@@ -163,9 +173,10 @@ async def generate_recipes(
     active_deadline = deadline or _state_deadline(state)
     response = await provider.generate(
         _generation_prompt(state, usable_items),
-        response_model=RecipeGenerationResponse,
+        response_model=recipe_batch_model(batch_ceiling),
         system_instruction=template.system,
         deadline=active_deadline,
+        thinking=template.thinking,
     )
     validated_response = RecipeGenerationResponse.model_validate(response)
     retry_count = _retry_count(state)
@@ -210,6 +221,11 @@ def check_quality(state: Mapping[str, Any]) -> QualityResult:
         "valid_recipes": valid_recipes,
         "quality_feedback": "\n".join(failures) if failures else None,
     }
+
+
+def is_water(name: str) -> bool:
+    """Return whether an ingredient is water, the one ingredient always on hand."""
+    return normalize_query_term(name) == WATER
 
 
 def route_after_quality(
@@ -335,7 +351,17 @@ def _generation_prompt(
     usable_items: Sequence[UsableItem],
 ) -> str:
     """Build the grounded user prompt for the versioned system instruction."""
+    ceiling = _batch_ceiling(state)
     lines = [
+        (
+            f"Suggest up to {ceiling} distinct meals this kitchen can make. Each "
+            "recipe is a separate option the cook chooses between, so every recipe "
+            "may use the full listed inventory, including the same main ingredient "
+            "as another recipe. Make each one a different dish that varies in "
+            "cooking method or format, not a variation of another. If the kitchen "
+            f"cannot make a real meal, return an empty list. {WATER_RULE}"
+        ),
+        "",
         (
             "Create up to the requested number of recipe suggestions from the "
             "usable inventory."
@@ -402,7 +428,7 @@ def _generation_prompt(
         lines.extend(("", "Do not repeat these shown titles:"))
         lines.append(", ".join(str(title) for title in exclude_titles) or "None")
 
-    lines.extend(("", f"Batch ceiling: {_batch_ceiling(state)}"))
+    lines.extend(("", f"Maximum number of recipes: {ceiling}"))
     feedback = state.get("quality_feedback")
     if feedback:
         lines.extend(("", "Quality feedback from the previous attempt:", str(feedback)))
@@ -417,6 +443,8 @@ def _quality_issues(
     grounded = False
     requested_by_id: dict[str, Decimal] = {}
     for ingredient in recipe.ingredients:
+        if ingredient.inventory_item_id is None and is_water(ingredient.name):
+            continue
         if ingredient.use_amount is None:
             issues.append(f"ingredient '{ingredient.name}' is missing use_amount")
         elif not math.isfinite(ingredient.use_amount) or ingredient.use_amount <= 0:
