@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from app.ai.agents.models import Recipe
+from app.ai.agents.nodes import is_water
 
 
 def ingredient_coverage_percent(
@@ -18,9 +19,15 @@ def ingredient_coverage_percent(
 
     The API and the future eval runner call this same function so the match
     percentage shown in the mobile feed cannot drift from the measured metric.
-    Untracked staples count in the denominator but not the numerator.
+    Untracked staples count in the denominator but not the numerator. Water
+    is always on hand, so an unmapped water ingredient is left out of both.
     """
-    total_ingredients = len(recipe.ingredients)
+    ingredients = [
+        ingredient
+        for ingredient in recipe.ingredients
+        if ingredient.inventory_item_id is not None or not is_water(ingredient.name)
+    ]
+    total_ingredients = len(ingredients)
     if total_ingredients == 0:
         return 0
 
@@ -31,7 +38,7 @@ def ingredient_coverage_percent(
     }
     mapped_ingredients = sum(
         ingredient.inventory_item_id in inventory_ids
-        for ingredient in recipe.ingredients
+        for ingredient in ingredients
     )
     return round(mapped_ingredients * 100 / total_ingredients)
 

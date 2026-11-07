@@ -95,7 +95,7 @@ Each node has one job:
 
 1. `analyze_inventory` drops expired, used-up, and zero-quantity items. It puts items that expire within five days first and flags them, so the prompt can favor food that is about to go bad. It uses no model.
 2. `retrieve_recipes` turns the item names into one query, embeds it with `gemini-embedding-001` (768 dimensions), and calls the `match_recipe_embeddings` function. That function searches an HNSW cosine index over the Food.com recipes in `recipe_embeddings`.
-3. `generate_recipes` sends the usable items and up to five retrieved recipes to `gemini-3.6-flash` with the `generate_recipes_v3` prompt. Gemini returns JSON that must match a Pydantic schema. Each ingredient names the inventory item it uses and how much.
+3. `generate_recipes` sends the usable items and up to five retrieved recipes to `gemini-3.6-flash` with the `generate_recipes_v4` prompt. Gemini returns JSON that must match a Pydantic schema. Each ingredient names the inventory item it uses and how much.
 4. `check_quality` runs in two stages. Code checks first. Every ingredient must map to a real inventory item with the same name and unit, and it can't use more than the household has. Recipes that pass then go to a Gemini judge (`assess_meals_v2`). The judge answers a short checklist for each recipe, and code turns the first failed answer into `insufficient`, `incoherent`, or `unsupported_ingredient`. Only recipes that pass every answer reach the user.
 
 The code check runs before the judge because it is free and exact. A recipe that asks for three eggs when the household has two is wrong, and no model call is needed to say so. The judge handles what code can't decide, such as whether "rice and ketchup" is a meal.
