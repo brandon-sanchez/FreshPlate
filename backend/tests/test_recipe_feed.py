@@ -486,6 +486,34 @@ def test_honest_empty_session_reaches_the_empty_state_without_a_retry(
     assert response.json()["data"]["empty_reason"] == "INVENTORY_UNSUPPORTED"
 
 
+def test_session_retrieval_query_leads_with_expiring_items_then_proteins(
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    patch_jwks([signing_key])
+    retriever = StubRetriever()
+    app = create_app()
+    _install_dependencies(
+        app, FakeProvider([{"recipes": []}]), retriever, InMemoryRecipeFeedStore()
+    )
+    inventory = [
+        {**item, "category": "Produce"} for item in _inventory()
+    ] + [
+        {"id": "salmon", "name": "Salmon", "quantity": 400, "unit": "g",
+         "category": "Meat & Seafood"},
+    ]
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"inventory": inventory, "preferences": {}},
+        )
+
+    assert response.status_code == 200
+    assert retriever.calls == ["baby spinach salmon tomatoes"]
+
+
 def test_feed_stops_generating_at_the_six_run_session_cap(
     signing_key: SigningKey,
     patch_jwks,

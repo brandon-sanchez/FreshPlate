@@ -32,6 +32,7 @@ export function toRecipeInventoryContext(
     quantity: item.quantity,
     unit: item.unit,
     expiration_date: item.expiration_date,
+    category: item.category?.name ?? null,
   }));
 }
 

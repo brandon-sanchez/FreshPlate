@@ -38,6 +38,11 @@ EXPIRING_WITHIN_DAYS = 5
 MAX_QUALITY_RETRIES = 1
 QUALITY_RETRY_MIN_BUDGET_SECONDS = 20.0
 GENERATION_DOCS_CEILING = 5
+# The retrieval query embeds item names. A long list of every pantry item blurs
+# the embedding and slows the search, so it carries only the names that should
+# steer the meal: expiring items first, then main components, then the rest.
+RETRIEVAL_QUERY_TERM_LIMIT = 30
+MAIN_COMPONENT_CATEGORIES = frozenset({"meat & seafood"})
 WATER = "water"
 WATER_RULE = (
     "Water is always available: never list it as an ingredient, but steps may use "
@@ -69,7 +74,9 @@ def analyze_inventory(
 
     Expired, depleted, and zero-quantity rows never reach the generator. Rows
     expiring today through five days from ``today`` are placed first and carry
-    an explicit ``is_expiring`` flag for downstream prompt and UI work.
+    an explicit ``is_expiring`` flag for downstream prompt and UI work. The
+    retrieval query lists expiring items, then main components, then the rest,
+    capped at ``RETRIEVAL_QUERY_TERM_LIMIT`` names.
     """
     reference_date = today or date.today()
     raw_inventory = state.get("inventory", [])
@@ -79,6 +86,7 @@ def analyze_inventory(
         raise ValueError("Recipe state inventory must be a sequence")
 
     candidates: list[tuple[tuple[int, int, int], UsableItem, str]] = []
+    query_candidates: list[tuple[tuple[int, int, int], str]] = []
     for index, raw_item in enumerate(raw_inventory):
         if not isinstance(raw_item, Mapping):
             raise ValueError("Recipe state inventory items must be mappings")
@@ -122,11 +130,19 @@ def analyze_inventory(
         candidates.append(
             ((priority, days_priority, index), usable_item, normalized_name)
         )
+        query_priority = 0 if is_expiring else 1 if _is_main(raw_item) else 2
+        query_candidates.append(
+            ((query_priority, days_priority, index), normalized_name)
+        )
 
     candidates.sort(key=lambda candidate: candidate[0])
+    query_candidates.sort(key=lambda candidate: candidate[0])
     usable_items = [candidate[1] for candidate in candidates]
-    query_terms = _unique_terms(candidate[2] for candidate in candidates)
-    return {"usable_items": usable_items, "query_terms": query_terms}
+    query_terms = _unique_terms(candidate[1] for candidate in query_candidates)
+    return {
+        "usable_items": usable_items,
+        "query_terms": query_terms[:RETRIEVAL_QUERY_TERM_LIMIT],
+    }
 
 
 async def retrieve_recipes(
@@ -296,6 +312,14 @@ def _expiration_date(value: Any) -> date | None:
 
 def _is_depleted(value: Any) -> bool:
     return value is not None and value != ""
+
+
+def _is_main(item: Mapping[str, Any]) -> bool:
+    category = item.get("category")
+    return (
+        isinstance(category, str)
+        and category.strip().casefold() in MAIN_COMPONENT_CATEGORIES
+    )
 
 
 def _unique_terms(terms: Iterable[str]) -> list[str]:
