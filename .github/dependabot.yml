@@ -1,0 +1,65 @@
+version: 2
+
+# Each ecosystem gets at most two weekly PRs: one for minor and patch updates,
+# and one for major updates. Keeping majors apart means a breaking bump never
+# blocks the safe ones, and bundling them keeps the PR count low.
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]
+        update-types: [minor, patch]
+      python-major:
+        patterns: ["*"]
+        update-types: [major]
+
+  - package-ecosystem: npm
+    directory: /mobile
+    schedule:
+      interval: weekly
+    # Each Expo SDK pins exact versions of these packages, and even a patch
+    # release outside that set can break the app (react-native 0.81.6 needs a
+    # newer React than SDK 54 ships). Update them only with
+    # `npx expo install --fix` or an SDK upgrade, never through Dependabot.
+    ignore:
+      # Each major release targets a newer React than the Expo SDK ships.
+      - dependency-name: "@testing-library/react-native"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: expo
+      - dependency-name: "expo-*"
+      - dependency-name: "@expo/*"
+      - dependency-name: "@expo-google-fonts/*"
+      - dependency-name: "*-expo"
+      - dependency-name: react
+      - dependency-name: react-dom
+      - dependency-name: react-test-renderer
+      - dependency-name: "@types/react"
+      - dependency-name: "react-native*"
+      - dependency-name: "@react-native-*/*"
+      - dependency-name: "@react-navigation/*"
+      - dependency-name: jest
+      - dependency-name: "@types/jest"
+      - dependency-name: eslint
+      - dependency-name: typescript
+    groups:
+      npm:
+        patterns: ["*"]
+        update-types: [minor, patch]
+      npm-major:
+        patterns: ["*"]
+        update-types: [major]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+        update-types: [minor, patch]
+      actions-major:
+        patterns: ["*"]
+        update-types: [major]

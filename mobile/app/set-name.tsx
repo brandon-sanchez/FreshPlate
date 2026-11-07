@@ -90,7 +90,7 @@ export default function SetNameScreen() {
             lineHeight: 20,
           }}
         >
-          This is the name we'll use on your home screen and in your household.
+          This is the name we&apos;ll use on your home screen and in your household.
         </Text>
       </View>
 

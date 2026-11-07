@@ -26,7 +26,6 @@ let updateCallCount = 0;
 
 function buildQueryBuilder() {
   let didInsert = false;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const b: any = {};
   const chain = ["select", "eq", "ilike", "is", "limit"] as const;
   chain.forEach((m) => {

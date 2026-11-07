@@ -64,13 +64,14 @@ export default function RecipeCarousel({
     [lastIndex, position, reducedMotion],
   );
 
+  const activeItemId = items[activeIndex]?.id;
   useEffect(() => {
     activeRef.current = activeIndex;
     if (selectedIndex !== activeIndex) select(activeIndex);
     onActiveIndexChange(activeIndex);
   }, [
     activeIndex,
-    items[activeIndex]?.id,
+    activeItemId,
     onActiveIndexChange,
     select,
     selectedIndex,

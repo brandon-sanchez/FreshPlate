@@ -181,6 +181,9 @@ export function useRecipeFeed() {
   const recipes = useMemo(
     () =>
       allRecipes.filter((recipe) => !dismissedIdsRef.current.has(recipe.recipe_id)),
+    // The filter reads dismissedIdsRef, so these version counters are what
+    // tell the memo the dismissed set changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [allRecipes, dismissedVersion, requestVersion],
   );
 

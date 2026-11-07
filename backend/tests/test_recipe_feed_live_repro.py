@@ -2,8 +2,9 @@
 
 This is an on-demand diagnostic, not a CI test: it drives the real app
 in-process against live Gemini and live Supabase, exactly as the mobile
-client does when the full-screen loader runs. It is skipped unless
-RUN_LIVE_FEED_REPRO=1 so the normal suite stays offline.
+client does when the full-screen loader runs. It is skipped unless both
+RUN_LIVE_FEED_REPRO=1 and FEED_REPRO_USER_ID are set, so the normal suite
+stays offline.
 
 Red condition mirrors the app's error-with-retry state: the session POST
 returns non-200, fails at transport, or exceeds the 35s client timeout.
@@ -25,12 +26,15 @@ from app.api.recipes import get_recipe_feed_store
 from app.main import create_app
 from app.services.recipe_feed_store import SupabaseRecipeFeedStore
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("RUN_LIVE_FEED_REPRO") != "1",
-    reason="Live Gemini + Supabase loop; run explicitly with RUN_LIVE_FEED_REPRO=1",
-)
+TEST_USER_ID = os.environ.get("FEED_REPRO_USER_ID", "")
 
-TEST_USER_ID = "47b20c34-d888-4aae-8898-fe29c33d17bc"
+pytestmark = pytest.mark.skipif(
+    os.environ.get("RUN_LIVE_FEED_REPRO") != "1" or not TEST_USER_ID,
+    reason=(
+        "Live Gemini + Supabase loop; run explicitly with RUN_LIVE_FEED_REPRO=1 "
+        "and FEED_REPRO_USER_ID set to a Supabase test user"
+    ),
+)
 CLIENT_TIMEOUT_S = 35.0
 RUNS = int(os.environ.get("FEED_REPRO_RUNS", "6"))
 RESULTS_PATH = os.environ.get("FEED_REPRO_OUT", "")
