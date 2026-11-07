@@ -110,7 +110,12 @@ done
 gcloud secrets list --format='table(name)'
 ```
 
-To give production a different value from local development, run `gcloud secrets versions add <secret> --data-file=-`, paste the value, and press Ctrl-D.
+To give production a different value from local development, set `FRESHPLATE_SECRET` to the secret name, run the block, paste the value, and press Enter. The value does not appear on screen, and no trailing newline is stored.
+
+```bash
+export FRESHPLATE_SECRET='gemini-api-key'
+read -rs value && printf '%s' "$value" | gcloud secrets versions add "$FRESHPLATE_SECRET" --data-file=-; unset value
+```
 
 ## 8. Deploy once and make the service public
 
@@ -177,15 +182,15 @@ gh run list --repo="$FRESHPLATE_REPO" --workflow=Deploy --limit=5
 
 ## Rotate a secret
 
-To replace a secret's value, set `FRESHPLATE_SECRET` to the secret name and run the block. Paste the new value and press Ctrl-D. The block then disables every older enabled version, so they stop counting against the free tier.
+To replace a secret's value, set `FRESHPLATE_SECRET` to the secret name and run the block. Paste the new value and press Enter. The block then disables every older enabled version, so they stop counting against the free tier.
 
 ```bash
 export FRESHPLATE_SECRET='gemini-api-key'
-gcloud secrets versions add "$FRESHPLATE_SECRET" --data-file=-
+read -rs value && printf '%s' "$value" | gcloud secrets versions add "$FRESHPLATE_SECRET" --data-file=-; unset value
 gcloud secrets versions list "$FRESHPLATE_SECRET" --filter=state=enabled --sort-by=~createTime --format='value(name)' | tail -n +2 | xargs -I{} gcloud secrets versions disable {} --secret="$FRESHPLATE_SECRET"
 ```
 
-Running instances keep the old value. The next deploy, from a push to `main` or the step 8 command, starts instances that read the new value.
+Cloud Run reads secrets when an instance starts. Running instances keep the old value, and any instance that starts after the rotation reads the new one, with or without a deploy. Because the service scales to zero, a bad value can break the API at the next cold start, and rolling back the code does not fix it. To recover, add a version with the correct value.
 
 ## Roll back
 
