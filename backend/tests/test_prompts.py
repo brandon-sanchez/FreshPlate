@@ -108,3 +108,12 @@ def test_trace_config_rejects_an_empty_request_id() -> None:
 
     with pytest.raises(ValueError, match="request_id"):
         build_trace_config(prompt, request_id=" ")
+
+
+def test_meal_judge_prompt_is_a_minimal_thinking_checklist() -> None:
+    prompt = load_prompt("assess_meals")
+
+    assert prompt.version == 2
+    assert prompt.thinking == "minimal"
+    assert "reasoning fields before the yes/no fields" in prompt.system
+    assert "Water is always available" in prompt.system
