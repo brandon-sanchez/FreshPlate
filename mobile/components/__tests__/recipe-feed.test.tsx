@@ -7,6 +7,11 @@ import {
   render as renderNative,
 } from "@testing-library/react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { State } from "react-native-gesture-handler";
+import {
+  fireGestureHandler,
+  getByGestureTestId,
+} from "react-native-gesture-handler/jest-utils";
 import type { RecipeSuggestion } from "@/types/recipes";
 
 const mockReducedMotion = jest.fn(() => false);
@@ -74,6 +79,7 @@ const defaultProps = {
   onRetryMore: jest.fn(),
   onAddItems: jest.fn(),
   onEditAnswers: jest.fn(),
+  onCook: jest.fn(),
 };
 
 describe("RecipeFeed", () => {
@@ -106,6 +112,38 @@ describe("RecipeFeed", () => {
     expect(screen.queryByLabelText("View full recipe")).toBeNull();
     fireEvent.press(screen.getByTestId("recipe-card-preview-recipe-1"));
     expect(screen.getByLabelText("View full recipe")).toBeTruthy();
+  });
+
+  it("starts cooking on a full right swipe and ignores a short one", () => {
+    const onCook = jest.fn();
+    render(
+      <RecipeFeed {...defaultProps} recipes={[baseRecipe]} onCook={onCook} />,
+    );
+    const swipe = getByGestureTestId("recipe-card-cook-swipe-recipe-1");
+    fireGestureHandler(swipe, [
+      { state: State.BEGAN, translationX: 0 },
+      { state: State.ACTIVE, translationX: 40 },
+      { state: State.END, translationX: 60 },
+    ]);
+    expect(onCook).not.toHaveBeenCalled();
+    fireGestureHandler(swipe, [
+      { state: State.BEGAN, translationX: 0 },
+      { state: State.ACTIVE, translationX: 80 },
+      { state: State.END, translationX: 140 },
+    ]);
+    expect(onCook).toHaveBeenCalledWith(baseRecipe);
+  });
+
+  it("closes the preview sheet when cooking starts from it", () => {
+    mockReducedMotion.mockReturnValue(true);
+    const onCook = jest.fn();
+    const screen = render(
+      <RecipeFeed {...defaultProps} recipes={[baseRecipe]} onCook={onCook} />,
+    );
+    fireEvent.press(screen.getByTestId("recipe-card-preview-recipe-1"));
+    fireEvent.press(screen.getByTestId("recipe-preview-cook"));
+    expect(onCook).toHaveBeenCalledWith(baseRecipe);
+    expect(screen.queryByTestId("recipe-preview-cook")).toBeNull();
   });
 
   it("does not count offscreen cards as consumed when the list nears its end", () => {

@@ -134,6 +134,10 @@ function RootLayoutNav() {
                 options={{ headerShown: false, presentation: "modal" }}
               />
               <Stack.Screen
+                name="cook"
+                options={{ headerShown: false, presentation: "fullScreenModal" }}
+              />
+              <Stack.Screen
                 name="scan-review"
                 options={{ title: "Review item", headerBackTitle: "Scan" }}
               />
