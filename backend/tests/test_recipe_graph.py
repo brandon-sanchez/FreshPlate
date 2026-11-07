@@ -619,11 +619,10 @@ async def test_generation_runs_at_minimal_thinking_with_a_capped_open_batch() ->
     assert "return an empty list" in call["prompt"]
 
 
-def test_generation_prompt_says_water_is_the_only_free_ingredient() -> None:
+@pytest.mark.asyncio
+async def test_generation_prompt_says_water_is_the_only_free_ingredient() -> None:
     provider = RecordingProvider([{"recipes": []}])
-    import asyncio
-
-    asyncio.run(generate_recipes({"usable_items": [_usable_item()]}, provider))
+    await generate_recipes({"usable_items": [_usable_item()]}, provider)
     prompt = provider.calls[0]["prompt"]
     assert "Water is always available" in prompt
     assert "salt, pepper, oil" in prompt
