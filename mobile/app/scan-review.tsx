@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { ScrollView, Text, View } from "react-native";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
@@ -11,13 +11,12 @@ import LoadingState from "@/components/LoadingState";
 import { useTheme } from "@/hooks/useTheme";
 import { useAddItem } from "@/hooks/useAddItem";
 import { useBarcodeLookup, isValidBarcode } from "@/hooks/useBarcodeLookup";
-import { useFoodCategories } from "@/hooks/useFoodCategories";
+import { FoodCategory, useFoodCategories } from "@/hooks/useFoodCategories";
 import {
   defaultStorageForCategory,
   matchCategory,
   parseQuantity,
 } from "@/lib/categoryMatch";
-import { FoodCategory } from "@/hooks/useFoodCategories";
 import { BarcodeProduct } from "@/types/barcode";
 
 function buildDefaults(

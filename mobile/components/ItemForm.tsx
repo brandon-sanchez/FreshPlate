@@ -347,7 +347,7 @@ function ItemForm({
               <Text style={{ fontFamily: fonts.bodyStrong }}>
                 {selectedCategory.name}
               </Text>{" "}
-              isn't recommended in the {storage}. USDA suggests{" "}
+              isn&apos;t recommended in the {storage}. USDA suggests{" "}
               {recommendedStorages(selectedCategory).join(" or ")} instead.
             </Text>
           </View>
