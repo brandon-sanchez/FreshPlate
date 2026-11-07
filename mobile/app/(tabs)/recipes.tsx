@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -52,7 +52,7 @@ export default function RecipesScreen() {
   const [flowOpen, setFlowOpen] = useState(false);
   const [detailRecipe, setDetailRecipe] = useState<RecipeSuggestion | null>(null);
   const [previewRecipe, setPreviewRecipe] = useState<RecipeSuggestion | null>(null);
-  const items = inventory.data ?? [];
+  const items = useMemo(() => inventory.data ?? [], [inventory.data]);
   const generate = useCallback(
     (nextPreferences: RecipePreferences) => {
       Keyboard.dismiss();

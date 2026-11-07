@@ -3,8 +3,16 @@ CLAUDE.md
 PROGRESS.md
 ATTEMPTS.md
 PRD.md
-docs/
 supabase/.temp/
+
+# Private notes: research, experiments, run data, design proposals, and ADRs.
+# Public docs live in docs/ and are tracked normally.
+notes/
+docs/PRD.md
+docs/agents/
+docs/designs/
+docs/mockups/
+docs/research/
 
 # Node / Expo
 node_modules/
@@ -36,6 +44,10 @@ Thumbs.db
 *.swp
 *.swo
 DESIGN.md
+.21st/
 .mcp.json
 AGENTS.md
 .codex/config.toml
+
+# Verification run evidence and process state (see .claude/skills/verify)
+.verify/
