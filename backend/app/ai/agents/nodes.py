@@ -38,12 +38,10 @@ EXPIRING_WITHIN_DAYS = 5
 MAX_QUALITY_RETRIES = 1
 QUALITY_RETRY_MIN_BUDGET_SECONDS = 20.0
 GENERATION_DOCS_CEILING = 5
-# The retrieval query embeds item names. A long list of every pantry item blurs
-# the embedding and slows the search, so it carries only the names that should
-# steer the meal: expiring items first, then main components, then the rest.
+# Embedding every pantry item name blurs the retrieval query, so only the
+# highest-priority names are embedded.
 RETRIEVAL_QUERY_TERM_LIMIT = 30
-# Matched against the category name the app sends, casefolded. The name comes
-# from the food_categories seed in
+# Category names come from the food_categories seed in
 # supabase/migrations/20260329180000_create_inventory_tables.sql.
 MAIN_COMPONENT_CATEGORIES = frozenset({"meat & seafood"})
 WATER = "water"
