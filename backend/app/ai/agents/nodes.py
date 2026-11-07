@@ -534,7 +534,8 @@ def _quality_issues(
             issues.append(
                 f"ingredients mapped to inventory item '{item_id}' use "
                 f"{_amount_text(unmeasured)} g or ml from an unmeasured "
-                f"'{item['unit']}', more than the 15 g or ml it can cover"
+                f"'{item['unit']}', more than the "
+                f"{_amount_text(UNMEASURED_PACKAGE_ALLOWANCE)} g or ml it can cover"
             )
     for item_id, requested in requested_by_id.items():
         item = inventory_by_id[item_id]
