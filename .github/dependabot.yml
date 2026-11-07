@@ -20,43 +20,30 @@ updates:
     directory: /mobile
     schedule:
       interval: weekly
-    # These packages must match the Expo SDK, so SDK upgrades are done by hand
-    # with `npx expo install --fix`. Dependabot only offers their patch releases.
+    # Each Expo SDK pins exact versions of these packages, and even a patch
+    # release outside that set can break the app (react-native 0.81.6 needs a
+    # newer React than SDK 54 ships). Update them only with
+    # `npx expo install --fix` or an SDK upgrade, never through Dependabot.
     ignore:
-      # React must exactly match the renderer bundled in react-native, so even
-      # its patch releases wait for the next Expo SDK upgrade.
-      - dependency-name: react
-      - dependency-name: react-dom
-      - dependency-name: react-test-renderer
       # Each major release targets a newer React than the Expo SDK ships.
       - dependency-name: "@testing-library/react-native"
         update-types: ["version-update:semver-major"]
       - dependency-name: expo
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "expo-*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "@expo/*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "@expo-google-fonts/*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "*-expo"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: react
+      - dependency-name: react-dom
+      - dependency-name: react-test-renderer
       - dependency-name: "@types/react"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "react-native*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "@react-native-*/*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "@react-navigation/*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: jest
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "@types/jest"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: eslint
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: typescript
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       npm:
         patterns: ["*"]
