@@ -42,6 +42,9 @@ GENERATION_DOCS_CEILING = 5
 # the embedding and slows the search, so it carries only the names that should
 # steer the meal: expiring items first, then main components, then the rest.
 RETRIEVAL_QUERY_TERM_LIMIT = 30
+# Matched against the category name the app sends, casefolded. The name comes
+# from the food_categories seed in
+# supabase/migrations/20260329180000_create_inventory_tables.sql.
 MAIN_COMPONENT_CATEGORIES = frozenset({"meat & seafood"})
 WATER = "water"
 WATER_RULE = (
@@ -85,7 +88,7 @@ def analyze_inventory(
     ):
         raise ValueError("Recipe state inventory must be a sequence")
 
-    candidates: list[tuple[tuple[int, int, int], UsableItem, str]] = []
+    candidates: list[tuple[tuple[int, int, int], UsableItem]] = []
     query_candidates: list[tuple[tuple[int, int, int], str]] = []
     for index, raw_item in enumerate(raw_inventory):
         if not isinstance(raw_item, Mapping):
@@ -127,10 +130,13 @@ def analyze_inventory(
             if days_until_expiration is not None and is_expiring
             else 0
         )
-        candidates.append(
-            ((priority, days_priority, index), usable_item, normalized_name)
-        )
-        query_priority = 0 if is_expiring else 1 if _is_main(raw_item) else 2
+        candidates.append(((priority, days_priority, index), usable_item))
+        if is_expiring:
+            query_priority = 0
+        elif _is_main_component(raw_item):
+            query_priority = 1
+        else:
+            query_priority = 2
         query_candidates.append(
             ((query_priority, days_priority, index), normalized_name)
         )
@@ -314,7 +320,7 @@ def _is_depleted(value: Any) -> bool:
     return value is not None and value != ""
 
 
-def _is_main(item: Mapping[str, Any]) -> bool:
+def _is_main_component(item: Mapping[str, Any]) -> bool:
     category = item.get("category")
     return (
         isinstance(category, str)
