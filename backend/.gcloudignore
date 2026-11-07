@@ -1,8 +1,12 @@
-# Files excluded from Cloud Run source uploads. The Dockerfile copies only
-# app/, but everything not listed here is still uploaded to Cloud Storage.
+# The Dockerfile copies only app/, but gcloud uploads every file not listed
+# here to Cloud Storage.
 .gcloudignore
 #!include:.gitignore
+.env
 .env.*
+.venv/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
 tests/
 scripts/
-.ruff_cache/
