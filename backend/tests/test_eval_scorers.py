@@ -73,3 +73,15 @@ async def test_fake_provider_output_scores_through_public_seam():
     generated = response.recipes[0]
     assert ingredient_coverage_percent(generated, [{"id": "t", "quantity": 4}]) == 50
     assert mapping_validity_percent(generated, [{"id": "t", "quantity": 4}]) == 100
+
+
+def test_coverage_leaves_out_unmapped_water():
+    soup = recipe().model_copy(
+        update={
+            "ingredients": [
+                RecipeIngredient(name="tomato", inventory_item_id="t", use_amount=2, unit="each"),
+                RecipeIngredient(name=" Water ", use_amount=500, unit="ml"),
+            ]
+        }
+    )
+    assert ingredient_coverage_percent(soup, [{"id": "t", "quantity": 4}]) == 100
