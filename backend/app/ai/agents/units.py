@@ -53,7 +53,6 @@ _COUNT_ALIASES = {
     "ct": "each",
     "count": "each",
 }
-# Count units that hold a known number of a smaller count unit of one food.
 _FOOD_COUNTS = {("garlic", "head"): ("clove", Decimal("10"))}
 
 _PACKAGE_SIZE = re.compile(
@@ -93,8 +92,8 @@ def unmeasured_package_amount(
 
     Households record salt, spices and spreads as "1 container" or "1 jar",
     which no recipe amount converts into. The caller lets such a package cover
-    a seasoning-sized amount. This returns ``None`` when the item has a real
-    measure or the recipe amount isn't a weight or volume.
+    a seasoning-sized amount. This returns ``None`` when the item is stored by
+    weight or volume, or the recipe amount isn't a weight or volume.
     """
     recipe = _measure(recipe_unit, food)
     item = _measure(item_unit, food)
