@@ -587,6 +587,7 @@ class PromptRecordingProvider:
         response_model: Any,
         system_instruction: Any = None,
         deadline: Any = None,
+        thinking: Any = None,
     ) -> Any:
         self.prompts.append(prompt)
         return await self._inner.generate(
@@ -594,6 +595,7 @@ class PromptRecordingProvider:
             response_model=response_model,
             system_instruction=system_instruction,
             deadline=deadline,
+            thinking=thinking,
         )
 
 
@@ -647,7 +649,7 @@ def test_refill_runs_never_reuse_grounding_docs_from_earlier_runs(
         )
 
     initial_prompt, refill_prompt = [
-        prompt for prompt in provider.prompts if prompt.startswith("Create up")
+        prompt for prompt in provider.prompts if prompt.startswith("Suggest up to")
     ]
     assert "Doc 01" in initial_prompt and "Doc 05" in initial_prompt
     assert "Doc 06" not in initial_prompt
@@ -795,7 +797,7 @@ async def test_concurrent_refills_share_the_last_generation_run(
             ]
         )
     assert len(
-        [prompt for prompt in provider.prompts if prompt.startswith("Create up")]
+        [prompt for prompt in provider.prompts if prompt.startswith("Suggest up to")]
     ) == 2
     assert all(page.status_code == 200 for page in pages)
     assert pages[0].json() == pages[1].json()

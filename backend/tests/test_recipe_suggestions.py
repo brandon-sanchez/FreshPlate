@@ -320,8 +320,9 @@ class DelayedProvider:
         response_model: type[Any],
         system_instruction: str | None,
         deadline: Any,
+        thinking: str | None = None,
     ) -> Any:
-        del system_instruction, deadline
+        del system_instruction, deadline, thinking
         await asyncio.sleep(self.delay_seconds)
         if response_model.__name__ == "MealAssessment":
             return response_model(

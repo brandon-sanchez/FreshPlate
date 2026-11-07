@@ -57,7 +57,13 @@ class RateLimitedProvider:
     """What GeminiProvider surfaces after its 429 retries are exhausted."""
 
     async def generate(
-        self, prompt, *, response_model, system_instruction=None, deadline=None
+        self,
+        prompt,
+        *,
+        response_model,
+        system_instruction=None,
+        deadline=None,
+        thinking=None,
     ):
         raise ProviderError(
             "Gemini generation failed",
@@ -79,7 +85,13 @@ class SlowZeroValidProvider:
         self.calls = 0
 
     async def generate(
-        self, prompt, *, response_model, system_instruction=None, deadline=None
+        self,
+        prompt,
+        *,
+        response_model,
+        system_instruction=None,
+        deadline=None,
+        thinking=None,
     ):
         self.calls += 1
         await asyncio.sleep(self._delay_seconds)

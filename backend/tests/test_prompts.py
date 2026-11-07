@@ -14,8 +14,9 @@ def test_load_prompt_reads_the_versioned_generate_recipes_prompt() -> None:
     prompt = load_prompt("generate_recipes")
 
     assert prompt.name == "generate_recipes"
-    assert prompt.version == 3
+    assert prompt.version == 4
     assert prompt.model == "gemini-3.6-flash"
+    assert prompt.thinking == "minimal"
     assert "inventory" in prompt.system.lower()
 
 
@@ -97,7 +98,7 @@ def test_trace_config_contains_prompt_and_request_metadata() -> None:
     assert set(config) == {"metadata"}
     assert config["metadata"] == {
         "prompt_name": "generate_recipes",
-        "prompt_version": 3,
+        "prompt_version": 4,
         "request_id": "request-123",
     }
 

@@ -74,6 +74,7 @@ class RecordingProvider:
             response_model=kwargs["response_model"],
             system_instruction=kwargs.get("system_instruction"),
             deadline=kwargs.get("deadline"),
+            thinking=kwargs.get("thinking"),
         )
 
 
@@ -457,7 +458,7 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
     assert all(call["deadline"] is deadline for call in provider.calls)
     assert retriever.calls[0]["deadline"] is deadline
     assert result["metadata"]["prompt_name"] == "generate_recipes"
-    assert result["metadata"]["prompt_version"] == 3
+    assert result["metadata"]["prompt_version"] == 4
     assert result["metadata"]["request_id"] == "request-123"
 
 
@@ -599,3 +600,64 @@ async def test_graph_skips_quality_retry_below_the_20s_budget_floor() -> None:
     assert result["valid_recipes"] == []
     assert result["retry_count"] == 0
     assert len(provider.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_generation_runs_at_minimal_thinking_with_a_capped_open_batch() -> None:
+    provider = RecordingProvider([{"recipes": []}])
+    await generate_recipes(
+        {"usable_items": [_usable_item()], "batch_ceiling": 3}, provider
+    )
+
+    call = provider.calls[0]
+    assert call["thinking"] == "minimal"
+    schema = call["response_model"].model_json_schema()["properties"]["recipes"]
+    assert schema["maxItems"] == 3
+    assert "minItems" not in schema
+    assert "Maximum number of recipes: 3" in call["prompt"]
+    assert "every recipe may use the full listed inventory" in call["prompt"]
+    assert "return an empty list" in call["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_generation_prompt_says_water_is_the_only_free_ingredient() -> None:
+    provider = RecordingProvider([{"recipes": []}])
+    await generate_recipes({"usable_items": [_usable_item()]}, provider)
+    prompt = provider.calls[0]["prompt"]
+    assert "Water is always available" in prompt
+    assert "salt, pepper, oil" in prompt
+
+
+def test_check_quality_allows_unmapped_water_but_no_other_unmapped_staple() -> None:
+    tomatoes = _ingredient(
+        "Tomatoes", inventory_item_id="tomatoes", use_amount=1, unit="item"
+    )
+    with_water = Recipe.model_validate(
+        _recipe(
+            tomatoes,
+            _ingredient(" Water ", inventory_item_id=None, use_amount=500, unit="ml"),
+            title="Tomato Soup",
+        )
+    )
+    with_salt = Recipe.model_validate(
+        _recipe(
+            tomatoes,
+            _ingredient("Salt", inventory_item_id=None, use_amount=2, unit="g"),
+            title="Salted Tomatoes",
+        )
+    )
+    only_water = Recipe.model_validate(
+        _recipe(
+            _ingredient("Water", inventory_item_id=None, use_amount=1, unit="l"),
+            title="Hot Water",
+        )
+    )
+    result = check_quality(
+        {
+            "usable_items": [_usable_item()],
+            "generated_recipes": [with_water, with_salt, only_water],
+        }
+    )
+    assert result["valid_recipes"] == [with_water]
+    assert "ingredient 'Salt' is not mapped to inventory" in result["quality_feedback"]
+    assert "Recipe 'Hot Water': recipe has no grounded" in result["quality_feedback"]
