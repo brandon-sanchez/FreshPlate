@@ -46,10 +46,11 @@ QUALITY_RETRY_MIN_BUDGET_SECONDS = 20.0
 # one tablespoon of it per recipe, measured in grams or millilitres.
 UNMEASURED_PACKAGE_ALLOWANCE = Decimal("15")
 GENERATION_DOCS_CEILING = 5
-# The retrieval query embeds item names. A long list of every pantry item blurs
-# the embedding and slows the search, so it carries only the names that should
-# steer the meal: expiring items first, then main components, then the rest.
+# Embedding every pantry item name blurs the retrieval query, so only the
+# highest-priority names are embedded.
 RETRIEVAL_QUERY_TERM_LIMIT = 30
+# Category names come from the food_categories seed in
+# supabase/migrations/20260329180000_create_inventory_tables.sql.
 MAIN_COMPONENT_CATEGORIES = frozenset({"meat & seafood"})
 WATER = "water"
 WATER_RULE = (
@@ -93,7 +94,7 @@ def analyze_inventory(
     ):
         raise ValueError("Recipe state inventory must be a sequence")
 
-    candidates: list[tuple[tuple[int, int, int], UsableItem, str]] = []
+    candidates: list[tuple[tuple[int, int, int], UsableItem]] = []
     query_candidates: list[tuple[tuple[int, int, int], str]] = []
     for index, raw_item in enumerate(raw_inventory):
         if not isinstance(raw_item, Mapping):
@@ -135,10 +136,13 @@ def analyze_inventory(
             if days_until_expiration is not None and is_expiring
             else 0
         )
-        candidates.append(
-            ((priority, days_priority, index), usable_item, normalized_name)
-        )
-        query_priority = 0 if is_expiring else 1 if _is_main(raw_item) else 2
+        candidates.append(((priority, days_priority, index), usable_item))
+        if is_expiring:
+            query_priority = 0
+        elif _is_main_component(raw_item):
+            query_priority = 1
+        else:
+            query_priority = 2
         query_candidates.append(
             ((query_priority, days_priority, index), normalized_name)
         )
@@ -216,7 +220,11 @@ async def generate_recipes(
 
 
 def check_quality(state: Mapping[str, Any]) -> QualityResult:
-    """Keep only complete recipes grounded in the analyzed inventory."""
+    """Keep only complete recipes grounded in the analyzed inventory.
+
+    An empty batch is how the generator reports a kitchen that cannot
+    make a meal, so it produces no quality feedback and never triggers a retry.
+    """
     usable_items = _usable_items(state.get("usable_items", []))
     inventory_by_id = {item["id"]: item for item in usable_items}
     generated = state.get("generated_recipes", [])
@@ -255,11 +263,7 @@ def route_after_quality(
     quality_retry_limit: int = MAX_QUALITY_RETRIES,
     retry_only_when_no_valid: bool = False,
 ) -> Literal["retry", "finish"]:
-    """Retry only when generated recipes were rejected, within the retry budget.
-
-    An empty batch is the generator's honest answer for a kitchen that cannot
-    make a meal, so it carries no quality feedback and never triggers a retry.
-    """
+    """Retry only when generated recipes were rejected, within the retry budget."""
     if retry_only_when_no_valid and state.get("valid_recipes"):
         return "finish"
     if state.get("quality_feedback") and _retry_count(state) < quality_retry_limit:
@@ -322,7 +326,7 @@ def _is_depleted(value: Any) -> bool:
     return value is not None and value != ""
 
 
-def _is_main(item: Mapping[str, Any]) -> bool:
+def _is_main_component(item: Mapping[str, Any]) -> bool:
     category = item.get("category")
     return (
         isinstance(category, str)

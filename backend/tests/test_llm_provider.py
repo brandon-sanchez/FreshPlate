@@ -341,8 +341,28 @@ async def test_gemini_provider_logs_one_structured_record_per_call(
     assert call["model"] == DEFAULT_GEMINI_MODEL
     assert call["thinking"] == "minimal"
     assert call["response_model"] == "Greeting"
+    assert call["outcome"] == "ok"
     assert call["prompt_tokens"] == 1200
     assert call["output_tokens"] == 340
     assert call["thinking_tokens"] == 0
     assert call["latency_ms"] >= 0
     assert "thinking=minimal" in record.getMessage()
+
+
+@pytest.mark.asyncio
+async def test_gemini_provider_logs_a_failed_call_with_its_status(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    models = FakeGeminiModels(error=UpstreamError(400))
+    provider = GeminiProvider(api_key="test-key", client=fake_gemini_client(models))
+
+    with (
+        caplog.at_level("INFO", logger="freshplate.llm.provider"),
+        pytest.raises(ProviderError),
+    ):
+        await provider.generate("Q", response_model=Greeting)
+
+    [record] = [r for r in caplog.records if hasattr(r, "gemini_call")]
+    assert record.gemini_call["outcome"] == "error:400"
+    assert record.gemini_call["prompt_tokens"] == 0
+    assert record.gemini_call["latency_ms"] >= 0
