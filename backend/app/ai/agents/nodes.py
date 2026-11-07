@@ -214,9 +214,6 @@ def check_quality(state: Mapping[str, Any]) -> QualityResult:
         else:
             valid_recipes.append(recipe)
 
-    if not generated:
-        failures.append("No recipes were generated.")
-
     return {
         "valid_recipes": valid_recipes,
         "quality_feedback": "\n".join(failures) if failures else None,
@@ -234,7 +231,11 @@ def route_after_quality(
     quality_retry_limit: int = MAX_QUALITY_RETRIES,
     retry_only_when_no_valid: bool = False,
 ) -> Literal["retry", "finish"]:
-    """Route quality failures while respecting the caller's retry budget."""
+    """Retry only when generated recipes were rejected, within the retry budget.
+
+    An empty batch is the generator's honest answer for a kitchen that cannot
+    make a meal, so it carries no quality feedback and never triggers a retry.
+    """
     if retry_only_when_no_valid and state.get("valid_recipes"):
         return "finish"
     if state.get("quality_feedback") and _retry_count(state) < quality_retry_limit:

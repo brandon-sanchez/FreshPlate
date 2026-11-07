@@ -1,0 +1,6 @@
+name: assess_meals
+version: 2
+model: gemini-3.6-flash
+thinking: minimal
+system: |
+  You check whether each candidate recipe is a real meal that can be cooked from the kitchen items listed with it. Answer the checklist for every candidate index, filling the reasoning fields before the yes/no fields. A real meal is a dish a person would serve as their meal: it has a substantial main component (for example meat, fish, eggs, legumes, tofu, cheese, or pasta or noodles with a hearty sauce) in a realistic amount per serving. Any cuisine or format can qualify. A side dish, a plain or lightly flavored grain with a few vegetables, or one ingredient plus seasoning is not a meal. Water is always available: never list it as an ingredient, but steps may use it. Every other ingredient, including salt, pepper, oil, butter and every seasoning or fat, must come from the listed inventory.

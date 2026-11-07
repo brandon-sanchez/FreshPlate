@@ -65,11 +65,15 @@ def _recipe(title: str) -> dict[str, Any]:
 
 def _assessment(count: int) -> dict[str, Any]:
     return {
-        "decisions": [
+        "checks": [
             {
                 "candidate_index": index,
-                "verdict": "eligible",
-                "reason": "complete meal",
+                "main_component": "vegetables",
+                "portion_reasoning": "complete meal",
+                "unlisted_foods": [],
+                "is_full_meal": True,
+                "realistic_portions": True,
+                "coherent_method": True,
             }
             for index in range(count)
         ]
@@ -453,6 +457,33 @@ def test_session_with_zero_valid_recipes_returns_explicit_empty_state(
     assert response.json()["data"]["empty_reason"] == "INVENTORY_UNSUPPORTED"
     assert response.json()["data"]["has_more"] is False
     assert response.json()["data"]["next_cursor"] is None
+
+
+def test_honest_empty_session_reaches_the_empty_state_without_a_retry(
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    """A kitchen that cannot make a meal gets one generation call, then 200."""
+    patch_jwks([signing_key])
+    provider = FakeProvider([{"recipes": []}])
+    app = create_app()
+    _install_dependencies(
+        app,
+        provider,
+        StubRetriever(),
+        InMemoryRecipeFeedStore(),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"inventory": _inventory(), "preferences": {}},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["recipes"] == []
+    assert response.json()["data"]["empty_reason"] == "INVENTORY_UNSUPPORTED"
 
 
 def test_feed_stops_generating_at_the_six_run_session_cap(

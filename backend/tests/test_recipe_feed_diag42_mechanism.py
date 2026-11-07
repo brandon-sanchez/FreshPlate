@@ -73,7 +73,7 @@ class RateLimitedProvider:
 
 
 class SlowZeroValidProvider:
-    """First generation returns nothing valid; every call burns real time.
+    """First generation is fully rejected; every call burns real time.
 
     Mirrors the quality-retry worst case that used to 503: generation one
     finishes late in the budget, so a retry could only time out or trip
@@ -95,7 +95,21 @@ class SlowZeroValidProvider:
     ):
         self.calls += 1
         await asyncio.sleep(self._delay_seconds)
-        return response_model.model_validate({"recipes": []})
+        rejected = {
+            "title": "Untracked chicken",
+            "cook_time_minutes": 30,
+            "servings": 2,
+            "steps": ["Cook."],
+            "ingredients": [
+                {
+                    "name": "Chicken breast",
+                    "inventory_item_id": "not-in-inventory",
+                    "use_amount": 1,
+                    "unit": "lb",
+                }
+            ],
+        }
+        return response_model.model_validate({"recipes": [rejected]})
 
 
 class UnusedStore:
@@ -231,11 +245,15 @@ async def test_refill_deadline_observes_provider_failure_during_cancellation(
             [
                 {"recipes": [_recipe("Initial")]},
                 {
-                    "decisions": [
+                    "checks": [
                         {
                             "candidate_index": 0,
-                            "verdict": "eligible",
-                            "reason": "complete meal",
+                            "main_component": "vegetables",
+                            "portion_reasoning": "complete meal",
+                            "unlisted_foods": [],
+                            "is_full_meal": True,
+                            "realistic_portions": True,
+                            "coherent_method": True,
                         }
                     ]
                 },

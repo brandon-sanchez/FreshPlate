@@ -413,11 +413,15 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
             bad_response,
             good_response,
             {
-                "decisions": [
+                "checks": [
                     {
                         "candidate_index": 0,
-                        "verdict": "eligible",
-                        "reason": "substantial",
+                        "main_component": "pasta",
+                        "portion_reasoning": "substantial",
+                        "unlisted_foods": [],
+                        "is_full_meal": True,
+                        "realistic_portions": True,
+                        "coherent_method": True,
                     }
                 ]
             },
@@ -662,3 +666,14 @@ def test_check_quality_allows_unmapped_water_but_no_other_unmapped_staple() -> N
     assert result["valid_recipes"] == [with_water]
     assert "ingredient 'Salt' is not mapped to inventory" in result["quality_feedback"]
     assert "Recipe 'Hot Water': recipe has no grounded" in result["quality_feedback"]
+
+
+@pytest.mark.asyncio
+async def test_honest_empty_batch_finishes_without_a_quality_retry() -> None:
+    provider = RecordingProvider([{"recipes": []}])
+    result = await build_recipe_graph(provider, RecordingRetriever()).ainvoke(
+        {"inventory": [{"id": "salt", "name": "Salt", "quantity": 500, "unit": "g"}]}
+    )
+    assert result["valid_recipes"] == []
+    assert result["retry_count"] == 0
+    assert len(provider.calls) == 1
