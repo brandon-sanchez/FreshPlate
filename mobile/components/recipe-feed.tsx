@@ -443,240 +443,240 @@ export default function RecipeFeed({
   return (
     <View style={{ height: stride, paddingHorizontal: 24 }}>
       <GestureDetector gesture={cookSwipe}>
-      <View>
-        <NativeAnimated.View
-          pointerEvents="none"
-          style={[
-            styles.cookReveal,
-            {
-              height: cardHeight,
-              backgroundColor: colors.accent,
-              opacity: swipeX.interpolate({
-                inputRange: [0, COOK_SWIPE_THRESHOLD],
-                outputRange: [0, 1],
-                extrapolate: "clamp",
-              }),
-            },
-          ]}
-        >
-          <Ionicons name="flame" size={23} color={colors.accentInk} />
-          <Text
-            style={{
-              color: colors.accentInk,
-              fontFamily: fonts.bodyStrong,
-              fontSize: 15,
-            }}
-          >
-            Cook this
-          </Text>
-        </NativeAnimated.View>
-        <NativeAnimated.View
-          testID={"recipe-card-" + recipe.recipe_id}
-          style={{ opacity: entryOpacity, transform: [{ translateY: entryY }] }}
-        >
+        <View>
           <NativeAnimated.View
+            pointerEvents="none"
             style={[
-              styles.card,
+              styles.cookReveal,
               {
-                width: cardWidth,
                 height: cardHeight,
-                backgroundColor: colors.surface,
-                opacity,
-                transform: [{ translateY: dismissY }, { translateX: swipeX }],
+                backgroundColor: colors.accent,
+                opacity: swipeX.interpolate({
+                  inputRange: [0, COOK_SWIPE_THRESHOLD],
+                  outputRange: [0, 1],
+                  extrapolate: "clamp",
+                }),
               },
             ]}
           >
-            <View
+            <Ionicons name="flame" size={23} color={colors.accentInk} />
+            <Text
+              style={{
+                color: colors.accentInk,
+                fontFamily: fonts.bodyStrong,
+                fontSize: 15,
+              }}
+            >
+              Cook this
+            </Text>
+          </NativeAnimated.View>
+          <NativeAnimated.View
+            testID={"recipe-card-" + recipe.recipe_id}
+            style={{ opacity: entryOpacity, transform: [{ translateY: entryY }] }}
+          >
+            <NativeAnimated.View
               style={[
-                styles.artwork,
-                compact && { height: 104 },
-                { backgroundColor: colors.accentSoft },
+                styles.card,
+                {
+                  width: cardWidth,
+                  height: cardHeight,
+                  backgroundColor: colors.surface,
+                  opacity,
+                  transform: [{ translateY: dismissY }, { translateX: swipeX }],
+                },
               ]}
             >
-              <RecipePressable
-                accessibilityRole="button"
-                accessibilityLabel={`Preview ${recipe.title}`}
-                testID={`recipe-card-preview-${recipe.recipe_id}`}
-                onPress={() => onIngredients(recipe)}
-                style={[StyleSheet.absoluteFillObject, { alignItems: "center", justifyContent: "center" }]}
-              >
-              <Feather
-                name="image"
-                size={34}
-                color={colors.accent}
-                style={{ opacity: 0.3 }}
-              />
-              <View style={styles.imageCaption}>
-                <Feather name="zap" size={13} color={colors.accent} />
-                <Text
-                  style={{
-                    color: colors.accent,
-                    fontFamily: fonts.bodyStrong,
-                    fontSize: 12,
-                  }}
-                >
-                  Generated
-                </Text>
-              </View>
-              </RecipePressable>
-              <RecipePressable onPress={() => onToggleSave(recipe, saved)} disabled={isSavePending} accessibilityRole="button" accessibilityLabel={saved ? "Remove " + recipe.title + " from saved recipes" : "Save " + recipe.title + " to household cookbook"} testID={"recipe-card-save-" + recipe.recipe_id} style={[styles.saveButton, { backgroundColor: colors.surface }]}>
-                {saved ? <FontAwesome name="bookmark" size={19} color={colors.accent} /> : <Feather name="bookmark" size={19} color={colors.textMuted} />}
-                <Text style={{ color: saved ? colors.accent : colors.textMuted, fontFamily: fonts.bodyStrong, fontSize: 12 }}>{saved ? "Saved" : "Save"}</Text>
-              </RecipePressable>
-            </View>
-            <View
-              style={[styles.cardContent, compact && { padding: 16, gap: 8 }]}
-            >
-              <Text
-                selectable
-                numberOfLines={3}
-                onPress={() => onIngredients(recipe)}
-                accessibilityRole="link"
-                style={{
-                  fontFamily: fonts.display,
-                  fontSize: compact ? 22 : 24,
-                  lineHeight: compact ? 26 : 28,
-                  letterSpacing: -0.5,
-                  color: colors.text,
-                }}
-              >
-                {recipe.title}
-              </Text>
-              <View style={styles.facts}>
-                <Feather name="clock" size={14} color={colors.textMuted} />
-                <Text
-                  style={{
-                    color: colors.textMuted,
-                    fontFamily: fonts.body,
-                    fontSize: 13,
-                  }}
-                >
-                  {recipe.cook_time_minutes} min
-                </Text>
-                <Text style={{ color: colors.textSubtle, fontSize: 13 }}>
-                  ·
-                </Text>
-                <Text
-                  style={{
-                    color: colors.textMuted,
-                    fontFamily: fonts.body,
-                    fontSize: 13,
-                  }}
-                >
-                  {recipe.servings} servings
-                </Text>
-                <Text
-                  style={{
-                    marginLeft: "auto",
-                    color: colors.accent,
-                    fontFamily: fonts.bodyStrong,
-                    fontSize: 12,
-                  }}
-                >
-                  {recipe.match_percent}% match
-                </Text>
-              </View>
-              <View style={{ gap: 5, flex: 1 }}>
-                <Text
-                  style={{
-                    color: colors.textMuted,
-                    fontFamily: fonts.bodyStrong,
-                    fontSize: 12,
-                  }}
-                >
-                  Ingredients
-                </Text>
-                <Text
-                  selectable
-                  numberOfLines={2}
-                  style={{
-                    color: colors.text,
-                    fontFamily: fonts.body,
-                    fontSize: 14,
-                    lineHeight: 21,
-                  }}
-                >
-                  {recipe.ingredients
-                    .map((ingredient) => ingredient.name)
-                    .join(" · ")}
-                </Text>
-                {recipe.saves_expiring.length > 0 && (
-                  <Text
-                    numberOfLines={1}
-                    style={{
-                      color: colors.warn,
-                      fontFamily: fonts.body,
-                      fontSize: 12,
-                      marginTop: 3,
-                    }}
-                  >
-                    Uses up {recipe.saves_expiring.join(", ")}
-                  </Text>
-                )}
-              </View>
               <View
                 style={[
-                  styles.actions,
-                  { borderColor: colors.border },
-                  largeText && {
-                    flexDirection: "column",
-                    alignItems: "stretch",
-                    gap: 4,
-                  },
+                  styles.artwork,
+                  compact && { height: 104 },
+                  { backgroundColor: colors.accentSoft },
                 ]}
               >
-                <RecipeActionButton
-                  label="Not this"
-                  variant="secondary"
-                  onPress={dismiss}
-                  disabled={isDismissing}
-                  testID={"recipe-card-not-this-" + recipe.recipe_id}
-                  accessibilityLabel={"Not this: " + recipe.title}
-                  style={{
-                    minHeight: 48,
-                    paddingHorizontal: 24,
-                    flex: largeText ? undefined : 1,
-                  }}
-                />
                 <RecipePressable
-                  onPress={() => onIngredients(recipe)}
                   accessibilityRole="button"
-                  accessibilityLabel={
-                    "View all " +
-                    recipe.ingredients.length +
-                    " ingredients for " +
-                    recipe.title
-                  }
-                  testID={"recipe-card-ingredients-" + recipe.recipe_id}
-                  style={{
-                    minHeight: 48,
-                    paddingHorizontal: 6,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 6,
-                  }}
+                  accessibilityLabel={`Preview ${recipe.title}`}
+                  testID={`recipe-card-preview-${recipe.recipe_id}`}
+                  onPress={() => onIngredients(recipe)}
+                  style={[StyleSheet.absoluteFillObject, { alignItems: "center", justifyContent: "center" }]}
                 >
+                <Feather
+                  name="image"
+                  size={34}
+                  color={colors.accent}
+                  style={{ opacity: 0.3 }}
+                />
+                <View style={styles.imageCaption}>
+                  <Feather name="zap" size={13} color={colors.accent} />
                   <Text
                     style={{
-                      color: colors.text,
+                      color: colors.accent,
+                      fontFamily: fonts.bodyStrong,
+                      fontSize: 12,
+                    }}
+                  >
+                    Generated
+                  </Text>
+                </View>
+                </RecipePressable>
+                <RecipePressable onPress={() => onToggleSave(recipe, saved)} disabled={isSavePending} accessibilityRole="button" accessibilityLabel={saved ? "Remove " + recipe.title + " from saved recipes" : "Save " + recipe.title + " to household cookbook"} testID={"recipe-card-save-" + recipe.recipe_id} style={[styles.saveButton, { backgroundColor: colors.surface }]}>
+                  {saved ? <FontAwesome name="bookmark" size={19} color={colors.accent} /> : <Feather name="bookmark" size={19} color={colors.textMuted} />}
+                  <Text style={{ color: saved ? colors.accent : colors.textMuted, fontFamily: fonts.bodyStrong, fontSize: 12 }}>{saved ? "Saved" : "Save"}</Text>
+                </RecipePressable>
+              </View>
+              <View
+                style={[styles.cardContent, compact && { padding: 16, gap: 8 }]}
+              >
+                <Text
+                  selectable
+                  numberOfLines={3}
+                  onPress={() => onIngredients(recipe)}
+                  accessibilityRole="link"
+                  style={{
+                    fontFamily: fonts.display,
+                    fontSize: compact ? 22 : 24,
+                    lineHeight: compact ? 26 : 28,
+                    letterSpacing: -0.5,
+                    color: colors.text,
+                  }}
+                >
+                  {recipe.title}
+                </Text>
+                <View style={styles.facts}>
+                  <Feather name="clock" size={14} color={colors.textMuted} />
+                  <Text
+                    style={{
+                      color: colors.textMuted,
+                      fontFamily: fonts.body,
+                      fontSize: 13,
+                    }}
+                  >
+                    {recipe.cook_time_minutes} min
+                  </Text>
+                  <Text style={{ color: colors.textSubtle, fontSize: 13 }}>
+                    ·
+                  </Text>
+                  <Text
+                    style={{
+                      color: colors.textMuted,
+                      fontFamily: fonts.body,
+                      fontSize: 13,
+                    }}
+                  >
+                    {recipe.servings} servings
+                  </Text>
+                  <Text
+                    style={{
+                      marginLeft: "auto",
+                      color: colors.accent,
+                      fontFamily: fonts.bodyStrong,
+                      fontSize: 12,
+                    }}
+                  >
+                    {recipe.match_percent}% match
+                  </Text>
+                </View>
+                <View style={{ gap: 5, flex: 1 }}>
+                  <Text
+                    style={{
+                      color: colors.textMuted,
                       fontFamily: fonts.bodyStrong,
                       fontSize: 12,
                     }}
                   >
                     Ingredients
                   </Text>
-                  <Feather
-                    name="arrow-up-right"
-                    size={17}
-                    color={colors.accent}
+                  <Text
+                    selectable
+                    numberOfLines={2}
+                    style={{
+                      color: colors.text,
+                      fontFamily: fonts.body,
+                      fontSize: 14,
+                      lineHeight: 21,
+                    }}
+                  >
+                    {recipe.ingredients
+                      .map((ingredient) => ingredient.name)
+                      .join(" · ")}
+                  </Text>
+                  {recipe.saves_expiring.length > 0 && (
+                    <Text
+                      numberOfLines={1}
+                      style={{
+                        color: colors.warn,
+                        fontFamily: fonts.body,
+                        fontSize: 12,
+                        marginTop: 3,
+                      }}
+                    >
+                      Uses up {recipe.saves_expiring.join(", ")}
+                    </Text>
+                  )}
+                </View>
+                <View
+                  style={[
+                    styles.actions,
+                    { borderColor: colors.border },
+                    largeText && {
+                      flexDirection: "column",
+                      alignItems: "stretch",
+                      gap: 4,
+                    },
+                  ]}
+                >
+                  <RecipeActionButton
+                    label="Not this"
+                    variant="secondary"
+                    onPress={dismiss}
+                    disabled={isDismissing}
+                    testID={"recipe-card-not-this-" + recipe.recipe_id}
+                    accessibilityLabel={"Not this: " + recipe.title}
+                    style={{
+                      minHeight: 48,
+                      paddingHorizontal: 24,
+                      flex: largeText ? undefined : 1,
+                    }}
                   />
-                </RecipePressable>
+                  <RecipePressable
+                    onPress={() => onIngredients(recipe)}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      "View all " +
+                      recipe.ingredients.length +
+                      " ingredients for " +
+                      recipe.title
+                    }
+                    testID={"recipe-card-ingredients-" + recipe.recipe_id}
+                    style={{
+                      minHeight: 48,
+                      paddingHorizontal: 6,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: colors.text,
+                        fontFamily: fonts.bodyStrong,
+                        fontSize: 12,
+                      }}
+                    >
+                      Ingredients
+                    </Text>
+                    <Feather
+                      name="arrow-up-right"
+                      size={17}
+                      color={colors.accent}
+                    />
+                  </RecipePressable>
+                </View>
               </View>
-            </View>
+            </NativeAnimated.View>
           </NativeAnimated.View>
-        </NativeAnimated.View>
-      </View>
+        </View>
       </GestureDetector>
     </View>
   );
