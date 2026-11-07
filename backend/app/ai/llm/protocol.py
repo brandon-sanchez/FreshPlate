@@ -11,7 +11,8 @@ from app.ai.llm.retry import PipelineDeadline
 ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
 
 # How much hidden reasoning the model may do before answering. None keeps the
-# model's own default, which for Gemini 3 Flash is slow and varies run to run.
+# model's own default, which for the pinned Gemini Flash model is slow and
+# varies run to run.
 ThinkingLevel = Literal["minimal", "low", "medium", "high"]
 
 
