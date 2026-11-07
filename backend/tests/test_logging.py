@@ -1,5 +1,3 @@
-"""The app's own INFO records reach the server log."""
-
 import logging
 
 from app.main import create_app

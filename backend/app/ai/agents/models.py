@@ -77,9 +77,10 @@ def recipe_batch_model(batch_ceiling: int) -> type[RecipeGenerationResponse]:
 
     Gemini enforces the schema's ``maxItems`` while it decodes, so the model
     stops at the ceiling instead of writing recipes the caller would discard.
-    Validation stays lenient so one extra recipe is trimmed rather than failing
-    the batch. There is deliberately no minimum: an empty list is the honest
-    answer for a kitchen that cannot make a meal.
+    Pydantic does not enforce ``maxItems``, so an oversized batch still
+    validates and ``generate_recipes`` trims it. There is deliberately no
+    minimum: an empty list is the honest answer for a kitchen that cannot make
+    a meal.
     """
     return create_model(
         f"RecipeBatchOf{batch_ceiling}",
