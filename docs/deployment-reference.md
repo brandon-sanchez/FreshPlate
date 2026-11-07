@@ -4,15 +4,14 @@ The `Deploy` workflow in `.github/workflows/deploy.yml` deploys the backend to C
 
 ## Deploy workflow
 
-- Starts when a `CI` workflow run on `main` completes. The `deploy` job runs only if that CI run succeeded, was triggered by a push, and ran on this repository rather than a fork.
+- Starts when a `CI` workflow run on `main` completes. The workflow continues only if that CI run succeeded, was triggered by a push, and ran on this repository rather than a fork.
 - Checks out and deploys the commit that CI tested, `github.event.workflow_run.head_sha`.
 - Runs in the `production` GitHub environment and reads its variables from there. Only `main` can deploy to that environment.
-- Runs one deploy at a time. A queued deploy whose commit is no longer the tip of `main` skips itself, so an older commit never replaces a newer one.
-- Fails at its first step, and names each missing variable, if any `production` variable is unset.
+- Runs one deploy at a time. Before deploying, a separate `freshness` job checks through the GitHub API that the tested commit is still the tip of `main`. If it is not, the deploy is skipped, so an older commit never replaces a newer one, and a skipped run never creates a `production` deployment.
+- Fails at its first deploy step, and names each missing variable, if any `production` variable is unset.
 - Gets a short-lived GitHub OIDC token, then signs in to Google Cloud as `github-deployer` through Workload Identity Federation. No service account key exists.
 - Runs `gcloud run deploy --source=backend`. Cloud Build builds the image from `backend/Dockerfile`, and `backend/.gcloudignore` keeps `.env`, tests, and local data out of the upload.
 - Calls `/health` on the new revision up to five times, 10 seconds apart. The job fails if no call returns 200 with `"service": "freshplate-api"` in the body.
-- Checks whether its commit is still the tip of `main` with `git ls-remote` and no credentials. That check works only while the repository is public.
 
 ## Google Cloud resources
 

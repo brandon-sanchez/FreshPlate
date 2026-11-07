@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  deploy:
-    name: Deploy to Cloud Run
+  freshness:
+    name: Check the tested commit is still main
     # workflow_run also fires for pull requests from forks whose branch is named
     # main, so require a successful push to this repository's main.
     if: >-
@@ -19,6 +19,31 @@ jobs:
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      current: ${{ steps.check.outputs.current }}
+    steps:
+      # CI runs on main can finish out of order, so a deploy queued behind a
+      # newer push must not replace it with older code.
+      - name: Compare the tested commit with main
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          latest_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          if [ "$latest_sha" = "$TESTED_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Main has moved to $latest_sha; skipping the deploy of $TESTED_SHA."
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    name: Deploy to Cloud Run
+    needs: freshness
+    if: needs.freshness.outputs.current == 'true'
     concurrency:
       group: freshplate-production-deploy
       cancel-in-progress: false
@@ -31,7 +56,7 @@ jobs:
       id-token: write
     steps:
       - name: Check out the tested commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
@@ -46,8 +71,8 @@ jobs:
         run: |
           set -euo pipefail
           missing=()
-          for name in GCP_PROJECT_ID GCP_REGION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOY_SERVICE_ACCOUNT GCP_CLOUD_RUN_SERVICE_ACCOUNT GCP_CLOUD_BUILD_SERVICE_ACCOUNT; do
-            if [ -z "${!name:-}" ]; then
+          for name in "${!GCP_@}"; do
+            if [ -z "${!name}" ]; then
               missing+=("$name")
             fi
           done
@@ -55,31 +80,15 @@ jobs:
             echo "::error::Missing production environment variables: ${missing[*]}. See docs/deployment.md."
             exit 1
           fi
-      - name: Skip superseded main push
-        id: freshness
-        env:
-          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          set -euo pipefail
-          latest_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
-          if [ "$latest_sha" != "$TESTED_SHA" ]; then
-            echo "This push is superseded by $latest_sha; skipping deployment."
-            echo "current=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "current=true" >> "$GITHUB_OUTPUT"
-          fi
       - name: Authenticate to Google Cloud
-        if: steps.freshness.outputs.current == 'true'
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
       - name: Set up Google Cloud CLI
-        if: steps.freshness.outputs.current == 'true'
         uses: google-github-actions/setup-gcloud@v3
       - name: Deploy the API
         id: deploy
-        if: steps.freshness.outputs.current == 'true'
         uses: google-github-actions/deploy-cloudrun@v3
         with:
           service: freshplate-api
@@ -96,7 +105,6 @@ jobs:
             --set-env-vars=LANGSMITH_TRACING=true,LANGSMITH_PROJECT=freshplate
             --set-secrets=GEMINI_API_KEY=gemini-api-key:latest,SUPABASE_URL=supabase-url:latest,SUPABASE_PUBLISHABLE_KEY=supabase-publishable-key:latest,SUPABASE_SECRET_KEY=supabase-secret-key:latest,LANGSMITH_API_KEY=langsmith-api-key:latest
       - name: Smoke test the deployed API
-        if: steps.freshness.outputs.current == 'true'
         env:
           SERVICE_URL: ${{ steps.deploy.outputs.url }}
         run: |
