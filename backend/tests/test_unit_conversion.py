@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -168,6 +169,64 @@ def test_counted_food_uses_the_profile_each_weight_as_an_estimate() -> None:
     result = to_stock(D(2), "", onions)
     assert isinstance(result, Approximate)
     assert result.amount == D(220)
+
+
+_EGG_PROFILE = ProfileFacts(
+    g_per_ml=D("1.03"), unit_grams={"each": D(50), "egg": D(50), "large": D(50)}
+)
+CARTON_EGGS = FoodFacts(
+    stock_base="each", each_label="carton", whole_units_only=True, profile=_EGG_PROFILE
+)
+
+
+@pytest.mark.xfail(strict=True, reason="a profile item weight sizes the package")
+@pytest.mark.parametrize("unit", ["egg", "large", "whole", "each"])
+def test_eggs_from_eggs_counted_in_cartons_ask_for_the_carton_size(unit) -> None:
+    assert to_stock(D(2), unit, CARTON_EGGS) == Small(
+        D(100), "g", AskAtCook("needs_package_size")
+    )
+
+
+@pytest.mark.xfail(strict=True, reason="a profile item weight sizes the package")
+def test_a_cup_from_a_carton_of_unknown_size_asks_for_the_carton_size() -> None:
+    result = to_stock(D(1), "cup", CARTON_EGGS)
+    assert isinstance(result, Small)
+    assert result.unit == "ml"
+    assert result.otherwise == AskAtCook("needs_package_size")
+
+
+@pytest.mark.xfail(strict=True, reason="a profile item weight sizes the package")
+@pytest.mark.parametrize(
+    "label", ["carton", "container", "bottle", "jar", "can", "bag", "box"]
+)
+def test_a_profile_item_weight_never_sizes_a_package(label) -> None:
+    food = FoodFacts(stock_base="each", each_label=label, profile=_EGG_PROFILE)
+    assert to_stock(D(100), "g", food) == Small(
+        D(100), "g", AskAtCook("needs_package_size")
+    )
+
+
+@pytest.mark.xfail(strict=True, reason="a profile item weight sizes the package")
+@pytest.mark.parametrize("carton_grams", [None, D(600)])
+def test_items_from_a_package_without_an_item_weight_ask_for_its_size(
+    carton_grams,
+) -> None:
+    cartons = FoodFacts(
+        stock_base="each", each_label="carton", grams_per_each=carton_grams
+    )
+    assert to_stock(D(2), "whole", cartons) == AskAtCook("needs_each_size")
+
+
+@pytest.mark.xfail(strict=True, reason="a profile item weight sizes the package")
+def test_items_from_a_package_of_known_size_use_the_item_weight() -> None:
+    cartons = replace(CARTON_EGGS, grams_per_each=D(600))
+    assert to_stock(D(3), "whole", cartons) == Approximate(D("0.25"))
+
+
+def test_the_profile_item_weight_still_sizes_a_counted_item() -> None:
+    eggs = FoodFacts(stock_base="each", each_label="egg", profile=_EGG_PROFILE)
+    assert to_stock(D(100), "g", eggs) == Approximate(D(2))
+    assert to_stock(D(2), "whole", eggs) == Exact(D(2))
 
 
 def test_a_profile_size_word_is_tried_before_the_size_is_stripped() -> None:
