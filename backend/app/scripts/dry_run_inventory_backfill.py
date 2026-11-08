@@ -219,9 +219,9 @@ def _amount(value: Decimal) -> str:
 
 
 def _fraction(value: Decimal) -> str:
-    whole = (1 / value).quantize(Decimal("0.000001"))
-    if whole == whole.to_integral_value():
-        return f"1/{whole:.0f}"
+    denominator = (1 / value).quantize(Decimal("0.000001"))
+    if denominator == denominator.to_integral_value():
+        return f"1/{denominator:.0f}"
     return _amount(value)
 
 
