@@ -12,6 +12,7 @@ from app.inventory.units import (
     ProfileFacts,
     Small,
     normalize_unit,
+    table_unit,
     to_stock,
 )
 
@@ -57,6 +58,24 @@ def _approx(conversion: Exact | Approximate | Small, places: str = "0.001") -> D
 )
 def test_normalize_unit(text, key) -> None:
     assert normalize_unit(text) == key
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("G", ("g", D(1))),
+        ("kgs", ("g", D(1000))),
+        ("oz", ("g", D("28.349523125"))),
+        ("fl. oz.", ("ml", D("29.5735295625"))),
+        ("Cups", ("ml", D("236.5882365"))),
+        ("l", ("ml", D(1000))),
+        ("large cup", None),
+        ("slices", None),
+        ("item", None),
+    ],
+)
+def test_table_unit_finds_only_mass_and_volume_units(text, expected) -> None:
+    assert table_unit(text) == expected
 
 
 def test_garlic_cloves_become_about_a_fraction_of_a_head() -> None:
