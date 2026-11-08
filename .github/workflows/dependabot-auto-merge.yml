@@ -1,9 +1,7 @@
 name: Dependabot auto-merge
 
-# Patch and minor dependency updates merge on their own once the required CI
-# checks pass. Major updates are left open for a person to review, because
-# they can carry breaking changes. Branch protection on main is what holds the
-# merge until CI is green; this workflow only turns auto-merge on.
+# Branch protection on main is what holds the merge until CI is green; this
+# workflow only turns auto-merge on.
 on: pull_request
 
 permissions:
@@ -22,8 +20,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # For a grouped PR, update-type is the largest bump in the group, so a
-      # group with any major bump is skipped too. An unknown or empty type is
-      # also skipped and waits for review.
+      # group with any major bump is skipped too.
       - name: Turn on auto-merge for patch and minor updates
         if: >-
           steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
