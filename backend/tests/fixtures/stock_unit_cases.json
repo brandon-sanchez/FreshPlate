@@ -1,0 +1,320 @@
+[
+  {
+    "unit": "g",
+    "stock_base": "g",
+    "each_label": null,
+    "per_unit": "1"
+  },
+  {
+    "unit": "G",
+    "stock_base": "g",
+    "each_label": null,
+    "per_unit": "1"
+  },
+  {
+    "unit": "grams",
+    "stock_base": "g",
+    "each_label": null,
+    "per_unit": "1"
+  },
+  {
+    "unit": "kg",
+    "stock_base": "g",
+    "each_label": null,
+    "per_unit": "1000"
+  },
+  {
+    "unit": "Kilograms",
+    "stock_base": "g",
+    "each_label": null,
+    "per_unit": "1000"
+  },
+  {
+    "unit": "mg",
+    "stock_base": "g",
+    "each_label": null,
+    "per_unit": "0.001"
+  },
+  {
+    "unit": "oz",
+    "stock_base": "g",
+    "each_label": null,
+    "per_unit": "28.349523125"
+  },
+  {
+    "unit": "lb",
+    "stock_base": "g",
+    "each_label": null,
+    "per_unit": "453.59237"
+  },
+  {
+    "unit": "lbs",
+    "stock_base": "g",
+    "each_label": null,
+    "per_unit": "453.59237"
+  },
+  {
+    "unit": "ml",
+    "stock_base": "ml",
+    "each_label": null,
+    "per_unit": "1"
+  },
+  {
+    "unit": "mL",
+    "stock_base": "ml",
+    "each_label": null,
+    "per_unit": "1"
+  },
+  {
+    "unit": "l",
+    "stock_base": "ml",
+    "each_label": null,
+    "per_unit": "1000"
+  },
+  {
+    "unit": "L",
+    "stock_base": "ml",
+    "each_label": null,
+    "per_unit": "1000"
+  },
+  {
+    "unit": "litre",
+    "stock_base": "ml",
+    "each_label": null,
+    "per_unit": "1000"
+  },
+  {
+    "unit": "liters",
+    "stock_base": "ml",
+    "each_label": null,
+    "per_unit": "1000"
+  },
+  {
+    "unit": "tsp",
+    "stock_base": "ml",
+    "each_label": null,
+    "per_unit": "4.92892159375"
+  },
+  {
+    "unit": "tbsp",
+    "stock_base": "ml",
+    "each_label": null,
+    "per_unit": "14.78676478125"
+  },
+  {
+    "unit": "Tablespoons",
+    "stock_base": "ml",
+    "each_label": null,
+    "per_unit": "14.78676478125"
+  },
+  {
+    "unit": "fl oz",
+    "stock_base": "ml",
+    "each_label": null,
+    "per_unit": "29.5735295625"
+  },
+  {
+    "unit": "fl. oz.",
+    "stock_base": "ml",
+    "each_label": null,
+    "per_unit": "29.5735295625"
+  },
+  {
+    "unit": "cup",
+    "stock_base": "ml",
+    "each_label": null,
+    "per_unit": "236.5882365"
+  },
+  {
+    "unit": "Cups",
+    "stock_base": "ml",
+    "each_label": null,
+    "per_unit": "236.5882365"
+  },
+  {
+    "unit": "pt",
+    "stock_base": "ml",
+    "each_label": null,
+    "per_unit": "473.176473"
+  },
+  {
+    "unit": "qt",
+    "stock_base": "ml",
+    "each_label": null,
+    "per_unit": "946.352946"
+  },
+  {
+    "unit": "gal",
+    "stock_base": "ml",
+    "each_label": null,
+    "per_unit": "3785.411784"
+  },
+  {
+    "unit": "gallon",
+    "stock_base": "ml",
+    "each_label": null,
+    "per_unit": "3785.411784"
+  },
+  {
+    "unit": "item",
+    "stock_base": "each",
+    "each_label": "each",
+    "per_unit": "1"
+  },
+  {
+    "unit": "items",
+    "stock_base": "each",
+    "each_label": "each",
+    "per_unit": "1"
+  },
+  {
+    "unit": "Item",
+    "stock_base": "each",
+    "each_label": "each",
+    "per_unit": "1"
+  },
+  {
+    "unit": "piece",
+    "stock_base": "each",
+    "each_label": "each",
+    "per_unit": "1"
+  },
+  {
+    "unit": "pc",
+    "stock_base": "each",
+    "each_label": "each",
+    "per_unit": "1"
+  },
+  {
+    "unit": "ct",
+    "stock_base": "each",
+    "each_label": "each",
+    "per_unit": "1"
+  },
+  {
+    "unit": "each",
+    "stock_base": "each",
+    "each_label": "each",
+    "per_unit": "1"
+  },
+  {
+    "unit": "head",
+    "stock_base": "each",
+    "each_label": "head",
+    "per_unit": "1"
+  },
+  {
+    "unit": "bulb",
+    "stock_base": "each",
+    "each_label": "head",
+    "per_unit": "1"
+  },
+  {
+    "unit": "can",
+    "stock_base": "each",
+    "each_label": "can",
+    "per_unit": "1"
+  },
+  {
+    "unit": "Cans",
+    "stock_base": "each",
+    "each_label": "can",
+    "per_unit": "1"
+  },
+  {
+    "unit": "loaf",
+    "stock_base": "each",
+    "each_label": "loaf",
+    "per_unit": "1"
+  },
+  {
+    "unit": "loaves",
+    "stock_base": "each",
+    "each_label": "loaf",
+    "per_unit": "1"
+  },
+  {
+    "unit": "Slices",
+    "stock_base": "each",
+    "each_label": "slice",
+    "per_unit": "1"
+  },
+  {
+    "unit": "Tostadas",
+    "stock_base": "each",
+    "each_label": "tostada",
+    "per_unit": "1"
+  },
+  {
+    "unit": "servings",
+    "stock_base": "each",
+    "each_label": "serving",
+    "per_unit": "1"
+  },
+  {
+    "unit": "Bowls",
+    "stock_base": "each",
+    "each_label": "bowl",
+    "per_unit": "1"
+  },
+  {
+    "unit": "box",
+    "stock_base": "each",
+    "each_label": "box",
+    "per_unit": "1"
+  },
+  {
+    "unit": "boxes",
+    "stock_base": "each",
+    "each_label": "box",
+    "per_unit": "1"
+  },
+  {
+    "unit": "bunches",
+    "stock_base": "each",
+    "each_label": "bunch",
+    "per_unit": "1"
+  },
+  {
+    "unit": "berries",
+    "stock_base": "each",
+    "each_label": "berry",
+    "per_unit": "1"
+  },
+  {
+    "unit": "eggs",
+    "stock_base": "each",
+    "each_label": "egg",
+    "per_unit": "1"
+  },
+  {
+    "unit": "tomatoes",
+    "stock_base": "each",
+    "each_label": "tomato",
+    "per_unit": "1"
+  },
+  {
+    "unit": "glasses",
+    "stock_base": "each",
+    "each_label": "glass",
+    "per_unit": "1"
+  },
+  {
+    "unit": "leaves",
+    "stock_base": "each",
+    "each_label": "leaf",
+    "per_unit": "1"
+  },
+  {
+    "unit": "  can  ",
+    "stock_base": "each",
+    "each_label": "can",
+    "per_unit": "1"
+  },
+  {
+    "unit": "Container",
+    "stock_base": "each",
+    "each_label": "container",
+    "per_unit": "1"
+  }
+]
