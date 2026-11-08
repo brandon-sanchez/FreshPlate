@@ -5,8 +5,10 @@ The tests pass plain rows in and check the plan and report. No database runs.
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -29,6 +31,12 @@ START = datetime(2026, 11, 1, 12, tzinfo=timezone.utc)
 TODAY = date(2026, 11, 7)
 GRAMS = StockShape("g", None)
 MILLILITRES = StockShape("ml", None)
+# Shared with mobile/lib/__tests__/stockUnit.test.ts, so the add form reads table
+# units and bare words the way the backfill did and adds land on the moved
+# food. Package forms ("Containers (63 g each)") are read only here.
+STOCK_UNIT_CASES = json.loads(
+    (Path(__file__).parent / "fixtures/stock_unit_cases.json").read_text()
+)
 
 
 def row(
@@ -438,3 +446,13 @@ def test_render_prints_none_for_empty_sections_and_lists_unresolved_ids():
 
 def test_render_says_so_when_there_is_nothing_to_plan():
     assert "No inventory rows." in render(plan_backfill([]), TODAY)
+
+
+@pytest.mark.parametrize("case", STOCK_UNIT_CASES, ids=lambda c: c["unit"])
+def test_parse_unit_matches_the_shared_add_form_cases(case):
+    parsed = parse_unit(case["unit"])
+
+    assert isinstance(parsed, ParsedUnit)
+    assert parsed.shape.stock_base == case["stock_base"]
+    assert parsed.shape.each_label == case["each_label"]
+    assert parsed.per_unit == Decimal(case["per_unit"])
