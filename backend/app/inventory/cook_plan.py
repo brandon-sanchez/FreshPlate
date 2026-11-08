@@ -3,12 +3,12 @@
 A recipe lists ingredient lines in cooking units, and several lines can use the
 same food (salt in the rub and again in the sauce). ``plan_cook`` groups the
 lines by food, converts each with ``to_stock``, and folds them into one
-``FoodPlan`` per food: the summed draw in the food's stock base, rounded once,
-plus what the cook flow must show or ask about. Summing before rounding keeps
-small per-line errors from adding up. The Small limit is checked against the
-per-food total too, so three "1 tbsp salt" lines do not each pass as a pinch:
-once a food's ``Small`` lines pass the limit together, each converts to its
-``otherwise``.
+``FoodPlan`` per food. A food plan holds the summed draw in the food's stock
+base, rounded once, plus what the cook flow must show or ask about. Summing
+before rounding keeps small per-line errors from adding up. The Small limit is
+checked against the per-food total too, so three "1 tbsp salt" lines do not
+each pass as a pinch. Once a food's ``Small`` lines pass the limit together,
+each converts to its ``otherwise``.
 
 The planner is pure: the caller supplies each food's facts and available stock,
 and the plan reports shortfalls rather than refusing to cook.
@@ -35,19 +35,27 @@ from app.inventory.units import (
 )
 
 # Seasoning-sized totals at or under this many grams or millilitres per food
-# are not drawn from stock or asked about.
+# are not drawn from stock or asked about. Grams and millilitres count alike.
 _SMALL_LIMIT = Decimal(15)
+# The precision a draw settles to before any whole-unit rounding.
 _PRECISION: dict[StockBase, Decimal] = {
     "g": Decimal("0.1"),
     "ml": Decimal("0.1"),
     "each": Decimal("0.001"),
 }
+# Decimal places tried, in order, when showing a need in a rounding note.
 _NOTE_PLACES = (Decimal("0.1"), Decimal("0.01"), Decimal("0.001"))
 
 
 @dataclass(frozen=True)
 class CookLine:
-    """One recipe ingredient line, as recipe generation names it."""
+    """One recipe ingredient line, as recipe generation names it.
+
+    Attributes:
+        food_id: The food the line uses.
+        amount: How much the recipe asks for, in ``unit``.
+        unit: The recipe's unit as written, such as "tbsp" or "clove".
+    """
 
     food_id: UUID
     amount: Decimal
@@ -56,9 +64,15 @@ class CookLine:
 
 @dataclass(frozen=True)
 class FoodStock:
-    """One food's facts and how much of it is available, in its stock base.
+    """One food's unit facts and how much of it is available.
 
-    ``available`` counts unexpired, not depleted stock.
+    Attributes:
+        facts: The food's conversion facts.
+        available: Unexpired, not depleted stock in the food's stock base.
+
+    Raises:
+        ValueError: On construction, when ``available`` is negative or not
+            finite.
     """
 
     facts: FoodFacts
@@ -73,7 +87,11 @@ class FoodStock:
 class LineAsk:
     """A line the cook flow asks about, with the recipe's own amount and unit.
 
-    ``line`` indexes the lines passed to ``plan_cook``.
+    Attributes:
+        line: The line's index in the lines passed to ``plan_cook``.
+        amount: The recipe's amount for the line.
+        unit: The recipe's unit for the line.
+        reason: Why the line can't be converted, which decides the question.
     """
 
     line: int
@@ -84,9 +102,12 @@ class LineAsk:
 
 @dataclass(frozen=True)
 class SmallTotal:
-    """A food's seasoning-sized lines summed; never drawn from stock.
+    """A food's seasoning-sized lines, summed. It is never drawn from stock.
 
-    Grams and millilitres count alike, so a mixed total is reported in ml.
+    Attributes:
+        amount: The summed amount. Grams and millilitres count alike.
+        unit: The unit the lines share, or "ml" when they mix grams and
+            millilitres.
     """
 
     amount: Decimal
@@ -95,7 +116,13 @@ class SmallTotal:
 
 @dataclass(frozen=True)
 class WholeUnitRounding:
-    """A whole-unit food whose draw was rounded up from what the recipe needs."""
+    """A whole-unit food whose draw was rounded up from what the recipe needs.
+
+    Attributes:
+        needs: The unrounded amount the recipe needs, in whole units.
+        note: The message the cook flow shows, such as
+            "Uses 2 cans, recipe needs about 1.4".
+    """
 
     needs: Decimal
     note: str
@@ -105,11 +132,19 @@ class WholeUnitRounding:
 class FoodPlan:
     """What one cook takes from one food, summed over the lines that use it.
 
-    ``draw`` is in ``stock_base`` and rounded once; it is 0 when nothing is
-    drawn. ``estimated`` means a profile estimate went into it (shown "about").
-    ``small`` is set when the food's seasoning-sized lines stay under the
-    Small limit together. ``shortfall`` is how much of the draw the available
-    stock does not cover.
+    Attributes:
+        food_id: The food.
+        stock_base: The unit ``draw`` and ``shortfall`` are in.
+        lines: Indexes of the lines that use this food, in recipe order.
+        draw: The amount to take from stock, rounded once. It is 0 when
+            nothing is drawn.
+        estimated: True when a profile estimate went into ``draw``, so the
+            app shows it as "about".
+        small: The seasoning total when the food's Small lines stay under the
+            limit together, else None.
+        asks: Lines the cook flow must ask about.
+        rounding: Set when a whole-unit food's draw was rounded up.
+        shortfall: How much of ``draw`` the available stock doesn't cover.
     """
 
     food_id: UUID
@@ -125,7 +160,11 @@ class FoodPlan:
 
 @dataclass(frozen=True)
 class CookPlan:
-    """One ``FoodPlan`` per food, ordered by the food's first line."""
+    """The plan for a whole cook.
+
+    Attributes:
+        foods: One ``FoodPlan`` per food, ordered by the food's first line.
+    """
 
     foods: tuple[FoodPlan, ...]
 
@@ -133,7 +172,18 @@ class CookPlan:
 def plan_cook(lines: Sequence[CookLine], stock: Mapping[UUID, FoodStock]) -> CookPlan:
     """Plan the draw on each food for cooking ``lines`` against ``stock``.
 
-    Raises ``ValueError`` when a line names a food missing from ``stock``.
+    The plan reports shortfalls and questions. It never refuses to cook.
+
+    Args:
+        lines: The recipe's ingredient lines, in recipe order.
+        stock: Each food's facts and available stock, by food id. Every food
+            a line names must be present.
+
+    Returns:
+        One ``FoodPlan`` per food, ordered by the food's first line.
+
+    Raises:
+        ValueError: When a line names a food missing from ``stock``.
     """
     by_food: dict[UUID, list[int]] = {}
     for index, line in enumerate(lines):
@@ -191,7 +241,7 @@ def _plan_food(
 
 
 def _small_unit(smalls: Sequence[Small]) -> MeasuredUnit:
-    """The unit the Small lines agree on, ignoring "to taste"; else ml."""
+    """Return the unit the Small lines agree on, ignoring "to taste", else ml."""
     units = {small.unit for small in smalls if small.amount}
     return units.pop() if len(units) == 1 else "ml"
 

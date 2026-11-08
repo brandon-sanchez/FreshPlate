@@ -11,9 +11,9 @@ and household facts, ``Approximate`` used at least one profile estimate (the
 app shows "about"), ``Small`` is an amount that may need no number at all, and
 ``AskAtCook`` means the cook flow asks the user. Whether a ``Small`` amount is
 small enough depends on the food's total across the whole recipe, so the cook
-planner decides that, not this module. A recipe amount never raises; callers
+planner decides that, not this module. A recipe amount never raises. Callers
 pass amounts and facts as ``Decimal``, converting floats with
-``Decimal(str(x))`` at their own boundary. Nothing is rounded here; the cook
+``Decimal(str(x))`` at their own boundary. Nothing is rounded here. The cook
 planner rounds once per food per cook.
 """
 
@@ -121,9 +121,9 @@ class FoodFacts:
     ``each_label`` names the counted unit and is set exactly when
     ``stock_base`` is ``"each"``. ``whole_units_only`` marks counted foods that
     cannot be split (eggs, cans), so a cook draws a whole number of them.
-    ``household_units`` maps a unit word to its amount in the stock base, e.g.
-    ``{"clove": 0.1}`` for garlic stocked in heads. Household facts are exact;
-    profile facts are estimates. The label and unit words are normalized with
+    ``household_units`` maps a unit word to its amount in the stock base, for
+    example ``{"clove": 0.1}`` for garlic stocked in heads. Household facts are
+    exact, and profile facts are estimates. The label and unit words are normalized with
     ``normalize_unit`` when the facts are built.
     """
 
@@ -170,7 +170,7 @@ class Approximate:
 
 @dataclass(frozen=True)
 class AskAtCook:
-    """No conversion path; the cook flow asks the user how much was used."""
+    """No conversion path exists, so the cook flow asks how much was used."""
 
     reason: AskReason
 
@@ -182,9 +182,9 @@ class Small:
     Returned for pinch, dash and to taste (always in ml), and for any grams or
     millilitres from a counted package whose size is unknown in that dimension
     (a container of salt). ``otherwise`` is what the line converts to when the
-    food's total across the recipe is too large to skip: the normal conversion
-    for a seasoning word, and the ``AskAtCook`` with its real reason for a
-    package. The cook planner applies the limit.
+    food's total across the recipe is too large to skip. For a seasoning word
+    it is the normal conversion. For a package it is the ``AskAtCook`` with its
+    real reason. The cook planner applies the limit.
     """
 
     amount: Decimal
