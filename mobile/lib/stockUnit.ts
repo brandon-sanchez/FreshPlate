@@ -3,6 +3,9 @@
 // backend/app/inventory/backfill.py. backend/tests/fixtures/stock_unit_cases.json
 // holds the cases both sides must read the same way.
 
+/** A stock base measured by weight (g) or volume (ml). */
+export type MeasuredBase = "g" | "ml";
+
 /**
  * A typed unit read as a food's stock. `perUnit` is the stock amount one of the
  * typed unit stands for (1000 for "kg"). A counted unit names its count word in
@@ -10,20 +13,35 @@
  * mirroring the CHECK on `foods` that ties `each_label` to stock base "each".
  */
 export type StockUnit =
-  | { stockBase: "g" | "ml"; eachLabel: null; perUnit: number }
+  | { stockBase: MeasuredBase; eachLabel: null; perUnit: number }
   | { stockBase: "each"; eachLabel: string; perUnit: 1 };
 
-const MASS = new Map([
-  ["g", 1],
-  ["kg", 1000],
+/**
+ * The weight and volume units the add form offers, smallest first within each
+ * base. The unit tables below take these entries, so the form and
+ * {@link readStockUnit} always convert the same way.
+ */
+export const MEASURES = {
+  g: { stockBase: "g", eachLabel: null, perUnit: 1 },
+  kg: { stockBase: "g", eachLabel: null, perUnit: 1000 },
+  ml: { stockBase: "ml", eachLabel: null, perUnit: 1 },
+  l: { stockBase: "ml", eachLabel: null, perUnit: 1000 },
+} as const satisfies Record<string, StockUnit>;
+
+/** A weight or volume unit the add form offers. */
+export type Measure = keyof typeof MEASURES;
+
+const MEASURE_UNITS = Object.keys(MEASURES) as Measure[];
+
+const MASS = new Map<string, number>([
+  ...measureFactors("g"),
   ["mg", 0.001],
   ["oz", 28.349523125],
   ["lb", 453.59237],
 ]);
 
-const VOLUME = new Map([
-  ["ml", 1],
-  ["l", 1000],
+const VOLUME = new Map<string, number>([
+  ...measureFactors("ml"),
   ["tsp", 4.92892159375],
   ["tbsp", 14.78676478125],
   ["fl oz", 29.5735295625],
@@ -83,7 +101,8 @@ const IRREGULAR_PLURALS = new Map([
 export function readStockUnit(text: string): StockUnit {
   const key = normalizeUnit(text);
   const grams = MASS.get(key);
-  if (grams !== undefined) return { stockBase: "g", eachLabel: null, perUnit: grams };
+  if (grams !== undefined)
+    return { stockBase: "g", eachLabel: null, perUnit: grams };
   const millilitres = VOLUME.get(key);
   if (millilitres !== undefined) {
     return { stockBase: "ml", eachLabel: null, perUnit: millilitres };
@@ -93,14 +112,47 @@ export function readStockUnit(text: string): StockUnit {
 
 /**
  * Converts an amount of a typed unit into the food's stock base: 1.5 kg is
- * 1500 g. Rounds to 12 significant digits so binary float noise
- * (1.005 * 1000 = 1004.9999999999999) never reaches the database.
+ * 1500 g.
  *
  * @param quantity - The amount as typed.
- * @param unit - The unit read by {@link readStockUnit}.
+ * @param unit - The unit read by {@link readStockUnit}, or one of {@link MEASURES}.
  */
 export function toStockAmount(quantity: number, unit: StockUnit): number {
-  return Number((quantity * unit.perUnit).toPrecision(12));
+  return roundAmount(quantity * unit.perUnit);
+}
+
+/**
+ * Returns the measures of a stock base, smallest first, or every measure when
+ * `base` is `null` (a food whose base is not known yet).
+ */
+export function measuresFor(base: MeasuredBase | null): Measure[] {
+  return MEASURE_UNITS.filter(
+    (unit) => base === null || MEASURES[unit].stockBase === base,
+  );
+}
+
+/**
+ * Expresses a stock amount in the largest measure of its base that keeps it at
+ * 1 or more: 1500 g is 1.5 kg, and 500 g stays 500 g.
+ */
+export function toMeasure(
+  amount: number,
+  base: MeasuredBase,
+): { amount: number; unit: Measure } {
+  const [smallest, ...larger] = measuresFor(base);
+  const unit = larger.reduce(
+    (best, next) => (amount >= MEASURES[next].perUnit ? next : best),
+    smallest,
+  );
+  return { amount: roundAmount(amount / MEASURES[unit].perUnit), unit };
+}
+
+/**
+ * Rounds to 12 significant digits so binary float noise
+ * (1.005 * 1000 = 1004.9999999999999) never reaches the database or the form.
+ */
+export function roundAmount(value: number): number {
+  return Number(value.toPrecision(12));
 }
 
 function normalizeUnit(text: string): string {
@@ -123,4 +175,8 @@ function singular(word: string): string {
   if (/(oes|ches|shes|xes|sses)$/.test(word)) return word.slice(0, -2);
   if (word.endsWith("s")) return word.slice(0, -1);
   return word;
+}
+
+function measureFactors(base: MeasuredBase): [string, number][] {
+  return measuresFor(base).map((unit) => [unit, MEASURES[unit].perUnit]);
 }
