@@ -23,11 +23,8 @@ import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import Toast from "react-native-toast-message";
 import { useTheme } from "@/hooks/useTheme";
-import {
-  daysUntilExpiration,
-  InventoryItem,
-  useInventoryItems,
-} from "@/hooks/useInventoryItems";
+import { InventoryItem, useInventoryItems } from "@/hooks/useInventoryItems";
+import { daysUntilExpiration } from "@/lib/expiry";
 import { useFoodCategories } from "@/hooks/useFoodCategories";
 import { useDeleteItem } from "@/hooks/useDeleteItem";
 import { useCenterToast } from "@/stores/centerToast";

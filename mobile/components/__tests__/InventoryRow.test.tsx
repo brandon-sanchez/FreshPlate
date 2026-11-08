@@ -4,7 +4,6 @@ import type { InventoryItem } from "@/hooks/useInventoryItems";
 import { stackLots } from "@/lib/foodRows";
 import InventoryRow from "@/components/InventoryRow";
 
-jest.mock("@/lib/supabase", () => ({ supabase: {} }));
 jest.mock("@expo/vector-icons/FontAwesome", () => () => null);
 
 const TODAY = new Date(2026, 10, 8, 12);

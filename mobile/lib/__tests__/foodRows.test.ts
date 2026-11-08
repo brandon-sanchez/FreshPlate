@@ -1,5 +1,3 @@
-jest.mock("@/lib/supabase", () => ({ supabase: {} }));
-
 import type { InventoryItem } from "@/hooks/useInventoryItems";
 import { groupFoodRows, stackLots, type FoodSection } from "@/lib/foodRows";
 

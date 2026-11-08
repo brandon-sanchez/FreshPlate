@@ -1,4 +1,5 @@
-import { daysUntilExpiration, type InventoryItem } from "@/hooks/useInventoryItems";
+import type { InventoryItem } from "@/hooks/useInventoryItems";
+import { daysUntilExpiration } from "@/lib/expiry";
 
 type StorageLocation = InventoryItem["storage_location"];
 

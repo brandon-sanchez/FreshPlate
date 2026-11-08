@@ -16,11 +16,8 @@ import { useTheme } from "@/hooks/useTheme";
 import SegmentedControl from "@/components/SegmentedControl";
 import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";
-import {
-  daysUntilExpiration,
-  InventoryItem,
-  useInventoryItems,
-} from "@/hooks/useInventoryItems";
+import { InventoryItem, useInventoryItems } from "@/hooks/useInventoryItems";
+import { daysUntilExpiration } from "@/lib/expiry";
 import { FoodNameTakenError, useUpdateItem } from "@/hooks/useUpdateItem";
 import { useDeleteItem } from "@/hooks/useDeleteItem";
 import { useAuthStore } from "@/stores/auth";
