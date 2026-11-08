@@ -51,8 +51,6 @@ export default function ItemDetailScreen() {
   const deleteItem = useDeleteItem();
 
   const [name, setName] = useState("");
-  const [quantity, setQuantity] = useState(1);
-  const [unit, setUnit] = useState("item");
   const [expDays, setExpDays] = useState<number | null>(null);
   const [storage, setStorage] = useState<StorageLocation>("fridge");
   const [notes, setNotes] = useState("");
@@ -61,8 +59,6 @@ export default function ItemDetailScreen() {
   useEffect(() => {
     if (!item || hydrated) return;
     setName(item.name);
-    setQuantity(item.quantity);
-    setUnit(item.unit);
     setExpDays(daysUntilExpiration(item.expiration_date));
     setStorage(item.storage_location);
     setNotes(item.notes ?? "");
@@ -92,7 +88,7 @@ export default function ItemDetailScreen() {
   }
 
   const trimmedName = name.trim();
-  const isValid = trimmedName.length > 0 && quantity > 0;
+  const isValid = trimmedName.length > 0;
   /* Local-calendar math; UTC slicing rounds evening adds in negative-UTC
    * zones to the next day. */
   const expirationISO = (() => {
@@ -112,21 +108,12 @@ export default function ItemDetailScreen() {
   const handleSave = () => {
     if (!isValid || updateItem.isPending) return;
     const trimmedNotes = notes.trim() || null;
-    if ((unit.trim() || item.unit) !== item.unit) {
-      Toast.show({
-        type: "error",
-        text1: "Couldn't save",
-        text2: `${item.name} is tracked in ${item.unit}.`,
-      });
-      return;
-    }
     updateItem.mutate(
       {
         id: item.id,
         foodId: item.food_id,
         patch: {
           ...(trimmedName !== item.name && { name: trimmedName }),
-          ...(quantity !== item.quantity && { quantity }),
           ...(expirationISO !== item.expiration_date && {
             expiration_date: expirationISO,
           }),
@@ -243,7 +230,7 @@ export default function ItemDetailScreen() {
                 marginTop: 2,
               }}
             >
-              {item.category?.name ?? "Uncategorized"}
+              {`${item.category?.name ?? "Uncategorized"} · ${formatQuantity(item.quantity)} ${item.unit}`}
             </Text>
           </View>
         </View>
@@ -262,73 +249,6 @@ export default function ItemDetailScreen() {
             borderRadius: 12,
             borderWidth: 1,
             borderColor: trimmedName.length === 0 ? colors.crit : colors.border,
-            backgroundColor: colors.surface,
-            color: colors.text,
-            fontFamily: fonts.body,
-            fontSize: 15,
-          }}
-        />
-
-        <SectionLabel text="Quantity" />
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 14,
-            backgroundColor: colors.surface,
-            borderWidth: 1,
-            borderColor: colors.border,
-            borderRadius: 12,
-            paddingVertical: 12,
-          }}
-        >
-          <StepperButton
-            label="−"
-            disabled={quantity <= 0.1}
-            onPress={() =>
-              setQuantity((q) => Math.max(0.1, Math.round((q - 0.1) * 10) / 10))
-            }
-          />
-          <View style={{ minWidth: 120, alignItems: "center" }}>
-            <Text
-              style={{
-                fontFamily: fonts.bodyStrong,
-                fontSize: 22,
-                color: colors.text,
-                letterSpacing: -0.5,
-              }}
-            >
-              {formatQuantity(quantity)}{" "}
-              <Text
-                style={{
-                  fontFamily: fonts.body,
-                  fontSize: 14,
-                  color: colors.textMuted,
-                }}
-              >
-                {unit}
-              </Text>
-            </Text>
-          </View>
-          <StepperButton
-            label="+"
-            onPress={() => setQuantity((q) => Math.round((q + 0.1) * 10) / 10)}
-          />
-        </View>
-
-        <SectionLabel text="Unit" />
-        <TextInput
-          value={unit}
-          onChangeText={setUnit}
-          placeholder="item"
-          placeholderTextColor={colors.textSubtle}
-          style={{
-            height: 48,
-            paddingHorizontal: 14,
-            borderRadius: 12,
-            borderWidth: 1,
-            borderColor: colors.border,
             backgroundColor: colors.surface,
             color: colors.text,
             fontFamily: fonts.body,
@@ -490,44 +410,6 @@ function SectionLabel({ text, inline }: { text: string; inline?: boolean }) {
     >
       {text}
     </Text>
-  );
-}
-
-function StepperButton({
-  label,
-  onPress,
-  disabled,
-}: {
-  label: string;
-  onPress: () => void;
-  disabled?: boolean;
-}) {
-  const { colors, fonts } = useTheme();
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      style={{
-        width: 40,
-        height: 40,
-        borderRadius: 100,
-        backgroundColor: colors.accent,
-        alignItems: "center",
-        justifyContent: "center",
-        opacity: disabled ? 0.4 : 1,
-      }}
-    >
-      <Text
-        style={{
-          fontFamily: fonts.bodyStrong,
-          fontSize: 22,
-          color: colors.accentInk,
-          lineHeight: 22,
-        }}
-      >
-        {label}
-      </Text>
-    </Pressable>
   );
 }
 
