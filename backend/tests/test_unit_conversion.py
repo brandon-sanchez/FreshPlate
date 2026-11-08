@@ -203,22 +203,27 @@ def test_a_teaspoon_from_a_container_of_unknown_size_is_small() -> None:
     assert isinstance(result, Small)
     assert result.unit == "ml"
     assert _approx(result) == D("4.929")
+    assert result.otherwise == AskAtCook("needs_package_size")
 
 
-def test_grams_from_a_container_of_unknown_size_are_small() -> None:
-    assert to_stock(D(15), "g", SALT) == Small(D(15), "g")
+@pytest.mark.parametrize("amount", [D(15), D(500)])
+def test_grams_from_a_container_of_unknown_size_are_small_at_any_amount(
+    amount,
+) -> None:
+    assert to_stock(amount, "g", SALT) == Small(
+        amount, "g", AskAtCook("needs_package_size")
+    )
 
 
-def test_half_a_cup_from_a_container_of_unknown_size_asks_for_its_size() -> None:
-    assert to_stock(D("0.5"), "cup", SALT) == AskAtCook("needs_package_size")
+@pytest.mark.parametrize("amount", [D(5), D(100)])
+def test_grams_from_a_package_sized_only_in_ml_are_small_or_need_a_density(
+    amount,
+) -> None:
+    assert to_stock(amount, "g", COLA) == Small(amount, "g", AskAtCook("needs_density"))
 
 
-def test_a_sized_package_without_a_density_path_asks_for_a_density() -> None:
-    assert to_stock(D(100), "g", COLA) == AskAtCook("needs_density")
-
-
-def test_a_small_draw_in_a_package_s_unknown_dimension_is_small() -> None:
-    assert to_stock(D(5), "g", COLA) == Small(D(5), "g")
+def test_a_weighed_food_without_a_density_asks_rather_than_staying_small() -> None:
+    assert to_stock(D(5), "ml", BUTTER) == AskAtCook("needs_density")
 
 
 def test_millilitres_of_cola_become_a_fraction_of_cans_without_rounding() -> None:
@@ -249,6 +254,19 @@ def test_seasoning_words_are_small_for_any_food(amount, unit, expected, food) ->
     assert _approx(result) == D(expected)
 
 
+@pytest.mark.parametrize("food", [OIL, COLA, BUTTER])
+def test_a_seasoning_otherwise_converts_like_its_millilitres(food) -> None:
+    result = to_stock(D(2), "dash", food)
+    assert isinstance(result, Small)
+    assert result.otherwise == to_stock(result.amount, "ml", food)
+
+
+def test_a_seasoning_from_a_package_of_unknown_size_otherwise_asks() -> None:
+    result = to_stock(D(2), "dash", SALT)
+    assert isinstance(result, Small)
+    assert result.otherwise == AskAtCook("needs_package_size")
+
+
 def test_an_unknown_word_asks_at_cook() -> None:
     bread = FoodFacts(stock_base="g")
     assert to_stock(D(2), "slices", bread) == AskAtCook("unknown_unit")
@@ -261,7 +279,7 @@ def test_invalid_amounts_ask_at_cook(amount) -> None:
 
 @pytest.mark.parametrize("amount", [D(0), D(1)])
 def test_to_taste_is_small_whatever_amount_the_recipe_sends(amount) -> None:
-    assert to_stock(amount, "To taste", SALT) == Small(D(0), "ml")
+    assert to_stock(amount, "To taste", SALT) == Small(D(0), "ml", Exact(D(0)))
 
 
 @pytest.mark.parametrize(
@@ -270,6 +288,7 @@ def test_to_taste_is_small_whatever_amount_the_recipe_sends(amount) -> None:
         lambda: FoodFacts(stock_base="each"),
         lambda: FoodFacts(stock_base="g", each_label="head"),
         lambda: FoodFacts(stock_base="g", grams_per_each=D(0)),
+        lambda: FoodFacts(stock_base="g", whole_units_only=True),
         lambda: FoodFacts(stock_base="ml", household_units={"glass": D("NaN")}),
         lambda: ProfileFacts(unit_grams={"clove": D(-3)}),
         lambda: ProfileFacts(unit_grams={"Cloves": D(3), "clove": D(4)}),
