@@ -50,9 +50,13 @@ _PACKAGE = re.compile(
 )
 _BARE_WORDS = re.compile(rf"^{_WORDS}$")
 
-# A size fact a row's unit can state: ("grams", ""), ("millilitres", "") or
-# ("unit", <household unit word>).
-_Fact = tuple[Literal["grams", "millilitres", "unit"], str]
+
+@dataclass(frozen=True)
+class _UnitSize:
+    word: str
+
+
+_Fact = Literal["grams", "millilitres"] | _UnitSize
 
 
 @dataclass(frozen=True)
@@ -490,10 +494,10 @@ def _pick_shape(
     shape = StockShape(
         stock_base,
         each_label,
-        grams_per_each=chosen.get(("grams", "")),
-        ml_per_each=chosen.get(("millilitres", "")),
+        grams_per_each=chosen.get("grams"),
+        ml_per_each=chosen.get("millilitres"),
         household_units=tuple(
-            sorted((word, v) for (kind, word), v in chosen.items() if kind == "unit")
+            sorted((f.word, v) for f, v in chosen.items() if isinstance(f, _UnitSize))
         ),
     )
     return shape, messages
@@ -534,15 +538,16 @@ def _base(shape: StockShape) -> tuple[StockBase, str | None]:
 
 def _size_facts(shape: StockShape) -> list[tuple[_Fact, Decimal]]:
     facts: list[tuple[_Fact, Decimal]] = [
-        (("unit", word), size) for word, size in shape.household_units
+        (_UnitSize(word), size) for word, size in shape.household_units
     ]
     if shape.grams_per_each is not None:
-        facts.append((("grams", ""), shape.grams_per_each))
+        facts.append(("grams", shape.grams_per_each))
     if shape.ml_per_each is not None:
-        facts.append((("millilitres", ""), shape.ml_per_each))
+        facts.append(("millilitres", shape.ml_per_each))
     return facts
 
 
 def _fact_words(fact: _Fact, each_label: str | None) -> str:
-    kind, word = fact
-    return f"size of a {word}" if kind == "unit" else f"{kind} per {each_label}"
+    if isinstance(fact, _UnitSize):
+        return f"size of a {fact.word}"
+    return f"{fact} per {each_label}"

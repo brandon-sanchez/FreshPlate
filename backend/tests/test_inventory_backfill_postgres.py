@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID, uuid4
 
@@ -92,28 +93,36 @@ def add_household(db: psycopg.Connection) -> UUID:
     return household_id
 
 
+class SeedRow(NamedTuple):
+    label: str
+    name: str
+    quantity: str
+    unit: str
+    age: str
+    depleted_ago: str | None
+
+
 def seed_household(db: psycopg.Connection) -> tuple[UUID, dict[str, UUID]]:
     """Insert a household with today's unit variety; return its id and row ids by label."""
     household_id = add_household(db)
     category = db.execute(
         "SELECT id FROM food_categories WHERE name = 'Dairy & Eggs'"
     ).fetchone()["id"]
-    # (label, name, quantity, unit, created this long ago, depleted this long ago)
     rows = [
-        ("eggs1", "Eggs", "6", "item", "3 days", None),
-        ("eggs2", "eggs ", "12", "item", "2 days", None),
-        ("milk", "Milk", "1", "l", "2 days", None),
-        ("rice_g", "Rice", "500", "g", "5 days", None),
-        ("rice_cups", "Rice", "2", "Cups", "1 day", None),
-        ("yogurt", "Greek  Yogurt", "3", "Containers (63 g each)", "1 day", None),
-        ("soup", "Soup", "1.5", "Container (14 servings)", "1 day", None),
-        ("butter", "Butter", "0", "oz", "4 days", None),
-        ("jam", "Jam", "1", "2 jars?", "1 day", None),
-        ("used", "Bread", "2", "Slices", "6 days", "1 day"),
+        SeedRow("eggs1", "Eggs", "6", "item", "3 days", None),
+        SeedRow("eggs2", "eggs ", "12", "item", "2 days", None),
+        SeedRow("milk", "Milk", "1", "l", "2 days", None),
+        SeedRow("rice_g", "Rice", "500", "g", "5 days", None),
+        SeedRow("rice_cups", "Rice", "2", "Cups", "1 day", None),
+        SeedRow("yogurt", "Greek  Yogurt", "3", "Containers (63 g each)", "1 day", None),
+        SeedRow("soup", "Soup", "1.5", "Container (14 servings)", "1 day", None),
+        SeedRow("butter", "Butter", "0", "oz", "4 days", None),
+        SeedRow("jam", "Jam", "1", "2 jars?", "1 day", None),
+        SeedRow("used", "Bread", "2", "Slices", "6 days", "1 day"),
     ]
     ids = {}
-    for label, name, quantity, unit, age, used in rows:
-        ids[label] = db.execute(
+    for r in rows:
+        ids[r.label] = db.execute(
             """
             INSERT INTO inventory_items (household_id, category_id, added_by, name, quantity, unit,
                 expiration_date, storage_location, notes, created_at, updated_at, depleted_at)
@@ -121,7 +130,7 @@ def seed_household(db: psycopg.Connection) -> tuple[UUID, dict[str, UUID]]:
                 now() - %s::interval, now() - %s::interval, now() - %s::interval)
             RETURNING id
             """,
-            (household_id, category, USER, name, quantity, unit, age, age, used),
+            (household_id, category, USER, r.name, r.quantity, r.unit, r.age, r.age, r.depleted_ago),
         ).fetchone()["id"]
     recipe_id = str(uuid4())
     deductions = [
