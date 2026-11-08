@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 
 from app.inventory.units import (
+    PACKAGE_WORDS,
     Approximate,
     AskAtCook,
     Exact,
@@ -179,7 +180,6 @@ CARTON_EGGS = FoodFacts(
 )
 
 
-@pytest.mark.xfail(strict=True, reason="a profile item weight sizes the package")
 @pytest.mark.parametrize("unit", ["egg", "large", "whole", "each"])
 def test_eggs_from_eggs_counted_in_cartons_ask_for_the_carton_size(unit) -> None:
     assert to_stock(D(2), unit, CARTON_EGGS) == Small(
@@ -187,7 +187,6 @@ def test_eggs_from_eggs_counted_in_cartons_ask_for_the_carton_size(unit) -> None
     )
 
 
-@pytest.mark.xfail(strict=True, reason="a profile item weight sizes the package")
 def test_a_cup_from_a_carton_of_unknown_size_asks_for_the_carton_size() -> None:
     result = to_stock(D(1), "cup", CARTON_EGGS)
     assert isinstance(result, Small)
@@ -195,7 +194,6 @@ def test_a_cup_from_a_carton_of_unknown_size_asks_for_the_carton_size() -> None:
     assert result.otherwise == AskAtCook("needs_package_size")
 
 
-@pytest.mark.xfail(strict=True, reason="a profile item weight sizes the package")
 @pytest.mark.parametrize(
     "label", ["carton", "container", "bottle", "jar", "can", "bag", "box"]
 )
@@ -206,7 +204,11 @@ def test_a_profile_item_weight_never_sizes_a_package(label) -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="a profile item weight sizes the package")
+@pytest.mark.parametrize("word", sorted(PACKAGE_WORDS))
+def test_package_words_are_normalized_unit_keys(word) -> None:
+    assert normalize_unit(word) == word
+
+
 @pytest.mark.parametrize("carton_grams", [None, D(600)])
 def test_items_from_a_package_without_an_item_weight_ask_for_its_size(
     carton_grams,
@@ -217,7 +219,6 @@ def test_items_from_a_package_without_an_item_weight_ask_for_its_size(
     assert to_stock(D(2), "whole", cartons) == AskAtCook("needs_each_size")
 
 
-@pytest.mark.xfail(strict=True, reason="a profile item weight sizes the package")
 def test_items_from_a_package_of_known_size_use_the_item_weight() -> None:
     cartons = replace(CARTON_EGGS, grams_per_each=D(600))
     assert to_stock(D(3), "whole", cartons) == Approximate(D("0.25"))

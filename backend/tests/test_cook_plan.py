@@ -272,7 +272,6 @@ def test_available_must_be_finite_and_not_negative(available: Decimal) -> None:
         FoodStock(OIL, available=available)
 
 
-@pytest.mark.xfail(strict=True, reason="a profile item weight sizes the package")
 @pytest.mark.parametrize("unit", ["eggs", "large", "whole"])
 def test_two_eggs_from_eggs_counted_in_cartons_ask_instead_of_taking_two_cartons(
     unit,
