@@ -10,7 +10,11 @@ import BarcodeScanner from "@/components/BarcodeScanner";
 import ItemForm from "@/components/ItemForm";
 import { useTheme } from "@/hooks/useTheme";
 import { useFoodCategories } from "@/hooks/useFoodCategories";
-import { useAddItem } from "@/hooks/useAddItem";
+import {
+  addItemErrorToast,
+  addItemSuccessToast,
+  useAddItem,
+} from "@/hooks/useAddItem";
 
 type EntryMode = "Manual" | "Scan";
 
@@ -81,28 +85,16 @@ function ManualForm({ tabBarHeight }: ManualFormProps) {
       onSubmit={(input) => {
         const addedName = input.name;
         addItem.mutate(input, {
-          onSuccess: ({ id, merged }) => {
+          onSuccess: (result) => {
             setResetKey((k) => k + 1);
-            Toast.show({
-              type: "success",
-              text1: merged
-                ? `Updated ${addedName}`
-                : `Added ${addedName}`,
-              text2: merged
-                ? "Added to your existing item."
-                : "Tap to view in your inventory.",
-            });
+            Toast.show(addItemSuccessToast(result, addedName));
             router.push({
               pathname: "/(tabs)/inventory",
-              params: { added: id },
+              params: { added: result.id },
             });
           },
-          onError: () => {
-            Toast.show({
-              type: "error",
-              text1: "Couldn't save",
-              text2: "Check your connection and try again.",
-            });
+          onError: (error) => {
+            Toast.show(addItemErrorToast(error, addedName));
           },
         });
       }}
