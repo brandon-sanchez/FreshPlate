@@ -216,6 +216,29 @@ def normalize_unit(text: str) -> str:
     return _ALIASES.get(key, key)
 
 
+def table_unit(text: str) -> tuple[MeasuredUnit, Decimal] | None:
+    """Look up a unit in the fixed mass and volume tables.
+
+    The text is normalized with ``normalize_unit`` first, so "Cups" and "kgs"
+    are found. A bare "oz" is weight, because ounces are in the mass table and
+    fluid ounces are spelled "fl oz". Size words are not stripped, so "large
+    cup" is not a table unit.
+
+    Args:
+        text: A unit as written, in any case, singular or plural.
+
+    Returns:
+        The unit's dimension (``"g"`` or ``"ml"``) and how many grams or
+        millilitres one of it is, or ``None`` when neither table has it.
+    """
+    key = normalize_unit(text)
+    if key in _MASS:
+        return "g", _MASS[key]
+    if key in _VOLUME:
+        return "ml", _VOLUME[key]
+    return None
+
+
 def to_stock(amount: Decimal, unit: str, food: FoodFacts) -> Conversion:
     """Convert ``amount`` of recipe ``unit`` into ``food``'s stock base."""
     key = normalize_unit(unit)
