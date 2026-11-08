@@ -19,7 +19,6 @@ import Toast from "react-native-toast-message";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { toastConfig } from "@/components/toastConfig";
-import CenterToast from "@/components/CenterToast";
 import { bindActiveCookAuthLifecycle } from "@/stores/activeCook";
 
 const queryClient = new QueryClient({
@@ -144,7 +143,6 @@ function RootLayoutNav() {
             </Stack>
           </ThemeProvider>
           <SafeAreaToast />
-          <CenterToast />
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

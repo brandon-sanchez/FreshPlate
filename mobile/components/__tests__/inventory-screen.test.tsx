@@ -1,12 +1,14 @@
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react-native";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 const mockLots = { current: [] as unknown[] };
+const mockRpc = jest.fn();
 
 jest.mock("@/lib/supabase", () => ({
   supabase: {
+    rpc: (...args: unknown[]) => mockRpc(...args),
     from: (table: string) =>
       table === "lots"
         ? {
@@ -33,20 +35,6 @@ jest.mock("expo-router", () => ({
 }));
 jest.mock("@react-navigation/bottom-tabs", () => ({ useBottomTabBarHeight: () => 0 }));
 jest.mock("@expo/vector-icons/FontAwesome", () => () => null);
-// The real swipeable attaches worklet gestures that Jest cannot run. This
-// stand-in exposes whether a row can be swiped to delete.
-jest.mock("react-native-gesture-handler/ReanimatedSwipeable", () => {
-  const { View } = jest.requireActual("react-native");
-  return function MockSwipeable({
-    children,
-    enabled,
-  }: {
-    children: React.ReactNode;
-    enabled?: boolean;
-  }) {
-    return <View testID={enabled === false ? "row-locked" : "row-swipeable"}>{children}</View>;
-  };
-});
 
 import InventoryScreen from "@/app/(tabs)/inventory";
 
@@ -79,7 +67,7 @@ const eggs = { id: "food-eggs", name: "Eggs", stock_base: "each", each_label: "e
 
 function renderScreen() {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { gcTime: 0 } },
   });
   return render(
     <SafeAreaProvider
@@ -97,6 +85,8 @@ function renderScreen() {
 
 beforeEach(() => {
   mockPush.mockClear();
+  mockRpc.mockReset();
+  mockRpc.mockResolvedValue({ error: null });
   mockParams.current = {};
   mockLots.current = [
     lotRow("eggs-1", eggs, -1, "fridge", 6),
@@ -117,12 +107,55 @@ it("shows one row per food with its batches stacked, counting foods in the subti
   expect(mockPush).toHaveBeenCalledWith("/food/food-milk");
 });
 
-it("lets only single-batch rows swipe to delete", async () => {
+it("records every batch a row stacks when its swipe action is tapped", async () => {
   renderScreen();
   await screen.findByText("2 items · 1 expired");
+  const milkRow = screen.getAllByTestId("swipe-row").find((row) => within(row).queryByText("Milk"));
 
-  expect(screen.getByTestId("row-locked")).toHaveTextContent(/Milk/);
-  expect(screen.getByTestId("row-swipeable")).toHaveTextContent(/Eggs/);
+  fireEvent.press(within(milkRow!).getByLabelText("Toss"));
+
+  await waitFor(() =>
+    expect(mockRpc).toHaveBeenCalledWith("deplete_lots", {
+      p_household_id: "household-1",
+      p_lot_ids: ["milk-fridge", "milk-freezer"],
+      p_reason: "tossed",
+    }),
+  );
+});
+
+it("records a row once when its actions are tapped again before the first record finishes", async () => {
+  let finish: (result: { error: null }) => void = () => {};
+  mockRpc.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+  const milkRow = screen.getAllByTestId("swipe-row").find((row) => within(row).queryByText("Milk"));
+
+  fireEvent.press(within(milkRow!).getByLabelText("Used up"));
+  fireEvent.press(within(milkRow!).getByLabelText("Used up"));
+  fireEvent.press(within(milkRow!).getByLabelText("Toss"));
+  await act(async () => finish({ error: null }));
+
+  expect(mockRpc).toHaveBeenCalledTimes(1);
+});
+
+it("takes taps again after a record fails", async () => {
+  mockRpc.mockResolvedValueOnce({ error: { message: "Failed to fetch" } });
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+  const milkRow = screen.getAllByTestId("swipe-row").find((row) => within(row).queryByText("Milk"));
+
+  fireEvent.press(within(milkRow!).getByLabelText("Used up"));
+  await waitFor(() => expect(mockRpc).toHaveBeenCalledTimes(1));
+  await waitFor(() => {
+    fireEvent.press(within(milkRow!).getByLabelText("Toss"));
+    expect(mockRpc).toHaveBeenCalledTimes(2);
+  });
+
+  expect(mockRpc).toHaveBeenLastCalledWith("deplete_lots", {
+    p_household_id: "household-1",
+    p_lot_ids: ["milk-fridge", "milk-freezer"],
+    p_reason: "tossed",
+  });
 });
 
 it("narrows rows by search", async () => {

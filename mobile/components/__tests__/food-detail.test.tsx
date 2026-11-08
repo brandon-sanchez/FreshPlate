@@ -1,12 +1,14 @@
 import React from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react-native";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const mockLots = { current: [] as unknown[] };
 const mockError = { current: null as { message: string } | null };
+const mockRpc = jest.fn();
 
 jest.mock("@/lib/supabase", () => ({
   supabase: {
+    rpc: (...args: unknown[]) => mockRpc(...args),
     from: () => ({
       select: () => ({
         eq: () => ({
@@ -28,13 +30,19 @@ jest.mock("@/stores/auth", () => ({
     selector({ householdId: "household-1" }),
 }));
 const mockPush = jest.fn();
+const mockBack = jest.fn();
 const mockParams = { current: { id: "food-milk" } };
 jest.mock("expo-router", () => ({
   Stack: { Screen: () => null },
-  useRouter: () => ({ push: mockPush, back: jest.fn() }),
+  useRouter: () => ({ push: mockPush, back: mockBack }),
   useLocalSearchParams: () => mockParams.current,
 }));
 jest.mock("@expo/vector-icons/FontAwesome", () => () => null);
+const mockFocused = { current: true };
+jest.mock("@react-navigation/native", () => ({
+  ...jest.requireActual("@react-navigation/native"),
+  useIsFocused: () => mockFocused.current,
+}));
 
 import FoodDetailScreen from "@/app/food/[id]";
 
@@ -75,18 +83,37 @@ function lotRow(
 
 function renderScreen() {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { gcTime: 0 } },
   });
-  return render(
+  const tree = () => (
     <QueryClientProvider client={client}>
       <FoodDetailScreen />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const { rerender } = render(tree());
+  return { client, rerender: () => rerender(tree()) };
+}
+
+const SWIPE_ACTIONS = ["Used up", "Toss"];
+
+/** Each swiped batch's card, in screen order, without its swipe actions. */
+function batchCards() {
+  return screen
+    .getAllByTestId("swipe-row")
+    .flatMap((row) =>
+      within(row)
+        .getAllByRole("button")
+        .filter((b) => !SWIPE_ACTIONS.includes(b.props.accessibilityLabel)),
+    );
 }
 
 beforeEach(() => {
   mockPush.mockClear();
+  mockBack.mockClear();
+  mockRpc.mockReset();
+  mockRpc.mockResolvedValue({ error: null });
   mockParams.current = { id: "food-milk" };
+  mockFocused.current = true;
   mockError.current = null;
   mockLots.current = [
     lotRow("milk-sealed", 2, { quantity: 1000 }),
@@ -105,7 +132,7 @@ it("lists the food's batches in the order cooking draws them, tagging the next o
   expect(await screen.findByText("Milk")).toBeTruthy();
   expect(screen.getByText("Dairy · 1750 ml · 3 batches")).toBeTruthy();
 
-  const cards = screen.getAllByRole("button");
+  const cards = batchCards();
   expect(cards.map((card) => card.props.accessibilityLabel)).toEqual([
     "500 ml, Freezer, Opened, Expires in 6 days, use first",
     "1000 ml, Fridge, Expires in 2 days",
@@ -124,6 +151,52 @@ it("opens the batch editor for a tapped batch", async () => {
   fireEvent.press(await screen.findByLabelText("1000 ml, Fridge, Expires in 2 days"));
 
   expect(mockPush).toHaveBeenCalledWith("/item/milk-sealed");
+});
+
+it("records a swiped batch on its own", async () => {
+  renderScreen();
+  const card = await screen.findByLabelText("1000 ml, Fridge, Expires in 2 days");
+  const row = screen.getAllByTestId("swipe-row").find((r) => within(r).queryByLabelText(card.props.accessibilityLabel));
+
+  fireEvent.press(within(row!).getByLabelText("Used up"));
+
+  await waitFor(() =>
+    expect(mockRpc).toHaveBeenCalledWith("deplete_lots", {
+      p_household_id: "household-1",
+      p_lot_ids: ["milk-sealed"],
+      p_reason: "used",
+    }),
+  );
+});
+
+it("goes back when the food's last batch goes away while open", async () => {
+  mockLots.current = [lotRow("milk-last", 3)];
+  const { client } = renderScreen();
+  await screen.findByText("Milk");
+
+  mockLots.current = [];
+  await act(() => client.invalidateQueries({ queryKey: ["inventory"] }));
+
+  await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+  expect(screen.queryByText("Item not found")).toBeNull();
+});
+
+it("waits until it is shown again to go back when its last batch goes away behind another screen", async () => {
+  mockLots.current = [lotRow("milk-last", 3)];
+  const { client, rerender } = renderScreen();
+  await screen.findByText("Milk");
+
+  mockFocused.current = false;
+  mockLots.current = [];
+  await act(() => client.invalidateQueries({ queryKey: ["inventory"] }));
+  await waitFor(() => expect(screen.queryByText("Milk")).toBeNull());
+  expect(mockBack).not.toHaveBeenCalled();
+
+  mockFocused.current = true;
+  rerender();
+
+  await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+  expect(screen.queryByText("Item not found")).toBeNull();
 });
 
 it("shows no batch to use first when every batch has expired", async () => {

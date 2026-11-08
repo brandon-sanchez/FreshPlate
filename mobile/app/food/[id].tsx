@@ -1,18 +1,22 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { useIsFocused } from "@react-navigation/native";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useTheme } from "@/hooks/useTheme";
 import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";
 import BatchCard from "@/components/BatchCard";
+import LotOutcomeSwipe from "@/components/LotOutcomeSwipe";
 import { useInventoryItems } from "@/hooks/useInventoryItems";
 import { inDrawOrder, stackLots } from "@/lib/foodRows";
 
 /**
  * Shows one food and its live batches in draw order, tagging the batch to use
- * first. Tapping a batch opens the batch editor. The route param is the food
- * id.
+ * first. Tapping a batch opens the batch editor. Swiping a batch records it as
+ * used up or tossed. The screen closes when the food's last batch goes away
+ * while it is open, whether by a swipe, a delete or another phone. The route
+ * param is the food id.
  */
 export default function FoodDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -26,6 +30,8 @@ export default function FoodDetailScreen() {
   );
   const row = useMemo(() => stackLots(lotsOfFood)[0] ?? null, [lotsOfFood]);
   const batches = useMemo(() => inDrawOrder(lotsOfFood), [lotsOfFood]);
+
+  const emptied = useLeaveWhenEmptied(row !== null);
 
   if (inventory.isPending) {
     return (
@@ -43,6 +49,10 @@ export default function FoodDetailScreen() {
         <ErrorState onRetry={() => inventory.refetch()} />
       </View>
     );
+  }
+
+  if (emptied) {
+    return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
   }
 
   if (!row) {
@@ -127,15 +137,35 @@ export default function FoodDetailScreen() {
           Batches
         </Text>
         {batches.map((batch) => (
-          <BatchCard
-            key={batch.lot.id}
-            batch={batch}
-            onPress={() => router.push(`/item/${batch.lot.id}`)}
-          />
+          <LotOutcomeSwipe key={batch.lot.id} lotIds={[batch.lot.id]} name={row.name}>
+            <BatchCard batch={batch} onPress={() => router.push(`/item/${batch.lot.id}`)} />
+          </LotOutcomeSwipe>
         ))}
       </ScrollView>
     </View>
   );
+}
+
+/**
+ * Goes back once a screen that had content this visit loses it, and returns
+ * true from then on so the screen can render blank while it leaves. Waits
+ * while another screen is on top, such as the batch editor whose delete
+ * emptied this one, and leaves when this screen is shown again.
+ *
+ * @param hasContent - Whether the screen has anything to show right now.
+ */
+function useLeaveWhenEmptied(hasContent: boolean): boolean {
+  const router = useRouter();
+  const isFocused = useIsFocused();
+  const [hadContent, setHadContent] = useState(false);
+  if (hasContent && !hadContent) setHadContent(true);
+  const emptied = hadContent && !hasContent;
+
+  useEffect(() => {
+    if (emptied && isFocused) router.back();
+  }, [emptied, isFocused, router]);
+
+  return emptied;
 }
 
 function formatQuantity(q: number): string {

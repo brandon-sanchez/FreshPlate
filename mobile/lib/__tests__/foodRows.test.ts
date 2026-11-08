@@ -88,11 +88,6 @@ describe("stackLots", () => {
     expect(row).toMatchObject({ days: null, urgency: "fresh", expiredLots: 1 });
   });
 
-  it("exposes the only batch of a single-batch row and none for a stacked row", () => {
-    expect(stackLots([milk("only", 3)])[0].soleLot?.id).toBe("only");
-    expect(stackLots([milk("a", 3), milk("b", 5)])[0].soleLot).toBeNull();
-  });
-
   it("reports the most overdue batch when every batch has expired", () => {
     const [row] = stackLots([milk("a", -1), milk("b", -4)]);
 
