@@ -13,11 +13,8 @@ import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useTheme } from "@/hooks/useTheme";
 import { firstNameFromMetadata, useAuthStore } from "@/stores/auth";
 import { firstNameFromProfile, useProfile } from "@/hooks/useProfile";
-import {
-  daysUntilExpiration,
-  InventoryItem,
-  useInventoryItems,
-} from "@/hooks/useInventoryItems";
+import { useInventoryItems } from "@/hooks/useInventoryItems";
+import { stackLots } from "@/lib/foodRows";
 import InventoryRow from "@/components/InventoryRow";
 import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";
@@ -45,33 +42,14 @@ export default function HomeScreen() {
     firstNameFromMetadata(user);
   const greeting = greetingFor(new Date().getHours());
 
-  const items: InventoryItem[] = useMemo(() => inventory.data ?? [], [inventory.data]);
-  const expired = useMemo(
-    () =>
-      items
-        .map((i) => ({ item: i, days: daysUntilExpiration(i.expiration_date) }))
-        .filter((x) => x.days !== null && x.days < 0)
-        .sort((a, b) => (a.days ?? 0) - (b.days ?? 0))
-        .map((x) => x.item),
-    [items],
+  const rows = useMemo(() => stackLots(inventory.data ?? []), [inventory.data]);
+  const expired = rows.filter((r) => r.expiredLots > 0);
+  const useSoon = rows.filter(
+    (r) => r.expiredLots === 0 && r.days !== null && r.days >= 0 && r.days <= 2,
   );
-  const useSoon = useMemo(
-    () =>
-      items
-        .map((i) => ({ item: i, days: daysUntilExpiration(i.expiration_date) }))
-        .filter((x) => x.days !== null && x.days >= 0 && x.days <= 2)
-        .sort((a, b) => (a.days ?? 0) - (b.days ?? 0))
-        .map((x) => x.item),
-    [items],
-  );
-  const useThisWeekCount = useMemo(
-    () =>
-      items.filter((i) => {
-        const d = daysUntilExpiration(i.expiration_date);
-        return d !== null && d >= 0 && d <= 6;
-      }).length,
-    [items],
-  );
+  const useThisWeekCount = rows.filter(
+    (r) => r.days !== null && r.days >= 0 && r.days <= 6,
+  ).length;
 
   const handleSubmitPrompt = () => {
     if (!prompt.trim()) return;
@@ -311,7 +289,7 @@ export default function HomeScreen() {
 
       <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
         <StatRow
-          inventoryCount={items.length}
+          inventoryCount={rows.length}
           useSoonCount={useThisWeekCount}
           expiredCount={expired.length}
           onPress={() => router.push("/(tabs)/inventory")}
@@ -345,11 +323,11 @@ export default function HomeScreen() {
               count={expired.length}
               onSeeAll={() => router.push("/(tabs)/inventory")}
             >
-              {expired.slice(0, 3).map((item) => (
+              {expired.slice(0, 3).map((row) => (
                 <InventoryRow
-                  key={item.id}
-                  item={item}
-                  onPress={() => router.push(`/item/${item.id}`)}
+                  key={row.key}
+                  row={row}
+                  onPress={() => router.push(`/item/${row.lots[0].id}`)}
                 />
               ))}
             </Section>
@@ -361,11 +339,11 @@ export default function HomeScreen() {
               count={useSoon.length}
               onSeeAll={() => router.push("/(tabs)/inventory")}
             >
-              {useSoon.slice(0, 3).map((item) => (
+              {useSoon.slice(0, 3).map((row) => (
                 <InventoryRow
-                  key={item.id}
-                  item={item}
-                  onPress={() => router.push(`/item/${item.id}`)}
+                  key={row.key}
+                  row={row}
+                  onPress={() => router.push(`/item/${row.lots[0].id}`)}
                 />
               ))}
             </Section>
