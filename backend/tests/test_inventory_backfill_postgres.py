@@ -1,8 +1,9 @@
-"""Inventory backfill dry run against a disposable PostgreSQL cluster.
+"""Inventory backfill dry run and writer against a disposable PostgreSQL cluster.
 
-Proves the CLI writes nothing, that the plan fits every foods and lots
-constraint when inserted, and that food names and keys follow the database's
-own whitespace and case rules.
+Proves the dry run writes nothing, that the written plan fits every foods and
+lots constraint, that food names and keys follow the database's own
+whitespace and case rules, and that the writer is safe to re-run and never
+converts or overwrites existing stock.
 """
 
 # ruff: noqa: E501
@@ -23,8 +24,9 @@ from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from app.inventory.backfill import HouseholdPlan, plan_backfill
+from app.inventory.backfill import BackfillPlan, HouseholdPlan, plan_backfill
 from app.scripts.dry_run_inventory_backfill import read_inventory
+from app.scripts.run_inventory_backfill import apply_plan
 
 DSN = os.environ.get("FRESHPLATE_TEST_POSTGRES_DSN", "")
 pytestmark = pytest.mark.skipif(not DSN, reason="Requires disposable local PostgreSQL")
@@ -176,58 +178,21 @@ def plan_household(db: psycopg.Connection, household_id: UUID) -> HouseholdPlan:
     return household
 
 
-def insert_plan(db: psycopg.Connection, household: HouseholdPlan) -> None:
-    """Insert one household's plan in a transaction; initial_quantity stays NULL.
-
-    A test-only writer. It proves the
-    plan's shape fits the foods, food_units and lots constraints and triggers.
-    """
-    with db.transaction():
-        for food in household.foods:
-            shape = food.shape
-            food_id = db.execute(
-                """
-                INSERT INTO foods (household_id, category_id, name, stock_base, each_label,
-                    grams_per_each, ml_per_each)
-                VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id
-                """,
-                (
-                    household.household_id,
-                    food.category_id,
-                    food.name,
-                    shape.stock_base,
-                    shape.each_label,
-                    shape.grams_per_each,
-                    shape.ml_per_each,
-                ),
-            ).fetchone()["id"]
-            for word, size in shape.household_units:
-                db.execute(
-                    "INSERT INTO food_units (food_id, household_id, unit_key, base_per_unit) VALUES (%s, %s, %s, %s)",
-                    (food_id, household.household_id, word, size),
-                )
-            for lot in food.lots:
-                db.execute(
-                    """
-                    INSERT INTO lots (id, food_id, household_id, quantity, initial_quantity,
-                        expiration_date, storage_location, depleted_at, depleted_reason, added_by,
-                        notes, created_at)
-                    VALUES (%s, %s, %s, %s, NULL, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        lot.id,
-                        food_id,
-                        household.household_id,
-                        lot.quantity,
-                        lot.expiration_date,
-                        lot.storage_location,
-                        lot.depleted_at,
-                        lot.depleted_reason,
-                        lot.added_by,
-                        lot.notes,
-                        lot.created_at,
-                    ),
-                )
+def run_backfill(database_dsn: str, household_id: UUID) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "app.scripts.run_inventory_backfill",
+            "--household",
+            str(household_id),
+        ],
+        cwd=BACKEND,
+        env={**os.environ, "BACKFILL_DATABASE_URL": database_dsn},
+        text=True,
+        capture_output=True,
+        timeout=60,
+    )
 
 
 def column(db: psycopg.Connection, query: str, *params: object) -> list:
@@ -287,7 +252,8 @@ def test_inserted_plan_satisfies_every_constraint_and_resolves_cook_events(db):
     household_id, ids = seed_household(db)
     household = plan_household(db, household_id)
 
-    insert_plan(db, household)
+    with db.transaction():
+        apply_plan(db, BackfillPlan((household,)))
 
     planned_ids = {lot.id for food in household.foods for lot in food.lots}
     assert (
@@ -345,7 +311,8 @@ def test_foods_take_their_names_and_keys_from_the_database(db, names):
     }
 
     household = plan_household(db, household_id)
-    insert_plan(db, household)
+    with db.transaction():
+        apply_plan(db, BackfillPlan((household,)))
 
     assert len(household.foods) == len(sql_keys)
     stored = db.execute(
@@ -358,3 +325,184 @@ def test_foods_take_their_names_and_keys_from_the_database(db, names):
     assert column(
         db, "SELECT count(*) FROM lots WHERE household_id = %s", household_id
     ) == [len(names)]
+
+
+def test_backfill_cli_moves_rows_into_lots_that_keep_their_ids(db, database_dsn):
+    household_id, ids = seed_household(db)
+
+    result = run_backfill(database_dsn, household_id)
+
+    assert result.returncode == 0, result.stderr
+    report = result.stdout
+    assert (
+        f"Household {household_id}: foods 7 created, 0 reused; lots 8 inserted, "
+        "0 already moved, 0 not moved; 2 rows skipped by the plan"
+    ) in report
+    assert f"row {ids['jam']} 'Jam'" in report
+    assert f"row {ids['rice_cups']} 'Rice'" in report
+    assert f"1 of 3 cooked item ids resolve to no lot: {ids['rice_cups']}" in report
+    lots = db.execute(
+        "SELECT id, initial_quantity FROM lots WHERE household_id = %s", (household_id,)
+    ).fetchall()
+    assert {r["id"] for r in lots} == set(ids.values()) - {ids["rice_cups"], ids["jam"]}
+    assert {r["initial_quantity"] for r in lots} == {None}
+    assert column(db, "SELECT quantity FROM lots WHERE id = %s", ids["milk"]) == [1000]
+
+
+def test_backfill_cli_writes_nothing_on_a_second_run(db, database_dsn):
+    household_id, _ = seed_household(db)
+    assert run_backfill(database_dsn, household_id).returncode == 0
+    before = fingerprint(db)
+
+    result = run_backfill(database_dsn, household_id)
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        "foods 0 created, 0 reused; lots 0 inserted, 8 already moved, 0 not moved"
+        in result.stdout
+    )
+    assert fingerprint(db) == before
+
+
+def test_backfill_rerun_moves_new_rows_and_leaves_moved_lots_alone(db, database_dsn):
+    household_id, ids = seed_household(db)
+    assert run_backfill(database_dsn, household_id).returncode == 0
+    db.execute("UPDATE lots SET quantity = 2 WHERE id = %s", (ids["eggs1"],))
+    moved = column(
+        db, "SELECT l::text FROM lots l WHERE household_id = %s ORDER BY id", household_id
+    )
+    (new_milk,) = column(
+        db,
+        "INSERT INTO inventory_items (household_id, name, quantity, unit) VALUES (%s, 'milk', 500, 'ml') RETURNING id",
+        household_id,
+    )
+
+    result = run_backfill(database_dsn, household_id)
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        "foods 0 created, 1 reused; lots 1 inserted, 8 already moved, 0 not moved"
+        in result.stdout
+    )
+    assert column(
+        db,
+        "SELECT l::text FROM lots l WHERE household_id = %s AND id <> %s ORDER BY id",
+        household_id,
+        new_milk,
+    ) == moved
+    assert column(db, "SELECT quantity FROM lots WHERE id = %s", ids["eggs1"]) == [2]
+    assert column(
+        db,
+        "SELECT f.name FROM lots l JOIN foods f ON f.id = l.food_id WHERE l.id = %s",
+        new_milk,
+    ) == ["Milk"]
+
+
+def test_backfill_leaves_lots_out_of_a_food_stored_in_another_base(db, database_dsn):
+    household_id = add_household(db)
+    db.execute("SELECT set_config('request.jwt.claim.sub', %s, false)", (str(USER),))
+    db.execute("SELECT add_lot(%s, 'Flour', 'g', 500, 'pantry')", (household_id,))
+    (row_id,) = column(
+        db,
+        "INSERT INTO inventory_items (household_id, name, quantity, unit) VALUES (%s, 'flour', 2, 'Cups') RETURNING id",
+        household_id,
+    )
+    before = fingerprint(db)
+
+    result = run_backfill(database_dsn, household_id)
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        "foods 0 created, 1 reused; lots 0 inserted, 0 already moved, 1 not moved"
+        in result.stdout
+    )
+    assert (
+        f"lot {row_id} flour: food 'flour' is stored as g, but the plan reads these "
+        "rows as millilitres; not converted"
+    ) in result.stdout
+    assert fingerprint(db) == before
+
+
+@pytest.mark.parametrize(
+    ("setup", "reason"),
+    [
+        ("UPDATE foods SET archived_at = now() WHERE id = %(milk)s", "is archived"),
+        (
+            "UPDATE foods SET archived_at = now(), merged_into_id = %(other)s WHERE id = %(milk)s",
+            "was merged into another food",
+        ),
+    ],
+)
+def test_backfill_leaves_lots_out_of_an_archived_or_merged_food(
+    db, database_dsn, setup, reason
+):
+    household_id = add_household(db)
+    foods = {
+        name: column(
+            db,
+            "INSERT INTO foods (household_id, name, stock_base) VALUES (%s, %s, 'ml') RETURNING id",
+            household_id,
+            name,
+        )[0]
+        for name in ("Milk", "Oat milk")
+    }
+    db.execute(setup, {"milk": foods["Milk"], "other": foods["Oat milk"]})
+    (row_id,) = column(
+        db,
+        "INSERT INTO inventory_items (household_id, name, quantity, unit) VALUES (%s, 'milk', 1, 'l') RETURNING id",
+        household_id,
+    )
+
+    result = run_backfill(database_dsn, household_id)
+
+    assert result.returncode == 0, result.stderr
+    assert f"lot {row_id} milk: food 'milk' {reason}" in result.stdout
+    assert column(db, "SELECT count(*) FROM lots WHERE id = %s", row_id) == [0]
+
+
+def test_backfill_leaves_fractional_lots_out_of_a_whole_units_food(db, database_dsn):
+    household_id, ids = seed_household(db)
+    db.execute(
+        "INSERT INTO foods (household_id, name, stock_base, each_label, whole_units_only) VALUES (%s, 'Soup', 'each', 'container', true)",
+        (household_id,),
+    )
+
+    result = run_backfill(database_dsn, household_id)
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        f"lot {ids['soup']} Soup: food 'Soup' is counted in whole units only; not rounded"
+        in result.stdout
+    )
+    assert column(db, "SELECT count(*) FROM lots WHERE id = %s", ids["soup"]) == [0]
+    assert column(
+        db, "SELECT count(*) FROM lots WHERE household_id = %s", household_id
+    ) == [7]
+
+
+def test_backfill_failure_rolls_back_every_write(db, database_dsn):
+    household_id, _ = seed_household(db)
+    last_lot = plan_household(db, household_id).foods[-1].lots[-1].id
+    db.execute(
+        f"""
+        CREATE FUNCTION reject_last_lot() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            IF NEW.id = '{last_lot}' THEN
+                RAISE EXCEPTION 'rejected' USING ERRCODE = '23514';
+            END IF;
+            RETURN NEW;
+        END $$;
+        CREATE TRIGGER reject_last_lot BEFORE INSERT ON lots
+            FOR EACH ROW EXECUTE FUNCTION reject_last_lot();
+        """
+    )
+    before = fingerprint(db)
+    try:
+        result = run_backfill(database_dsn, household_id)
+    finally:
+        db.execute("DROP TRIGGER reject_last_lot ON lots; DROP FUNCTION reject_last_lot()")
+
+    assert result.returncode != 0
+    assert "rolled back" in result.stderr
+    assert "SQLSTATE 23514" in result.stderr
+    assert fingerprint(db) == before
