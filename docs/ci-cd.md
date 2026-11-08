@@ -41,7 +41,7 @@ Some npm packages must match the Expo SDK version exactly: `expo`, `expo-*`, `re
 
 A green Dependabot PR proves that the code still lints, type-checks, and passes its tests. It does not prove that the app runs on a phone, because Jest replaces native modules with mocks. Before you merge an update to a native package, run the app.
 
-Patch and minor PRs merge on their own once those checks pass (`.github/workflows/dependabot-auto-merge.yml`). Major PRs, and any PR whose update type is unknown, stay open for a person to review. To stop a pending auto-merge, open the PR and select **Disable auto-merge**.
+The `dependabot-auto-merge.yml` workflow turns on auto-merge for patch and minor PRs, so they merge once the `Backend`, `Mobile`, and `Docker build` checks pass. Major PRs, and PRs whose update type is unknown, stay open for a person to review. The Expo-pinned packages above never get Dependabot PRs, so they never merge without someone running the app. To stop a pending auto-merge, open the PR and click **Disable auto-merge**.
 
 ## Branch protection on `main`
 
