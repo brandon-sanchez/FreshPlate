@@ -444,7 +444,7 @@ export default function InventoryScreen() {
           <SwipeableInventoryRow
             row={row}
             highlight={highlightId !== null && holdsLot(row, highlightId)}
-            onPress={() => router.push(`/item/${row.lots[0].id}`)}
+            onPress={() => router.push(`/food/${row.foodId}`)}
             onSwipeDelete={handleSwipeDelete}
           />
         )}

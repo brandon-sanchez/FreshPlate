@@ -127,7 +127,11 @@ function RootLayoutNav() {
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
               <Stack.Screen
                 name="item/[id]"
-                options={{ title: "Item", headerBackTitle: "Inventory" }}
+                options={{ title: "Batch" }}
+              />
+              <Stack.Screen
+                name="food/[id]"
+                options={{ title: "" }}
               />
               <Stack.Screen
                 name="set-name"

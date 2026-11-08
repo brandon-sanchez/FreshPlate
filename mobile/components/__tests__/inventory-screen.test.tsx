@@ -114,7 +114,7 @@ it("shows one row per food with its batches stacked, counting foods in the subti
   expect(screen.getByText("6 egg · Fridge")).toBeTruthy();
 
   fireEvent.press(screen.getByLabelText("Milk, 2000 ml, 2 batches, expires in 3 days"));
-  expect(mockPush).toHaveBeenCalledWith("/item/milk-fridge");
+  expect(mockPush).toHaveBeenCalledWith("/food/food-milk");
 });
 
 it("lets only single-batch rows swipe to delete", async () => {

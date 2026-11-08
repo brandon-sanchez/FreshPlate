@@ -119,6 +119,41 @@ export function groupFoodRows(lots: InventoryItem[], groupBy: GroupBy): FoodSect
   return Array.from(byCategory.values(), (s) => ({ ...s, data: inSection(s.key, s.data) }));
 }
 
+/** One lot of a food with its place in draw order. */
+export type DrawnLot = {
+  lot: InventoryItem;
+  /** Days until the lot expires, or `null` when it has no date. */
+  days: number | null;
+  /** True when the expiration date has passed. */
+  expired: boolean;
+  /** True only on the first unexpired lot in draw order. */
+  useFirst: boolean;
+};
+
+/**
+ * Orders one food's lots for drawing: unexpired before expired, then opened
+ * before sealed, then soonest expiry with undated lots last, then oldest
+ * added, then lot id so lots added together keep a stable order. A food
+ * whose every lot has expired has no `useFirst` lot.
+ */
+export function inDrawOrder(lots: InventoryItem[]): DrawnLot[] {
+  const ordered = lots
+    .map((lot) => {
+      const days = daysUntilExpiration(lot.expiration_date);
+      return { lot, days, expired: days !== null && days < 0, useFirst: false };
+    })
+    .sort(
+      (a, b) =>
+        Number(a.expired) - Number(b.expired) ||
+        Number(a.lot.opened_at === null) - Number(b.lot.opened_at === null) ||
+        compareDays(a.days, b.days) ||
+        Date.parse(a.lot.created_at) - Date.parse(b.lot.created_at) ||
+        a.lot.id.localeCompare(b.lot.id),
+    );
+  if (ordered.length > 0 && !ordered[0].expired) ordered[0].useFirst = true;
+  return ordered;
+}
+
 function inSection(sectionKey: string, rows: FoodRow[]): FoodRow[] {
   return rows.map((row) => ({ ...row, key: `${sectionKey}:${row.foodId}` }));
 }
