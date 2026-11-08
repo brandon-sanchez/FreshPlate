@@ -30,8 +30,10 @@ from app.inventory.units import FoodFacts, StockBase, normalize_unit, table_unit
 # supabase/migrations/20261107120000_add_foods_and_lots.sql.
 _MAX_FOOD_NAME_LENGTH = 80
 
-# Table units whose reading is a judgment call; ``{size}`` becomes the table's
-# amount. Every other unit the tables know has one meaning.
+# Units with more than one common meaning, such as weight or fluid ounces and
+# US or imperial cups. The planner uses the reading shown and reports it as a
+# guess for a person to confirm. parse_unit fills {size} with the unit's amount
+# in grams or millilitres. Every other unit in the tables has one meaning.
 _MEASURED_GUESSES = {
     "oz": "read as weight ounces ({size}), not fluid ounces",
     "cup": "read as US cups ({size})",
@@ -41,8 +43,10 @@ _MEASURED_GUESSES = {
 }
 _WHITESPACE = re.compile(r"\s+")
 _WORDS = r"[A-Za-z]+(?: [A-Za-z]+)*"
-# "<label> (<count> <inner unit>[ each])". The inner words match lazily so a
-# trailing "each" is read as the marker, not as part of the inner unit.
+# Matches "<label> (<count> <inner unit>[ each])", for example
+# "Container (14 servings)" or "Containers (63 g each)". The inner unit matches
+# lazily, so a trailing "each" is read as the marker and not as part of the
+# unit.
 _PACKAGE = re.compile(
     rf"^({_WORDS})\s*\(\s*(\d+(?:\.\d+)?)\s*([A-Za-z]+(?: [A-Za-z]+)*?)"
     r"(\s+each)?\s*\)$",
@@ -63,13 +67,13 @@ _Fact = Literal["grams", "millilitres"] | _UnitSize
 class InventoryRow:
     """One ``inventory_items`` row, as read from the database.
 
-    ``quantity`` is in ``unit``, a free-text unit the user typed. ``depleted_at``
-    is set once a cook used the row up. ``clean_name`` is the name with
+    ``quantity`` is in ``unit``, a free-text unit the user typed. A cook sets
+    ``depleted_at`` when it uses the row up. ``clean_name`` is the name with
     whitespace runs collapsed and trimmed, and ``name_key`` is
-    ``public.food_name_key(name)``. Both come from SQL because Postgres
-    whitespace and case rules depend on the database locale, and they must
-    match what ``add_lot`` stores and the unique ``(household_id, name_key)``
-    key on foods.
+    ``public.food_name_key(name)``. The database computes both, because
+    Postgres whitespace and case rules depend on the database locale. They
+    must match what ``add_lot`` stores and the unique
+    ``(household_id, name_key)`` key on foods.
     """
 
     id: UUID
@@ -99,7 +103,7 @@ class CookRef:
 
 @dataclass(frozen=True)
 class StockShape:
-    """How a food's stock is counted; every lot of one food shares it.
+    """How a food's stock is counted. Every lot of one food shares it.
 
     ``each_label`` is set exactly when ``stock_base`` is ``"each"``.
     ``grams_per_each`` and ``ml_per_each`` give the size of one counted item
@@ -168,7 +172,7 @@ class ParsedUnit:
 
 @dataclass(frozen=True)
 class Unparsed:
-    """A row unit that no rule reads; ``reason`` says why, for the report."""
+    """A row unit that no rule reads, with the reason for the report."""
 
     reason: str
 
@@ -305,20 +309,21 @@ def plan_backfill(
     """Plan how inventory rows become foods and lots, household by household.
 
     Groups each household's rows by ``name_key``. Rows of one food must share
-    a stock base. Live rows (not depleted, quantity above 0) vote and the base
-    most of them hold wins; ties go to the earliest created voter, and every
-    row votes when none is live. Rows in another base are skipped, never
-    converted. Rows with a negative or non-finite quantity, an unparsable
-    unit, or a name that is empty or over the foods name limit are skipped.
-    A zero-quantity or already-depleted row becomes a depleted lot ("used").
+    a stock base. Live rows (not depleted, quantity above 0) vote, and the base
+    most of them hold wins. A tie goes to the earliest created voter. When no
+    row is live, every row votes. Rows in another base are skipped and never
+    converted. The planner also skips rows with a negative or non-finite
+    quantity, a unit it can't parse, or a name that is empty or longer than the
+    foods name limit. A row with quantity 0, or one already used up, becomes a
+    depleted lot ("used").
 
     Args:
         rows: Every ``inventory_items`` row to plan, depleted ones included.
-        cook_refs: Item ids referenced by ``cook_events.deductions``;
-            duplicates are fine.
+        cook_refs: Item ids referenced by ``cook_events.deductions``.
+            Duplicates are allowed.
 
     Returns:
-        The deterministic plan: the same rows always give the same plan.
+        The plan. The same rows always give the same plan.
     """
     rows_by_household: dict[UUID, list[InventoryRow]] = defaultdict(list)
     for row in rows:
