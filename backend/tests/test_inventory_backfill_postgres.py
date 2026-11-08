@@ -1,4 +1,4 @@
-"""Inventory backfill dry run against a disposable PostgreSQL cluster (#108).
+"""Inventory backfill dry run against a disposable PostgreSQL cluster.
 
 Proves the CLI writes nothing, that the plan fits every foods and lots
 constraint when inserted, and that food names and keys follow the database's
@@ -103,7 +103,11 @@ class SeedRow(NamedTuple):
 
 
 def seed_household(db: psycopg.Connection) -> tuple[UUID, dict[str, UUID]]:
-    """Insert a household with today's unit variety; return its id and row ids by label."""
+    """Insert a household with every unit format the planner reads.
+
+    Returns:
+        The household id and each seeded row's id by its label.
+    """
     household_id = add_household(db)
     category = db.execute(
         "SELECT id FROM food_categories WHERE name = 'Dairy & Eggs'"
@@ -175,7 +179,7 @@ def plan_household(db: psycopg.Connection, household_id: UUID) -> HouseholdPlan:
 def insert_plan(db: psycopg.Connection, household: HouseholdPlan) -> None:
     """Insert one household's plan in a transaction; initial_quantity stays NULL.
 
-    A test-only stand-in for the real writer that #109 adds. It proves the
+    A test-only writer. It proves the
     plan's shape fits the foods, food_units and lots constraints and triggers.
     """
     with db.transaction():

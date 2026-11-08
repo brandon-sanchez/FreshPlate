@@ -111,7 +111,7 @@ def main(argv: list[str] | None = None) -> None:
     """Print the backfill dry-run report for one or every household.
 
     Reads the database named by ``BACKFILL_DATABASE_URL`` in a single READ ONLY,
-    REPEATABLE READ transaction: the server rejects any write in it, so the run
+    REPEATABLE READ transaction. The server rejects any write in it, so the run
     cannot change data, and every query sees the same snapshot.
 
     Args:

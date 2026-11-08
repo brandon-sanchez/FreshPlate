@@ -1,11 +1,11 @@
 """Plan the move of ``inventory_items`` rows into foods and lots.
 
-The foods-and-lots model (spec #104) keeps one food per thing a household
+The foods-and-lots model keeps one food per thing a household
 stocks, with one stock base (grams, millilitres or a count of ``each_label``),
-and one lot per batch. This module turns today's free-text inventory rows into
-that shape without touching a database: ``plan_backfill`` returns a typed
+and one lot per batch. This module turns free-text ``inventory_items`` rows into
+that shape without touching a database. ``plan_backfill`` returns a typed
 ``BackfillPlan`` with one ``HouseholdPlan`` per household, which the dry-run
-CLI prints and the real backfill inserts. Every judgment call becomes a
+CLI prints and the backfill writer inserts. Every judgment call becomes a
 ``Guess`` and every row that cannot move becomes a ``SkippedRow``, so a human
 can review the plan before anything is written.
 
@@ -104,8 +104,8 @@ class StockShape:
     ``each_label`` is set exactly when ``stock_base`` is ``"each"``.
     ``grams_per_each`` and ``ml_per_each`` give the size of one counted item
     when a unit stated it. ``household_units`` maps a unit word to its amount
-    in the stock base, e.g. ``(("serving", Decimal(1) / 14),)`` for a container
-    of 14 servings; these become ``food_units`` rows.
+    in the stock base, for example ``(("serving", Decimal(1) / 14),)`` for a
+    container of 14 servings. These become ``food_units`` rows.
 
     Raises:
         ValueError: On construction, when the shape breaks a ``FoodFacts``
@@ -178,9 +178,9 @@ class PlannedLot:
     """One lot to insert, built from one ``inventory_items`` row.
 
     ``id`` is the row's id, so cook events that deducted from the row resolve
-    to this lot. ``quantity`` is in the food's stock base, exact and unrounded;
+    to this lot. ``quantity`` is in the food's stock base, exact and unrounded.
     ``source_quantity`` and ``source_unit`` are the row's original values.
-    ``initial_quantity`` is not a field: a migrated lot's full amount is
+    ``initial_quantity`` is not a field. A migrated lot's full amount is
     unknown, so the backfill always inserts it as NULL.
     """
 
@@ -240,7 +240,7 @@ class HouseholdPlan:
 
     ``foods`` are sorted by name key and ``skipped`` by creation time, then id.
     ``cooked_item_ids`` lists every item id the household's cook events
-    deducted from, sorted; ``unresolved_cook_refs`` is the sorted subset that
+    deducted from, sorted. ``unresolved_cook_refs`` is the sorted subset that
     maps to no planned lot (the row was deleted or skipped).
     """
 
@@ -464,8 +464,8 @@ def _pick_shape(
 
     ``members`` is sorted oldest first. Only live rows vote, so a used-up row
     in another unit cannot outvote stock on the shelf. Each size fact comes
-    from the newest live row that states it, else the newest depleted one;
-    a fact the rows state differently becomes a message for a guess.
+    from the newest live row that states it, else the newest depleted one.
+    A fact the rows state differently becomes a message for a guess.
     """
     voters = [m for m in members if _is_live(m[0])] or members
     # Counter keeps first-seen order, so max() breaks ties toward the

@@ -1,6 +1,6 @@
-"""Planner and report tests for moving inventory_items rows into foods and lots (#108).
+"""Planner and report tests for moving inventory_items rows into foods and lots.
 
-Plain data in, plan and report out; no database.
+The tests pass plain rows in and check the plan and report. No database runs.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def row(
     """Build an inventory row created ``minute`` minutes after ``START``.
 
     ``clean_name`` and ``name_key`` stand in for the SQL the CLI reads them
-    with; the test names use only ASCII spaces, where Python and Postgres agree.
+    with. The test names use only ASCII spaces, where Python and Postgres agree.
     """
     created = START + timedelta(minutes=minute)
     clean = " ".join(name.split())
