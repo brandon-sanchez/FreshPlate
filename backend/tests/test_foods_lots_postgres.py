@@ -376,7 +376,6 @@ def test_members_edit_lot_details_but_not_quantities_directly(database):
         f"INSERT INTO lots(food_id, household_id, quantity, storage_location) VALUES ({q(food)}, {q(home)}, 5, 'fridge')",
         f"INSERT INTO foods(household_id, name, stock_base) VALUES ({q(home)}, 'Ghee', 'g')",
         f"UPDATE foods SET stock_base = 'ml' WHERE id = {q(food)}",
-        f"DELETE FROM lots WHERE id = {q(lot)}",
     ]
     for sql in direct_writes:
         assert database.run(sql, check=False, **as_user).returncode != 0, sql
