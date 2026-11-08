@@ -1,15 +1,14 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ToastShowParams } from "react-native-toast-message";
 import { supabase } from "@/lib/supabase";
-import { readStockUnit, toStockAmount } from "@/lib/stockUnit";
+import { LotAmount, toAddLotArgs } from "@/lib/lotAmount";
 import { useAuthStore } from "@/stores/auth";
 
-/** A batch of food to add, with the amount in the unit the user typed. */
+/** A batch of food to add. The amount is already in the food's stock base. */
 export type AddItemInput = {
   name: string;
   category_id: string | null;
-  quantity: number;
-  unit: string;
+  amount: LotAmount;
   expiration_date: string | null;
   storage_location: "fridge" | "freezer" | "pantry";
   notes: string | null;
@@ -39,11 +38,11 @@ export class StockUnitMismatchError extends Error {
 const MISMATCH_DETAIL = /is stored as (g|ml|each)(?: \((.+)\))?$/;
 
 /**
- * Returns a mutation that adds a batch of food through the `add_lot` RPC. The
- * typed unit is read into the food's stock base first ("1.5 kg" adds 1500 g).
- * The RPC creates the food when its name is new and merges the amount into a
- * full, unopened lot with the same date, location and note. Invalidates
- * `['inventory']` on success.
+ * Returns a mutation that adds a batch of food through the `add_lot` RPC,
+ * with the package label and size of a measured lot. The RPC creates the food
+ * when its name is new and merges the amount into a full, unopened lot with
+ * the same date, location, package and note. Invalidates `['inventory']` on
+ * success.
  *
  * @throws {@link StockUnitMismatchError} when the food is tracked in another
  * unit.
@@ -56,16 +55,13 @@ export function useAddItem() {
       const { user, householdId } = useAuthStore.getState();
       if (!user || !householdId) throw new Error("not signed in");
 
-      const unit = readStockUnit(input.unit);
       const { data, error } = await supabase.rpc("add_lot", {
         p_household_id: householdId,
         p_name: input.name,
-        p_stock_base: unit.stockBase,
-        p_quantity: toStockAmount(input.quantity, unit),
+        ...toAddLotArgs(input.amount),
         p_storage_location: input.storage_location,
         p_expiration_date: input.expiration_date,
         p_category_id: input.category_id,
-        p_each_label: unit.eachLabel,
         p_notes: input.notes,
       });
       if (error) {
