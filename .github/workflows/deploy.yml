@@ -1,0 +1,127 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  freshness:
+    name: Check the tested commit is still main
+    # workflow_run also fires for pull requests from forks whose branch is named
+    # main, so require a successful push to this repository's main.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      current: ${{ steps.check.outputs.current }}
+    steps:
+      # CI runs on main can finish out of order, so a deploy queued behind a
+      # newer push must not replace it with older code.
+      - name: Compare the tested commit with main
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          latest_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          if [ "$latest_sha" = "$TESTED_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Main has moved to $latest_sha; skipping the deploy of $TESTED_SHA."
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    name: Deploy to Cloud Run
+    needs: freshness
+    if: needs.freshness.outputs.current == 'true'
+    concurrency:
+      group: freshplate-production-deploy
+      cancel-in-progress: false
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the tested commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: Check deployment variables
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          GCP_CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.GCP_CLOUD_RUN_SERVICE_ACCOUNT }}
+          GCP_CLOUD_BUILD_SERVICE_ACCOUNT: ${{ vars.GCP_CLOUD_BUILD_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in "${!GCP_@}"; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing production environment variables: ${missing[*]}. See docs/deployment.md."
+            exit 1
+          fi
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+      - name: Deploy the API
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v3
+        with:
+          service: freshplate-api
+          region: ${{ vars.GCP_REGION }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          source: backend
+          flags: >-
+            --service-account=${{ vars.GCP_CLOUD_RUN_SERVICE_ACCOUNT }}
+            --build-service-account=projects/${{ vars.GCP_PROJECT_ID }}/serviceAccounts/${{ vars.GCP_CLOUD_BUILD_SERVICE_ACCOUNT }}
+            --port=8080
+            --memory=512Mi
+            --min-instances=0
+            --max-instances=2
+            --set-env-vars=LANGSMITH_TRACING=true,LANGSMITH_PROJECT=freshplate
+            --set-secrets=GEMINI_API_KEY=gemini-api-key:latest,SUPABASE_URL=supabase-url:latest,SUPABASE_PUBLISHABLE_KEY=supabase-publishable-key:latest,SUPABASE_SECRET_KEY=supabase-secret-key:latest,LANGSMITH_API_KEY=langsmith-api-key:latest
+      # After a manual rollback pins traffic to an older revision, Cloud Run
+      # keeps that split for every later deploy, so a new revision would get no
+      # traffic while the service URL still answers from the old one.
+      - name: Check the new revision serves all traffic
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+        run: |
+          set -euo pipefail
+          if ! gcloud run services describe freshplate-api --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json \
+            | jq -e '.status.latestReadyRevisionName as $rev | any(.status.traffic[]; .revisionName == $rev and .percent == 100)' >/dev/null; then
+            echo "::error::The new revision is not serving 100% of traffic. If traffic was pinned during a rollback, see the Roll back section of docs/deployment.md."
+            exit 1
+          fi
+      - name: Smoke test the deployed API
+        env:
+          SERVICE_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 30 --retry 4 --retry-delay 10 --retry-all-errors "$SERVICE_URL/health" \
+            | jq -e '.service == "freshplate-api"'
