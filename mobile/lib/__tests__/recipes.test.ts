@@ -31,6 +31,10 @@ describe("recipe request helpers", () => {
         added_by: "user-1",
         opened_at: null,
         created_at: "2026-08-01T12:00:00+00:00",
+        updated_at: "2026-08-01T12:00:00+00:00",
+        initial_quantity: 1,
+        is_estimate: false,
+        whole_units_only: false,
         category: { id: "produce", name: "Produce", icon: "leaf" },
       },
     ];

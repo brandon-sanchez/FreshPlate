@@ -10,6 +10,7 @@ import BatchCard from "@/components/BatchCard";
 import LotOutcomeSwipe from "@/components/LotOutcomeSwipe";
 import { useInventoryItems } from "@/hooks/useInventoryItems";
 import { inDrawOrder, stackLots } from "@/lib/foodRows";
+import { formatAmount } from "@/lib/amount";
 
 /**
  * Shows one food and its live batches in draw order, tagging the batch to use
@@ -71,7 +72,7 @@ export default function FoodDetailScreen() {
   const iconName = (row.category?.icon ?? "circle-o") as React.ComponentProps<
     typeof FontAwesome
   >["name"];
-  const subline = [row.category?.name ?? "Uncategorized", `${formatQuantity(row.total)} ${row.unit}`];
+  const subline = [row.category?.name ?? "Uncategorized", formatAmount(row.total, row.unit, row.isEstimate)];
   if (row.lots.length > 1) subline.push(`${row.lots.length} batches`);
 
   return (
@@ -166,8 +167,4 @@ function useLeaveWhenEmptied(hasContent: boolean): boolean {
   }, [emptied, isFocused, router]);
 
   return emptied;
-}
-
-function formatQuantity(q: number): string {
-  return Number.isInteger(q) ? String(q) : q.toFixed(1);
 }

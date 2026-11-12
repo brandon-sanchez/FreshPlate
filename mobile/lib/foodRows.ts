@@ -17,6 +17,8 @@ export type FoodRow = {
   lots: InventoryItem[];
   /** Sum of the lots' quantities, in `unit`. */
   total: number;
+  /** True when any lot's amount is an estimate, so the total reads "about". */
+  isEstimate: boolean;
   /** Distinct locations of the lots, in fridge, freezer, pantry order. */
   locations: StorageLocation[];
   /**
@@ -170,6 +172,7 @@ function toRow(group: InventoryItem[]): FoodRow {
     isLeftover: first.is_leftover,
     lots,
     total: lots.reduce((sum, lot) => sum + lot.quantity, 0),
+    isEstimate: lots.some((lot) => lot.is_estimate),
     locations: LOCATIONS.filter((loc) => lots.some((lot) => lot.storage_location === loc)),
     days,
     urgency: urgencyOf(days),

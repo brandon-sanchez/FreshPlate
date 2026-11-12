@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import Toast from "react-native-toast-message";
 import { supabase } from "@/lib/supabase";
-import { ChangedElsewhereError, RETRY_HINT, lotErrorToast } from "@/hooks/useLotOutcome";
+import { ChangedElsewhereError, RETRY_HINT, lotErrorToast } from "@/lib/lotRpc";
 
 type DeleteInput = {
   id: string;
