@@ -25,6 +25,10 @@ function lot(overrides: Partial<InventoryItem> & Pick<InventoryItem, "id" | "foo
     added_by: null,
     opened_at: null,
     created_at: "2026-11-01T12:00:00+00:00",
+    updated_at: "2026-11-01T12:00:00.123456+00:00",
+    initial_quantity: null,
+    is_estimate: false,
+    whole_units_only: false,
     category: null,
     ...overrides,
   };
