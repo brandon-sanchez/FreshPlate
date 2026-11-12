@@ -18,7 +18,7 @@ export type LastLot = {
    * when the lot has no date or the date is not after the add date.
    */
   shelfLifeDays: number | null;
-  /** The lot's starting amount in the food's stock base; `null` for lots moved over from the old inventory table. */
+  /** The lot's starting amount in the food's stock base; `null` for lots the backfill copied from `inventory_items`. */
   initialQuantity: number | null;
   /** The package the lot came in, with its size in the food's stock base. */
   package: { label: string; size: number } | null;
