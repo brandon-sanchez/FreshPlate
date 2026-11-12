@@ -285,8 +285,8 @@ export function fitDraftToFood(
 
 /**
  * Returns the draft that repeats the food's last purchase, such as 2 bottles
- * of 1 l, 6 cans, or 1.5 kg. A lot with no known starting amount (moved over
- * from the old inventory table) gives a count of 1 or a blank amount.
+ * of 1 l, 6 cans, or 1.5 kg. A lot with no known starting amount, which the
+ * backfill copied from `inventory_items`, gives a count of 1 or a blank amount.
  */
 export function draftFromLastLot(food: KnownFood): AmountDraft {
   const lot = food.lastLot;
