@@ -53,6 +53,13 @@ function buildSubtitle(
   return parts.join(" · ");
 }
 
+/**
+ * Looks up the scanned `barcode` route param on Open Food Facts and shows the
+ * add form pre-filled with the product as one package. The category matched
+ * from the product stays a guess until the user taps a category chip, unless
+ * the name matches a household food. The add stores the product's quantity
+ * text, when it has one, as the lot's note.
+ */
 export default function ScanReviewScreen() {
   const { colors, fonts, card } = useTheme();
   const router = useRouter();
