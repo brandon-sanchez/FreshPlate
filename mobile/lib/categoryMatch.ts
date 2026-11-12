@@ -77,20 +77,40 @@ export function defaultStorageForCategory(
   return "fridge";
 }
 
-/* Parses messy OFF quantity strings ("1L", "500 g", "17.6 oz tub"). Captures
- * the leading number + first unit token; trailing words ("tub", "pack of 6")
- * are dropped. */
-const QUANTITY_PATTERN = /^([\d]+(?:[.,]\d+)?)\s*([a-zA-Z]+)?/;
+// Takes only the first unit token, so trailing words ("17.6 oz tub", "pack of
+// 6") drop out. "fl oz" is matched as one token because the unit becomes the
+// food's stock unit on add, and a stray "fl" would stick to the food.
+const NUMBER = String.raw`(\d+(?:[.,]\d+)?)`;
+const QUANTITY_PATTERN = new RegExp(
+  String.raw`^${NUMBER}\s*(?:[x×]\s*${NUMBER}\s*)?(fl\.?\s*oz|[a-zA-Z]+)?`,
+  "i",
+);
+const FLUID_OUNCE = /^fl\.?\s*oz$/i;
 
+/**
+ * Reads the amount and unit from an Open Food Facts quantity string. A
+ * multipack ("6 x 330 ml") becomes its total (1980 ml). A missing unit is
+ * "item".
+ *
+ * @param raw - The product's quantity text.
+ * @returns The amount and lowercased unit, or `null` when no positive leading
+ * number is found.
+ */
 export function parseQuantity(
   raw: string | null | undefined,
 ): { quantity: number; unit: string } | null {
   if (!raw) return null;
   const match = raw.trim().match(QUANTITY_PATTERN);
   if (!match) return null;
-  const [, numStr, unitStr] = match;
-  const normalised = numStr.replace(",", ".");
-  const value = parseFloat(normalised);
+  const [, firstStr, sizeStr, unitStr] = match;
+  const value = [firstStr, sizeStr]
+    .filter((part): part is string => part !== undefined)
+    .map((part) => parseFloat(part.replace(",", ".")))
+    .reduce((total, part) => total * part, 1);
   if (!Number.isFinite(value) || value <= 0) return null;
-  return { quantity: value, unit: unitStr?.toLowerCase() ?? "item" };
+  if (!unitStr) return { quantity: value, unit: "item" };
+  return {
+    quantity: value,
+    unit: FLUID_OUNCE.test(unitStr) ? "fl oz" : unitStr.toLowerCase(),
+  };
 }

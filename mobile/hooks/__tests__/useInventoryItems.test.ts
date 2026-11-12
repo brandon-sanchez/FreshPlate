@@ -4,7 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // Final node of the chain — `await`ed by the hook. We swap its resolved value per-test.
 const mockOrder = jest.fn();
-const mockEq = jest.fn((_col: string, _val: unknown) => ({ order: mockOrder }));
+const mockIs = jest.fn((_col: string, _val: unknown) => ({ order: mockOrder }));
+const mockEq = jest.fn((_col: string, _val: unknown) => ({ is: mockIs }));
 const mockSelect = jest.fn((_cols: string) => ({ eq: mockEq }));
 const mockFrom = jest.fn((_table: string) => ({ select: mockSelect }));
 
@@ -35,17 +36,36 @@ function wrapper({ children }: { children: React.ReactNode }) {
   return React.createElement(QueryClientProvider, { client }, children);
 }
 
-const fixtureRow = {
-  id: "i1",
-  name: "Spinach",
+const spinachLot = {
+  id: "lot-1",
   quantity: 1,
-  unit: "bag",
   expiration_date: "2026-06-01",
   storage_location: "fridge",
-  is_leftover: false,
   notes: null,
   added_by: "u1",
-  category: { id: "c1", name: "Produce", icon: "leaf" },
+  food: {
+    id: "food-1",
+    name: "Spinach",
+    stock_base: "each",
+    each_label: "bag",
+    category: { id: "c1", name: "Produce", icon: "leaf" },
+  },
+};
+
+const soupLot = {
+  id: "lot-2",
+  quantity: 750,
+  expiration_date: null,
+  storage_location: "freezer",
+  notes: "Tuesday's batch",
+  added_by: null,
+  food: {
+    id: "food-2",
+    name: "Chicken soup",
+    stock_base: "ml",
+    each_label: null,
+    category: { id: "c2", name: "Leftovers", icon: "inbox" },
+  },
 };
 
 describe("useInventoryItems", () => {
@@ -53,20 +73,67 @@ describe("useInventoryItems", () => {
     mockFrom.mockClear();
     mockSelect.mockClear();
     mockEq.mockClear();
+    mockIs.mockClear();
     mockOrder.mockReset();
     mockHouseholdId.current = "household-1";
   });
 
-  it("fetches items scoped to the household and resolves with the rows", async () => {
-    mockOrder.mockResolvedValue({ data: [fixtureRow], error: null });
+  it("reads the household's live lots with their food, soonest expiry first", async () => {
+    mockOrder.mockResolvedValue({ data: [], error: null });
 
     const { result } = renderHook(() => useInventoryItems(), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(mockFrom).toHaveBeenCalledWith("inventory_items");
+    expect(mockFrom).toHaveBeenCalledWith("lots");
+    expect(mockSelect.mock.calls[0][0].replace(/\s+/g, " ").trim()).toBe(
+      "id, quantity, expiration_date, storage_location, notes, added_by, " +
+        "food:food_stock!inner(id, name, stock_base, each_label, " +
+        "category:food_categories(id, name, icon))",
+    );
     expect(mockEq).toHaveBeenCalledWith("household_id", "household-1");
-    expect(result.current.data).toEqual([fixtureRow]);
+    expect(mockIs).toHaveBeenCalledWith("depleted_at", null);
+    expect(mockOrder).toHaveBeenCalledWith("expiration_date", {
+      ascending: true,
+      nullsFirst: false,
+    });
+  });
+
+  it("maps each lot into one inventory row named and unitized by its food", async () => {
+    mockOrder.mockResolvedValue({ data: [spinachLot, soupLot], error: null });
+
+    const { result } = renderHook(() => useInventoryItems(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual([
+      {
+        id: "lot-1",
+        food_id: "food-1",
+        name: "Spinach",
+        quantity: 1,
+        unit: "bag",
+        expiration_date: "2026-06-01",
+        storage_location: "fridge",
+        is_leftover: false,
+        notes: null,
+        added_by: "u1",
+        category: { id: "c1", name: "Produce", icon: "leaf" },
+      },
+      {
+        id: "lot-2",
+        food_id: "food-2",
+        name: "Chicken soup",
+        quantity: 750,
+        unit: "ml",
+        expiration_date: null,
+        storage_location: "freezer",
+        is_leftover: true,
+        notes: "Tuesday's batch",
+        added_by: null,
+        category: { id: "c2", name: "Leftovers", icon: "inbox" },
+      },
+    ]);
   });
 
   it("does not fetch while householdId is null (auth still loading)", async () => {

@@ -20,6 +20,7 @@ describe("recipe request helpers", () => {
     const items = [
       {
         id: "spinach",
+        food_id: "food-spinach",
         name: "Baby Spinach",
         quantity: 1,
         unit: "bag",
