@@ -24,6 +24,12 @@ SALT = FoodFacts(stock_base="each", each_label="container")
 COLA = FoodFacts(stock_base="each", each_label="can", ml_per_each=D(355))
 WHOLE_COLA = replace(COLA, whole_units_only=True)
 EGGS = FoodFacts(stock_base="each", each_label="egg", whole_units_only=True)
+CARTON_EGGS = FoodFacts(
+    stock_base="each",
+    each_label="carton",
+    whole_units_only=True,
+    profile=ProfileFacts(unit_grams={"each": D(50), "egg": D(50)}),
+)
 GARLIC = FoodFacts(
     stock_base="each",
     each_label="head",
@@ -264,3 +270,13 @@ def test_a_line_for_a_food_without_stock_raises() -> None:
 def test_available_must_be_finite_and_not_negative(available: Decimal) -> None:
     with pytest.raises(ValueError, match="available"):
         FoodStock(OIL, available=available)
+
+
+@pytest.mark.parametrize("unit", ["eggs", "large", "whole"])
+def test_two_eggs_from_eggs_counted_in_cartons_ask_instead_of_taking_two_cartons(
+    unit,
+) -> None:
+    [eggs] = _plan((CARTON_EGGS, "2", unit), available=D(2))
+    assert eggs.draw == 0
+    assert eggs.small is None
+    assert eggs.asks == (LineAsk(0, D(2), unit, "needs_package_size"),)
