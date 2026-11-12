@@ -6,12 +6,16 @@ import { RecipePressable } from "@/components/recipe-motion";
 import { useTheme } from "@/hooks/useTheme";
 import { useActiveCookStore } from "@/stores/activeCook";
 
-/** "Cooking: <dish>" shortcut back to the active cook; renders nothing when idle. */
-export default function ActiveCookBanner({
-  style,
-}: {
+type ActiveCookBannerProps = {
+  /** Outer style, such as the margins where the banner sits on each screen. */
   style?: StyleProp<ViewStyle>;
-}) {
+};
+
+/**
+ * A "Cooking: <dish>" banner that opens `/cook`. Reads the active cook from
+ * `useActiveCookStore` and renders nothing when there is none.
+ */
+export default function ActiveCookBanner({ style }: ActiveCookBannerProps) {
   const { colors, fonts } = useTheme();
   const router = useRouter();
   const title = useActiveCookStore((s) => s.activeCook?.recipe.title);

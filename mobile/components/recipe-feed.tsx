@@ -46,15 +46,21 @@ type RecipeFeedProps = {
   isSavePending?: boolean;
   header?: ReactNode;
   onOpenDetail?: (recipe: RecipeSuggestion) => void;
+  /** Starts a cook of the recipe from a right swipe on its card or from the preview sheet. */
   onCook: (recipe: RecipeSuggestion) => void;
 };
 
+// Horizontal travel, in points, that a released right swipe must pass to start a cook.
 const COOK_SWIPE_THRESHOLD = 96;
 
 const replacementTransition = LinearTransition.duration(360).easing(
   Easing.inOut(Easing.cubic),
 );
 
+/**
+ * The vertical feed of generated recipe cards with prefetch, dismiss, save and
+ * cook actions. A right swipe on a card starts a cook through `onCook`.
+ */
 export default function RecipeFeed({
   recipes,
   itemCount,

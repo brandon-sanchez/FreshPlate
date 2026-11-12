@@ -10,17 +10,27 @@ import { useTheme } from "@/hooks/useTheme";
 import type { RecipeSuggestion } from "@/types/recipes";
 import RecipeSteps from "@/components/recipe-steps";
 
+type RecipeIngredientsSheetProps = {
+  /** The recipe to preview; `null` hides the sheet. */
+  recipe: RecipeSuggestion | null;
+  /** Called when the user dismisses the sheet, and before it opens the full recipe or a cook. */
+  onClose: () => void;
+  /** Opens the full recipe after a drag up on the handle or its accessibility action. */
+  onOpenDetail?: (recipe: RecipeSuggestion) => void;
+  /** Starts a cook of `recipe` from the "Cook this" button, after the sheet closes. */
+  onCook: (recipe: RecipeSuggestion) => void;
+};
+
+/**
+ * A bottom sheet that previews a recipe's ingredients and steps. Its primary
+ * button starts a cook, and dragging the handle up opens the full recipe.
+ */
 export default function RecipeIngredientsSheet({
   recipe,
   onClose,
   onOpenDetail,
   onCook,
-}: {
-  recipe: RecipeSuggestion | null;
-  onClose: () => void;
-  onOpenDetail?: (recipe: RecipeSuggestion) => void;
-  onCook: (recipe: RecipeSuggestion) => void;
-}) {
+}: RecipeIngredientsSheetProps) {
   const { colors, fonts } = useTheme();
   const insets = useSafeAreaInsets();
   const reducedMotion = useReducedMotion();

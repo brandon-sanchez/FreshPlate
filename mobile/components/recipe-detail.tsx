@@ -18,15 +18,23 @@ import type { RecipeSuggestion } from "@/types/recipes";
 import RecipeSteps from "@/components/recipe-steps";
 
 type RecipeViewProps = {
+  /** The recipe to show. */
   recipe: RecipeSuggestion;
+  /** Whether the household has saved this recipe, which fills the bookmark. */
   isSaved: boolean;
+  /** Disables the bookmark while a save or unsave is in flight. */
   isSavePending: boolean;
+  /** Called when the bookmark is pressed, with the recipe and its saved state before the press. */
   onToggleSave: (recipe: RecipeSuggestion, saved: boolean) => void;
+  /** Called when the close button is pressed. */
   onClose: () => void;
   /** True when this recipe is the active cook, which pins "Done cooking". */
   cooking: boolean;
+  /** Disables the pinned cook button while a start or finish is in flight. */
   cookPending: boolean;
+  /** Called by "Cook this" when `cooking` is false. */
   onCook: (recipe: RecipeSuggestion) => void;
+  /** Called by "Done cooking" when `cooking` is true. */
   onDoneCooking: () => void;
 };
 
@@ -34,6 +42,10 @@ type RecipeDetailProps = Omit<RecipeViewProps, "recipe"> & {
   recipe: RecipeSuggestion | null;
 };
 
+/**
+ * Shows {@link RecipeView} in a full-screen modal with its own toast host.
+ * The modal is visible while `recipe` is not `null`.
+ */
 export default function RecipeDetail({ recipe, ...props }: RecipeDetailProps) {
   const insets = useSafeAreaInsets();
   const reducedMotion = useReducedMotion();
