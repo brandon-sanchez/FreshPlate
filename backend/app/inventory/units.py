@@ -15,6 +15,9 @@ planner decides that, not this module. A recipe amount never raises. Callers
 pass amounts and facts as ``Decimal``, converting floats with
 ``Decimal(str(x))`` at their own boundary. Nothing is rounded here. The cook
 planner rounds once per food per cook.
+
+``measure`` and ``in_stock`` compare a recipe amount with a stock amount
+without a food's facts, for the recipe judge and the eval scorer.
 """
 
 from __future__ import annotations
@@ -210,6 +213,19 @@ class Small:
 Conversion = Exact | Approximate | Small | AskAtCook
 
 
+class Measure(NamedTuple):
+    """An amount in grams, millilitres, or a counted unit.
+
+    ``dimension`` is ``"g"`` for mass, ``"ml"`` for volume, or the
+    ``normalize_unit`` key of any other unit word (``"each"``, ``"clove"``,
+    ``"large"``). ``amount`` is in that base. ``in_stock`` is the only
+    comparison between measures.
+    """
+
+    amount: Decimal
+    dimension: str
+
+
 class _Value(NamedTuple):
     amount: Decimal
     estimated: bool
@@ -261,6 +277,53 @@ def table_unit(text: str) -> tuple[MeasuredUnit, Decimal] | None:
         return "g", _MASS[key]
     if key in _VOLUME:
         return "ml", _VOLUME[key]
+    return None
+
+
+def measure(amount: Decimal, unit: str) -> Measure:
+    """Express an amount in grams, millilitres, or its own unit word.
+
+    Mass and volume units convert through the fixed tables, so 2 kg and 300 g
+    both measure in grams. Any other unit word is its own dimension after
+    ``normalize_unit``, so "pieces" and "item" both measure as ``"each"``
+    while "large" stays ``"large"``. Comparing a mass with a count needs the
+    food's facts, which only ``to_stock`` reads.
+
+    Args:
+        amount: The amount as written, not validated, so it may be zero or
+            negative.
+        unit: The unit as written, in any case, singular or plural.
+
+    Returns:
+        The amount in its dimension's base.
+    """
+    table = table_unit(unit)
+    if table is None:
+        return Measure(amount, normalize_unit(unit))
+    dimension, factor = table
+    return Measure(amount * factor, dimension)
+
+
+def in_stock(amount: Decimal, unit: str, stock: Measure) -> Decimal | None:
+    """Return ``amount`` of ``unit`` in ``stock``'s dimension, or ``None``.
+
+    Follows ``to_stock`` where the unit word alone is ambiguous: a bare "oz"
+    is fluid ounces when the stock is a volume, and a size word such as
+    "large" counts as one whole item. ``None`` means the two dimensions differ,
+    so the amounts cannot be compared without the food's facts.
+
+    Args:
+        amount: The recipe's amount as written.
+        unit: The recipe's unit as written, in any case, singular or plural.
+        stock: The stocked amount, from ``measure``.
+    """
+    key = normalize_unit(unit)
+    if key == "oz" and stock.dimension == "ml":
+        key = "fl oz"
+    for candidate in dict.fromkeys([key, normalize_unit(_SIZE_WORDS.sub("", key))]):
+        used = measure(amount, candidate)
+        if used.dimension == stock.dimension:
+            return used.amount
     return None
 
 
@@ -339,11 +402,11 @@ def _measure(
 
 
 def _table_quantity(amount: Decimal, key: str) -> _Quantity | None:
-    if key in _MASS:
-        return _Quantity(amount * _MASS[key], "g", False)
-    if key in _VOLUME:
-        return _Quantity(amount * _VOLUME[key], "ml", False)
-    return None
+    table = table_unit(key)
+    if table is None:
+        return None
+    dimension, factor = table
+    return _Quantity(amount * factor, dimension, False)
 
 
 def _into_stock(
