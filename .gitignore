@@ -26,8 +26,8 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 backend/FreshPlate/
-.venv/
-venv/
+.venv
+venv
 
 # Environment files
 .env
