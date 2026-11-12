@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import Toast from "react-native-toast-message";
+import Toast, { type ToastShowParams } from "react-native-toast-message";
 import { supabase } from "@/lib/supabase";
 import { showUndoToast } from "@/components/toastConfig";
 import { useAuthStore } from "@/stores/auth";
@@ -15,17 +15,29 @@ type RecordInput = {
 };
 
 /**
- * Thrown when an RPC refuses because a batch is no longer in the state the
- * list showed, which happens when another phone changed it first.
+ * Thrown when the database refuses a change because a batch is no longer in
+ * the state the screen showed, which happens when another phone changed it
+ * first.
  */
-class ChangedElsewhereError extends Error {
+export class ChangedElsewhereError extends Error {
   constructor(code: string) {
     super(code);
     this.name = "ChangedElsewhereError";
   }
 }
 
-const RETRY_HINT = "Check your connection and try again.";
+/** The second toast line for a failure that a retry on a better connection could fix. */
+export const RETRY_HINT = "Check your connection and try again.";
+
+/**
+ * Returns the error toast for a failed change to a food's batches. It says
+ * whether another phone changed them first or the connection failed.
+ */
+export function lotErrorToast(name: string, error: Error): ToastShowParams {
+  return error instanceof ChangedElsewhereError
+    ? { type: "error", text1: `${name} already changed`, text2: "It was updated on another phone." }
+    : { type: "error", text1: `Couldn't update ${name}`, text2: RETRY_HINT };
+}
 
 async function callLotRpc(
   fn: "deplete_lots" | "restore_lots",
@@ -88,12 +100,7 @@ export function useLotOutcome() {
         text2: lotIds.length > 1 ? `${lotIds.length} batches` : undefined,
         onUndo: () => restore.mutate(lotIds),
       }),
-    onError: (error, { name }) =>
-      Toast.show(
-        error instanceof ChangedElsewhereError
-          ? { type: "error", text1: `${name} already changed`, text2: "It was updated on another phone." }
-          : { type: "error", text1: `Couldn't update ${name}`, text2: RETRY_HINT },
-      ),
+    onError: (error, { name }) => Toast.show(lotErrorToast(name, error)),
   });
 
   /**
