@@ -151,18 +151,10 @@ export default function ItemDetailScreen() {
           text: "Delete",
           style: "destructive",
           onPress: () =>
-            deleteItem.mutate(item.id, {
-              onSuccess: () => {
-                Toast.show({ type: "success", text1: "Deleted" });
-                router.back();
-              },
-              onError: () =>
-                Toast.show({
-                  type: "error",
-                  text1: "Couldn't delete",
-                  text2: "Check your connection and try again.",
-                }),
-            }),
+            deleteItem.mutate(
+              { id: item.id, name: item.name },
+              { onSuccess: () => router.back() },
+            ),
         },
       ],
     );

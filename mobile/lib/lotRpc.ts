@@ -2,8 +2,9 @@ import type { ToastShowParams } from "react-native-toast-message";
 import { supabase } from "@/lib/supabase";
 
 /**
- * Thrown when a lot RPC refuses because a batch is no longer in the state the
- * screen showed, which happens when another phone changed it first.
+ * Thrown when the database refuses a change because a batch is no longer in
+ * the state the screen showed, which happens when another phone changed it
+ * first.
  */
 export class ChangedElsewhereError extends Error {
   constructor(code: string) {
