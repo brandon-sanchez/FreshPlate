@@ -24,16 +24,7 @@ from app.ai.llm.protocol import LLMProvider
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.prompts.loader import load_prompt
 from app.inventory.food_facts import food_facts_from_row
-from app.inventory.units import normalize_unit, table_unit
-
-_PACKAGE_WORDS = frozenset(
-    normalize_unit(word)
-    for word in (
-        "bag", "bottle", "box", "can", "canister", "carton", "case", "container",
-        "jar", "jug", "pack", "package", "packet", "pitcher", "pouch", "serving",
-        "tin", "tray", "tub", "tube",
-    )
-)  # fmt: skip
+from app.inventory.units import PACKAGE_WORDS, normalize_unit, table_unit
 
 
 class _UnitWeight(BaseModel):
@@ -117,7 +108,7 @@ def needs_estimate(row: Mapping[str, Any]) -> bool:
     has_whole_item_weight = (
         facts.grams_per_each is not None
         or (facts.ml_per_each is not None and has_density)
-        or facts.each_label in _PACKAGE_WORDS
+        or facts.each_label in PACKAGE_WORDS
         or any(unit in profile.unit_grams for unit in ("each", facts.each_label))
     )
     return not (has_density and has_whole_item_weight)
@@ -156,7 +147,7 @@ async def estimate_food_facts(
     template = load_prompt("estimate_food_facts")
     first = rows[0]
     labels = {food_facts_from_row(row).each_label for row in rows}
-    items = {label for label in labels if label and label not in _PACKAGE_WORDS}
+    items = {label for label in labels if label and label not in PACKAGE_WORDS}
     measures = {row["stock_base"] for row in rows if row["stock_base"] != "each"}
     request = {
         "food": first["profile_key"] or first["name"],
@@ -189,7 +180,7 @@ def _unit_grams(weights: Sequence[_UnitWeight]) -> dict[str, Decimal]:
     for weight in weights:
         unit = normalize_unit(weight.unit)
         measured = table_unit(unit)
-        if unit in _PACKAGE_WORDS or (measured is not None and measured[0] == "g"):
+        if unit in PACKAGE_WORDS or (measured is not None and measured[0] == "g"):
             continue
         value = Decimal(str(weight.grams))
         if grams.setdefault(unit, value) != value:
