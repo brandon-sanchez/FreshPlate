@@ -1,6 +1,7 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import Toast from "react-native-toast-message";
 import type { InventoryItem } from "@/hooks/useInventoryItems";
 
 const mockRpc = jest.fn();
@@ -12,6 +13,9 @@ jest.mock("@/stores/auth", () => ({
   useAuthStore: (selector: (s: { householdId: string }) => unknown) =>
     selector({ householdId: "household-1" }),
 }));
+const mockBack = jest.fn();
+jest.mock("expo-router", () => ({ useRouter: () => ({ back: mockBack }) }));
+jest.mock("react-native-toast-message", () => ({ __esModule: true, default: { show: jest.fn() } }));
 
 import LotRemainingControl from "@/components/LotRemainingControl";
 
@@ -54,6 +58,8 @@ function lastRpcArgs() {
 }
 
 beforeEach(() => {
+  mockBack.mockReset();
+  (Toast.show as jest.Mock).mockReset();
   mockRpc.mockReset();
   mockRpc.mockResolvedValue({ error: null });
 });
@@ -130,4 +136,46 @@ it("does not send an amount that is not a positive number", () => {
   fireEvent.press(screen.getByText("Set"));
 
   expect(mockRpc).not.toHaveBeenCalled();
+});
+
+it("goes back when another phone already used up the batch", async () => {
+  mockRpc.mockResolvedValue({ error: { message: "LOT_NOT_LIVE" } });
+  renderControl(lot());
+
+  fireEvent.press(screen.getByText("½"));
+
+  await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+  expect(Toast.show).toHaveBeenCalledWith(
+    expect.objectContaining({ text1: "Milk already changed" }),
+  );
+});
+
+it("goes back when the batch is gone before an exact amount is set", async () => {
+  mockRpc.mockResolvedValue({ error: { message: "LOT_NOT_LIVE" } });
+  renderControl(lot());
+
+  fireEvent.changeText(screen.getByLabelText("Exact amount left, in ml"), "300");
+  fireEvent.press(screen.getByText("Set"));
+
+  await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+});
+
+it("stays on the batch when it changed elsewhere but still exists", async () => {
+  mockRpc.mockResolvedValue({ error: { message: "STALE" } });
+  renderControl(lot());
+
+  fireEvent.press(screen.getByText("½"));
+
+  await waitFor(() => expect(Toast.show).toHaveBeenCalled());
+  expect(mockBack).not.toHaveBeenCalled();
+});
+
+it("stays on the batch when the set fails for another reason", async () => {
+  mockRpc.mockResolvedValue({ error: { message: "network down" } });
+  renderControl(lot());
+
+  fireEvent.press(screen.getByText("½"));
+
+  await waitFor(() => expect(Toast.show).toHaveBeenCalled());
+  expect(mockBack).not.toHaveBeenCalled();
 });
