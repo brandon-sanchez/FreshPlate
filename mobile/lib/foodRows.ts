@@ -15,9 +15,14 @@ export type FoodRow = {
   isLeftover: boolean;
   /** Never empty. Soonest expiry first, undated lots last. */
   lots: InventoryItem[];
-  /** Sum of the lots' quantities, in `unit`. */
+  /**
+   * Sum of the unexpired lots' quantities, in `unit`, because expired stock
+   * is not available until someone reviews it. When every lot has expired,
+   * the sum of the expired lots, so an Expired row still says how much is
+   * waiting for review.
+   */
   total: number;
-  /** True when any lot's amount is an estimate, so the total reads "about". */
+  /** True when any lot counted in `total` is an estimate, so the total reads "about". */
   isEstimate: boolean;
   /** Distinct locations of the lots, in fridge, freezer, pantry order. */
   locations: StorageLocation[];
@@ -161,6 +166,7 @@ function toRow(group: InventoryItem[]): FoodRow {
   const expired = withDays.filter((d) => d.days !== null && d.days < 0);
   const unexpired = withDays.filter((d) => d.days === null || d.days >= 0);
   const days = unexpired.length ? unexpired[0].days : expired[0].days;
+  const counted = (unexpired.length ? unexpired : expired).map((d) => d.lot);
   const [first] = lots;
 
   return {
@@ -171,8 +177,8 @@ function toRow(group: InventoryItem[]): FoodRow {
     category: first.category,
     isLeftover: first.is_leftover,
     lots,
-    total: lots.reduce((sum, lot) => sum + lot.quantity, 0),
-    isEstimate: lots.some((lot) => lot.is_estimate),
+    total: counted.reduce((sum, lot) => sum + lot.quantity, 0),
+    isEstimate: counted.some((lot) => lot.is_estimate),
     locations: LOCATIONS.filter((loc) => lots.some((lot) => lot.storage_location === loc)),
     days,
     urgency: urgencyOf(days),

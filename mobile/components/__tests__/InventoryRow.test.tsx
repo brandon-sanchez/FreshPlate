@@ -85,11 +85,11 @@ it("reads a total as about when any batch's amount is an estimate", () => {
   expect(screen.getByText("about 1500 ml · 2 batches · Fridge")).toBeTruthy();
 });
 
-it("counts an expired batch hidden behind a fresh one", () => {
+it("counts an expired batch hidden behind a fresh one, leaving it out of the total", () => {
   const [row] = stackLots([milk("old", "2026-11-05"), milk("new", "2026-11-12")]);
   const screen = render(<InventoryRow row={row} />);
 
-  expect(screen.getByText("2000 ml · 2 batches · Fridge · 1 expired")).toBeTruthy();
+  expect(screen.getByText("1000 ml · 2 batches · Fridge · 1 expired")).toBeTruthy();
   expect(screen.getByText("4 days")).toBeTruthy();
 });
 

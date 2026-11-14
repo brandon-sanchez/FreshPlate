@@ -188,8 +188,8 @@ it("counts a food with an expired batch behind a fresh one as expired and says s
   renderScreen();
 
   expect(await screen.findByText("1 item · 1 expired")).toBeTruthy();
-  expect(screen.getByText("1500 ml · 2 batches · Fridge · 1 expired")).toBeTruthy();
-  expect(screen.getByLabelText("Milk, 1500 ml, 2 batches, expires in 4 days, 1 expired")).toBeTruthy();
+  expect(screen.getByText("1000 ml · 2 batches · Fridge · 1 expired")).toBeTruthy();
+  expect(screen.getByLabelText("Milk, 1000 ml, 2 batches, expires in 4 days, 1 expired")).toBeTruthy();
 });
 
 it("opens the collapsed Fresh section to show a just-added batch", async () => {
