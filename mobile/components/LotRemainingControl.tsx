@@ -9,7 +9,6 @@ import {
   currentFillLevel,
   parseExactAmount,
   remainingMode,
-  type RemainingMode,
 } from "@/lib/fillLevel";
 
 type LotRemainingControlProps = {
@@ -17,18 +16,13 @@ type LotRemainingControlProps = {
   lot: InventoryItem;
 };
 
-const SECTION_LABEL: Record<RemainingMode, string> = {
-  levels: "How full",
-  unknownSize: "Amount left",
-  count: "Amount left",
-};
-
 /**
- * Renders a labelled section that sets how much of a batch is left, saving on
- * each tap: Full, 3/4, 1/2 or 1/4 of its full size, or an exact amount in the
- * food's unit. A batch with no known full size, or of a food counted in whole
- * units, offers only the exact amount. Used up is a swipe action and is not
- * offered here, so a fill tap never empties a batch.
+ * Renders an "Amount left" section that sets how much of a batch is left: an
+ * exact amount in the food's unit, and directly under it a How full control
+ * (Full, ¾, ½ or ¼ of the full size) that saves on each tap. How full is
+ * hidden for a batch with no known full size and for a food counted in whole
+ * units. Used up is a swipe action and is not offered here, so a fill tap
+ * never empties a batch.
  */
 function LotRemainingControl({ lot }: LotRemainingControlProps) {
   const { colors, fonts } = useTheme();
@@ -66,24 +60,8 @@ function LotRemainingControl({ lot }: LotRemainingControlProps) {
           marginBottom: -8,
         }}
       >
-        {SECTION_LABEL[mode]}
+        Amount left
       </Text>
-      {mode === "levels" ? (
-        <SegmentedControl
-          options={FILL_LEVELS.map((level) => level.label)}
-          selected={current?.label ?? ""}
-          onSelect={(label) => {
-            const level = FILL_LEVELS.find((l) => l.label === label);
-            if (!level || busy || level === current) return;
-            setRemaining.mutate({ lot, remaining: { fraction: level.fraction } });
-          }}
-        />
-      ) : null}
-      {mode === "unknownSize" ? (
-        <Text style={{ fontFamily: fonts.body, fontSize: 12.5, color: colors.textMuted }}>
-          Full size unknown, so enter how much is left.
-        </Text>
-      ) : null}
       <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
         <View
           style={{
@@ -132,6 +110,17 @@ function LotRemainingControl({ lot }: LotRemainingControlProps) {
           </Text>
         </Pressable>
       </View>
+      {mode === "levels" ? (
+        <SegmentedControl
+          options={FILL_LEVELS.map((level) => level.label)}
+          selected={current?.label ?? ""}
+          onSelect={(label) => {
+            const level = FILL_LEVELS.find((l) => l.label === label);
+            if (!level || busy || level === current) return;
+            setRemaining.mutate({ lot, remaining: { fraction: level.fraction } });
+          }}
+        />
+      ) : null}
     </>
   );
 }

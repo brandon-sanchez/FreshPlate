@@ -16,7 +16,7 @@ it.each([
 });
 
 it("matches an amount to its fill level, and nothing else", () => {
-  expect(currentFillLevel(lot(750, 1000))?.label).toBe("3/4");
+  expect(currentFillLevel(lot(750, 1000))?.label).toBe("¾");
   expect(currentFillLevel(lot(1000, 1000))?.label).toBe("Full");
   expect(currentFillLevel(lot(600, 1000))).toBeNull();
   expect(currentFillLevel(lot(600, null))).toBeNull();

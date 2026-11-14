@@ -1,13 +1,13 @@
 import type { InventoryItem } from "@/hooks/useInventoryItems";
 
-type FillLevel = { label: "Full" | "3/4" | "1/2" | "1/4"; fraction: number };
+type FillLevel = { label: "Full" | "¾" | "½" | "¼"; fraction: number };
 
 /** The "how full" choices, fullest first, each with the share of the full size it leaves. */
 export const FILL_LEVELS: readonly FillLevel[] = [
   { label: "Full", fraction: 1 },
-  { label: "3/4", fraction: 0.75 },
-  { label: "1/2", fraction: 0.5 },
-  { label: "1/4", fraction: 0.25 },
+  { label: "¾", fraction: 0.75 },
+  { label: "½", fraction: 0.5 },
+  { label: "¼", fraction: 0.25 },
 ];
 
 type SizedLot = Pick<InventoryItem, "quantity" | "initial_quantity" | "whole_units_only">;
