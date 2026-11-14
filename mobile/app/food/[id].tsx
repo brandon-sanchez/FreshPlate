@@ -10,7 +10,7 @@ import ErrorState from "@/components/ErrorState";
 import BatchCard from "@/components/BatchCard";
 import SectionLabel from "@/components/SectionLabel";
 import LotOutcomeSwipe from "@/components/LotOutcomeSwipe";
-import { useInventoryItems } from "@/hooks/useInventoryItems";
+import { type InventoryItem, useInventoryItems } from "@/hooks/useInventoryItems";
 import { useCombineLots } from "@/hooks/useCombineLots";
 import { inDrawOrder, stackLots } from "@/lib/foodRows";
 import { formatAmount } from "@/lib/amount";
@@ -115,7 +115,7 @@ export default function FoodDetailScreen() {
       />
       <ScrollView contentContainerStyle={{
           padding: 16,
-          paddingBottom: selection === null ? 40 : 120,
+          paddingBottom: selection === null ? 40 : 150,
           gap: 16,
         }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 16, marginBottom: 4 }}>
@@ -202,6 +202,7 @@ export default function FoodDetailScreen() {
       {selection !== null ? (
         <CombineBar
           count={pickedLotIds.length}
+          into={batches.find((b) => b.lot.id === pickedLotIds[0])?.lot ?? null}
           busy={combineLots.isPending}
           onCancel={() => setSelection(null)}
           onCombine={combine}
@@ -239,14 +240,33 @@ function toggled(set: ReadonlySet<string>, id: string): ReadonlySet<string> {
   return next;
 }
 
-/** Renders the bottom bar that confirms or cancels combining the picked batches. */
+/**
+ * Names the batch that holds the mix the way someone finds it on the shelf:
+ * its amount and the day it was opened, or added if it is still sealed.
+ */
+function intoText(lot: InventoryItem): string {
+  const day = new Date(lot.opened_at ?? lot.created_at).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  const amount = formatAmount(lot.quantity, lot.unit, lot.is_estimate);
+  return `Into the ${amount} ${lot.opened_at === null ? "added" : "opened"} ${day}`;
+}
+
+/**
+ * Renders the bottom bar that says where the picked batches go and confirms
+ * or cancels combining them. `into` is the batch that holds the mix, or
+ * `null` while nothing is picked.
+ */
 function CombineBar({
   count,
+  into,
   busy,
   onCancel,
   onCombine,
 }: {
   count: number;
+  into: InventoryItem | null;
   busy: boolean;
   onCancel: () => void;
   onCombine: () => void;
@@ -261,7 +281,6 @@ function CombineBar({
         bottom: 0,
         left: 0,
         right: 0,
-        flexDirection: "row",
         gap: 10,
         padding: 16,
         paddingBottom: 28,
@@ -270,44 +289,52 @@ function CombineBar({
         borderTopColor: colors.border,
       }}
     >
-      <Pressable
-        onPress={onCancel}
-        accessibilityRole="button"
-        accessibilityLabel="Cancel"
-        style={{
-          flex: 1,
-          height: 50,
-          borderRadius: 12,
-          borderWidth: 1,
-          borderColor: colors.border,
-          backgroundColor: colors.surface,
-          alignItems: "center",
-          justifyContent: "center",
-        }}
+      <Text
+        numberOfLines={1}
+        style={{ fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, textAlign: "center" }}
       >
-        <Text style={{ fontFamily: fonts.bodyStrong, fontSize: 14.5, color: colors.text }}>
-          Cancel
-        </Text>
-      </Pressable>
-      <Pressable
-        onPress={onCombine}
-        disabled={disabled}
-        accessibilityRole="button"
-        accessibilityLabel={label}
-        style={{
-          flex: 1,
-          height: 50,
-          borderRadius: 12,
-          backgroundColor: colors.accent,
-          alignItems: "center",
-          justifyContent: "center",
-          opacity: disabled ? 0.5 : 1,
-        }}
-      >
-        <Text style={{ fontFamily: fonts.bodyStrong, fontSize: 14.5, color: colors.accentInk }}>
-          {busy ? "Combining…" : label}
-        </Text>
-      </Pressable>
+        {into === null ? "Pick 2 or more batches" : intoText(into)}
+      </Text>
+      <View style={{ flexDirection: "row", gap: 10 }}>
+        <Pressable
+          onPress={onCancel}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel"
+          style={{
+            flex: 1,
+            height: 50,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: colors.border,
+            backgroundColor: colors.surface,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Text style={{ fontFamily: fonts.bodyStrong, fontSize: 14.5, color: colors.text }}>
+            Cancel
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={onCombine}
+          disabled={disabled}
+          accessibilityRole="button"
+          accessibilityLabel={label}
+          style={{
+            flex: 1,
+            height: 50,
+            borderRadius: 12,
+            backgroundColor: colors.accent,
+            alignItems: "center",
+            justifyContent: "center",
+            opacity: disabled ? 0.5 : 1,
+          }}
+        >
+          <Text style={{ fontFamily: fonts.bodyStrong, fontSize: 14.5, color: colors.accentInk }}>
+            {busy ? "Combining…" : label}
+          </Text>
+        </Pressable>
+      </View>
     </View>
   );
 }

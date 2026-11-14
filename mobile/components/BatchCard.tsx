@@ -1,4 +1,5 @@
 import { Pressable, Text, View } from "react-native";
+import Feather from "@expo/vector-icons/Feather";
 import { useTheme } from "@/hooks/useTheme";
 import UrgencyBar from "@/components/UrgencyBar";
 import type { DrawnLot } from "@/lib/foodRows";
@@ -12,7 +13,11 @@ type BatchCardProps = {
   batch: DrawnLot;
   /** Called when the card is tapped. */
   onPress: () => void;
-  /** Whether the card is picked in a multi-select, such as choosing batches to combine. */
+  /**
+   * Whether the card is picked in a multi-select, such as choosing batches to
+   * combine. When set, the card shows a checkbox and reads as one. Omit
+   * outside a multi-select.
+   */
   selected?: boolean;
 };
 
@@ -20,7 +25,7 @@ type BatchCardProps = {
  * Renders one batch of a food as a card: amount, location, opened state,
  * expiry with an urgency bar, notes, and "Use first" or "Expired" pills.
  */
-function BatchCard({ batch, onPress, selected = false }: BatchCardProps) {
+function BatchCard({ batch, onPress, selected }: BatchCardProps) {
   const { colors, fonts, card } = useTheme();
   const { lot, days, expired, useFirst } = batch;
   const amount = formatAmount(lot.quantity, lot.unit, lot.is_estimate);
@@ -36,6 +41,7 @@ function BatchCard({ batch, onPress, selected = false }: BatchCardProps) {
           ? colors.warn
           : colors.textMuted;
 
+  const selectable = selected !== undefined;
   const borderWidth = selected ? 2 : 1;
   const label = [amount, ...meta, expiry];
   if (useFirst) label.push("use first");
@@ -43,9 +49,9 @@ function BatchCard({ batch, onPress, selected = false }: BatchCardProps) {
   return (
     <Pressable
       onPress={onPress}
-      accessibilityRole="button"
+      accessibilityRole={selectable ? "checkbox" : "button"}
       accessibilityLabel={label.join(", ")}
-      accessibilityState={{ selected }}
+      accessibilityState={selectable ? { checked: selected } : undefined}
       style={({ pressed }) => ({
         borderRadius: 14,
         borderWidth,
@@ -62,6 +68,7 @@ function BatchCard({ batch, onPress, selected = false }: BatchCardProps) {
       })}
     >
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        {selectable ? <Checkbox checked={selected} /> : null}
         <Text
           style={{
             flex: 1,
@@ -94,6 +101,26 @@ function BatchCard({ batch, onPress, selected = false }: BatchCardProps) {
         </Text>
       ) : null}
     </Pressable>
+  );
+}
+
+function Checkbox({ checked }: { checked: boolean }) {
+  const { colors } = useTheme();
+  return (
+    <View
+      style={{
+        width: 22,
+        height: 22,
+        borderRadius: 6,
+        borderWidth: checked ? 0 : 1.5,
+        borderColor: colors.textSubtle,
+        backgroundColor: checked ? colors.accent : colors.surface,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      {checked ? <Feather name="check" size={15} color={colors.accentInk} /> : null}
+    </View>
   );
 }
 
