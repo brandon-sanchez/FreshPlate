@@ -75,7 +75,7 @@ sequenceDiagram
 
 `backend/app/core/auth.py` verifies the token against the project's public signing keys (JWKS), which it caches for an hour. If a token names a key ID the cache does not have, the backend refetches the JWKS once before it rejects the token, so a key rotation does not lock users out for the length of the cache. Routes take the verified user ID through the `CurrentUserId` dependency.
 
-The cook endpoint goes one step further. It forwards the user's own JWT to Supabase when it calls the `cook_recipe` function. Postgres then sees the real user in `auth.uid()`, and row-level security applies as if the app had made the call itself.
+The cook endpoint goes one step further. It forwards the user's own JWT to Supabase when it calls the `cook_recipe_v2` function. Postgres then sees the real user in `auth.uid()`, so the membership check and the cook event's user are the caller's own.
 
 ## A four-node LangGraph pipeline turns inventory into recipes
 
@@ -157,32 +157,34 @@ A session stops after six generation runs. The app then offers to add items or c
 
 ## Cook confirmation deducts inventory in one transaction
 
-When a user finishes cooking, they confirm how much of each item they used. `POST /api/cook/confirm` passes that list to the `cook_recipe` Postgres function, which applies it in one transaction.
+When a user finishes cooking, they confirm how much of each food they used, in the food's stock base (grams, millilitres or a count). `POST /api/cook/confirm` passes that list to the `cook_recipe_v2` Postgres function, which draws each amount from the food's batches (lots) in one transaction.
 
 ```mermaid
 sequenceDiagram
 	participant App as Expo app
 	participant API as FastAPI
-	participant DB as cook_recipe()
+	participant DB as cook_recipe_v2()
 
 	App->>API: POST /api/cook/confirm<br/>household_id, operation_id, deductions
-	API->>DB: rpc/cook_recipe with the user's JWT
+	API->>DB: rpc/cook_recipe_v2 with the user's JWT
 	DB->>DB: Return the saved result if operation_id was already used
-	DB->>DB: Validate every line, lock the rows
-	DB->>DB: Subtract, mark used-up rows depleted
+	DB->>DB: Map each id to its live food, lock the foods in sorted order
+	DB->>DB: Draw from each food's lots in draw order
 	DB->>DB: Insert cook_events row
-	DB-->>API: Committed amounts
+	DB-->>API: Draws per lot, committed amounts
 	API-->>App: 200, or 409 if rejected
 ```
 
 The function guarantees these properties:
 
-- **All or nothing.** It checks every line before it changes any row. Amounts must be positive and finite, IDs must be unique, and every item must belong to the caller's household. One bad line rejects the whole request.
-- **Safe to retry.** The app creates an `operation_id` when the cook starts and stores it with the active cook. `cook_events` has a unique key on `(household_id, operation_id)`, so a repeated confirmation returns the first result and deducts nothing twice.
-- **Safe under concurrency.** The function locks the item rows with `SELECT ... FOR UPDATE`. If another household member used the same item first, the deduction stops at zero. The event then records both what the user said they used (`confirmed_amount`) and what was actually subtracted (`committed_amount`).
-- **No hard deletes.** An item that reaches zero gets a `depleted_at` timestamp. The function never deletes the row.
+- **Draw order.** Each amount comes from the food's unexpired lots: opened lots first, then the soonest expiry (undated lots last), then the oldest. One lot is finished before the next starts. A drawn lot is marked opened, and a lot drawn to zero is marked depleted with reason `used`. Expired lots are skipped until someone reviews them.
+- **All or nothing.** One bad line rejects the whole request. Amounts must be positive and finite, whole-unit foods (cans, eggs) take whole amounts only, each food may appear in one line only, and every ID must be a food or lot of the caller's household.
+- **Old recipes still cook.** A recipe's `inventory_item_id` holds a food id. Recipes saved before foods existed hold a lot id there, and the function draws from that lot's food. Merged foods are followed to the food they were merged into.
+- **Safe to retry.** The app creates an `operation_id` when the cook starts and stores it with the active cook. A lock on household plus operation id serializes repeats, so a repeated confirmation returns the first result and deducts nothing twice. A repeat with a different payload is rejected.
+- **Safe under concurrency.** Every function that changes a food's stock takes a per-food advisory lock, in sorted food id order, before it touches any lot. Two phones cooking the same foods wait for each other instead of deadlocking, and a batch added during a cook lands wholly before or after it. When stock runs short, the deduction stops at zero. The event then records both what the user said they used (`confirmed_amount`) and what was actually drawn (`committed_amount`, and `draws` per lot).
+- **No hard deletes.** A lot that reaches zero gets `depleted_at`. The function never deletes a row.
 
-The function runs as `SECURITY INVOKER` with the user's JWT, so it gets no extra privileges. On `main`, the backend endpoint, the database function, and the app's persisted active-cook state exist. The cook screens that call them are in progress in [#27](https://github.com/brandon-sanchez/FreshPlate/issues/27) and [#30](https://github.com/brandon-sanchez/FreshPlate/issues/30).
+The function runs as `SECURITY DEFINER`, because members can't change lot quantities directly. It checks household membership first and reads only foods and lots of that household. The cook screens that call the endpoint are in progress in [#27](https://github.com/brandon-sanchez/FreshPlate/issues/27) and [#30](https://github.com/brandon-sanchez/FreshPlate/issues/30).
 
 ## Image generation has a spending cap before it has images
 

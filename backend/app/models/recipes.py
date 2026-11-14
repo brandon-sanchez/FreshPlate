@@ -95,6 +95,17 @@ class RecipeFeedResponse(BaseModel):
 
 
 class CookDeduction(BaseModel):
+    """One food a confirmed cook used, and how much.
+
+    Attributes:
+        inventory_item_id: The food the recipe line names. Recipes saved
+            before foods existed hold a lot id here instead, and the
+            deduction draws from that lot's food. A merged food draws from
+            the food it was merged into.
+        confirmed_amount: How much was used, in the food's stock base (grams,
+            millilitres or a count). Must be finite and positive.
+    """
+
     inventory_item_id: UUID
     confirmed_amount: float = Field(gt=0)
 
@@ -107,6 +118,18 @@ class CookDeduction(BaseModel):
 
 
 class CookConfirmationRequest(BaseModel):
+    """Request body for confirming a finished cook.
+
+    Attributes:
+        household_id: The caller's household.
+        operation_id: The id the app made when the cook started. Repeating a
+            request with the same id and payload deducts once.
+        recipe_id: The recipe that was cooked.
+        recipe_snapshot: The recipe as cooked. Its ``recipe_id`` must match.
+        deductions: One entry per food used. Two entries that reach the same
+            food, such as a food and one of its lots, are rejected.
+    """
+
     model_config = ConfigDict(extra="forbid")
     household_id: UUID
     operation_id: UUID
