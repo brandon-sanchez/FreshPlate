@@ -61,17 +61,16 @@ beforeEach(() => {
 it("sets a batch with a known full size to a fraction of it in one tap", async () => {
   renderControl(lot());
 
-  fireEvent.press(screen.getByText("1/2"));
+  fireEvent.press(screen.getByText("½"));
 
   await waitFor(() => expect(mockRpc).toHaveBeenCalledTimes(1));
-  expect(screen.getByText("How full")).toBeTruthy();
   expect(lastRpcArgs()).toMatchObject({ p_lot_id: "lot-1", p_fraction: 0.5, p_quantity: null });
 });
 
 it("does not resend the fill level the batch already has", () => {
   renderControl(lot({ quantity: 750, is_estimate: true }));
 
-  fireEvent.press(screen.getByText("3/4"));
+  fireEvent.press(screen.getByText("¾"));
 
   expect(mockRpc).not.toHaveBeenCalled();
 });
@@ -93,20 +92,20 @@ it("ignores taps while a set is still saving", async () => {
   mockRpc.mockReturnValue(new Promise((resolve) => (finish = () => resolve({ error: null }))));
   renderControl(lot());
 
-  fireEvent.press(screen.getByText("1/2"));
+  fireEvent.press(screen.getByText("½"));
   await waitFor(() => expect(mockRpc).toHaveBeenCalledTimes(1));
-  fireEvent.press(screen.getByText("1/4"));
+  fireEvent.press(screen.getByText("¼"));
   finish();
 
   await waitFor(() => expect(mockRpc).toHaveBeenCalledTimes(1));
 });
 
-it("offers only an exact amount when the full size is unknown", async () => {
+it("hides How full and offers only an exact amount when the full size is unknown", async () => {
   renderControl(lot({ initial_quantity: null, quantity: 120 }));
 
   expect(screen.queryByText("Full")).toBeNull();
+  expect(screen.queryByText("½")).toBeNull();
   expect(screen.getByText("Amount left")).toBeTruthy();
-  expect(screen.getByText("Full size unknown, so enter how much is left.")).toBeTruthy();
 
   fireEvent.changeText(screen.getByLabelText("Exact amount left, in ml"), "60");
   fireEvent.press(screen.getByText("Set"));
@@ -117,7 +116,7 @@ it("offers only an exact amount when the full size is unknown", async () => {
 it("counts a whole-units food exactly and refuses a fractional count", () => {
   renderControl(lot({ unit: "can", quantity: 3, initial_quantity: 6, whole_units_only: true }));
 
-  expect(screen.queryByText("1/2")).toBeNull();
+  expect(screen.queryByText("½")).toBeNull();
   fireEvent.changeText(screen.getByLabelText("Exact amount left, in can"), "1.5");
   fireEvent.press(screen.getByText("Set"));
 
