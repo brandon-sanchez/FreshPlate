@@ -35,6 +35,26 @@ export async function callLotRpc(
 }
 
 /**
+ * Checks the result of a direct write to `lots` that selected the written ids.
+ * A write that matches no row is not an error to PostgREST, so only the
+ * returned rows show whether the lot was still live.
+ *
+ * @throws {@link ChangedElsewhereError} when no row was written, because
+ *   another phone used up, tossed or deleted the lot first, and the Supabase
+ *   error for any other failure.
+ */
+export function requireLiveLot({
+  data,
+  error,
+}: {
+  data: unknown[] | null;
+  error: Error | null;
+}): void {
+  if (error) throw error;
+  if (!data || data.length === 0) throw new ChangedElsewhereError("LOT_NOT_LIVE");
+}
+
+/**
  * Returns the error toast for a failed change to a food's batches. It says
  * whether another phone changed them first or the connection failed.
  */

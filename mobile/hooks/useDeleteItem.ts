@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import Toast from "react-native-toast-message";
 import { supabase } from "@/lib/supabase";
-import { ChangedElsewhereError, RETRY_HINT, lotErrorToast } from "@/lib/lotRpc";
+import { ChangedElsewhereError, RETRY_HINT, lotErrorToast, requireLiveLot } from "@/lib/lotRpc";
 
 type DeleteInput = {
   id: string;
@@ -27,12 +27,9 @@ export function useDeleteItem() {
 
   return useMutation({
     mutationFn: async ({ id }: DeleteInput) => {
-      // A delete that matches no row is not an error to PostgREST, and the
-      // delete policy hides depleted lots, so only the returned rows show
-      // whether the lot was still live.
-      const { data, error } = await supabase.from("lots").delete().eq("id", id).select("id");
-      if (error) throw error;
-      if (data.length === 0) throw new ChangedElsewhereError("LOT_NOT_LIVE");
+      // The delete policy matches only live lots, so a depleted lot comes
+      // back as no row.
+      requireLiveLot(await supabase.from("lots").delete().eq("id", id).select("id"));
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["inventory"] }),
     onSuccess: () => Toast.show({ type: "success", text1: "Deleted" }),

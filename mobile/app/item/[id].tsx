@@ -18,7 +18,7 @@ import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";
 import LotRemainingControl from "@/components/LotRemainingControl";
 import { InventoryItem, useInventoryItems } from "@/hooks/useInventoryItems";
-import { daysUntilExpiration } from "@/lib/expiry";
+import { dateInDays, daysUntilExpiration } from "@/lib/expiry";
 import { formatAmount } from "@/lib/amount";
 import { FoodNameTakenError, useUpdateItem } from "@/hooks/useUpdateItem";
 import { useDeleteItem } from "@/hooks/useDeleteItem";
@@ -91,14 +91,7 @@ export default function ItemDetailScreen() {
 
   const trimmedName = name.trim();
   const isValid = trimmedName.length > 0;
-  /* Local-calendar math; UTC slicing rounds evening adds in negative-UTC
-   * zones to the next day. */
-  const expirationISO = (() => {
-    if (expDays === null) return null;
-    const now = new Date();
-    const t = new Date(now.getFullYear(), now.getMonth(), now.getDate() + expDays);
-    return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
-  })();
+  const expirationISO = expDays === null ? null : dateInDays(expDays);
   const urgency = expDays === null ? null : getUrgency(expDays);
   const urgencyColor =
     urgency?.level === "crit"
