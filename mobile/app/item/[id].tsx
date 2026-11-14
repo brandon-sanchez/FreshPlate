@@ -17,6 +17,8 @@ import SegmentedControl from "@/components/SegmentedControl";
 import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";
 import LotRemainingControl from "@/components/LotRemainingControl";
+import CutLotControl from "@/components/CutLotControl";
+import SectionLabel from "@/components/SectionLabel";
 import { InventoryItem, useInventoryItems } from "@/hooks/useInventoryItems";
 import { daysUntilExpiration } from "@/lib/expiry";
 import { formatAmount } from "@/lib/amount";
@@ -234,6 +236,7 @@ export default function ItemDetailScreen() {
         </View>
 
         <LotRemainingControl lot={item} />
+        <CutLotControl lot={item} onCut={() => router.back()} />
 
         <SectionLabel text="Name" />
         <TextInput
@@ -391,25 +394,6 @@ export default function ItemDetailScreen() {
         </Pressable>
       </View>
     </View>
-  );
-}
-
-function SectionLabel({ text, inline }: { text: string; inline?: boolean }) {
-  const { colors, fonts } = useTheme();
-  return (
-    <Text
-      style={{
-        fontFamily: fonts.bodyStrong,
-        fontSize: 11,
-        color: colors.textMuted,
-        textTransform: "uppercase",
-        letterSpacing: 0.8,
-        marginTop: inline ? 0 : 8,
-        marginBottom: inline ? 0 : -8,
-      }}
-    >
-      {text}
-    </Text>
   );
 }
 

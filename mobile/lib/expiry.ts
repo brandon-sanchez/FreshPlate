@@ -14,3 +14,16 @@ export function daysUntilExpiration(expirationDate: string | null): number | nul
   const diffMs = exp.getTime() - today.getTime();
   return Math.round(diffMs / 86400000);
 }
+
+/**
+ * Returns the local calendar date `days` from today as `YYYY-MM-DD`. Local,
+ * because slicing an ISO string would give the UTC date, a day ahead for
+ * evening adds west of UTC.
+ */
+export function dateInDays(days: number): string {
+  const now = new Date();
+  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate() + days);
+  const month = String(target.getMonth() + 1).padStart(2, "0");
+  const day = String(target.getDate()).padStart(2, "0");
+  return `${target.getFullYear()}-${month}-${day}`;
+}
