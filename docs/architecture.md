@@ -190,10 +190,14 @@ The function runs as `SECURITY DEFINER`, because members can't change lot quanti
 
 ## Image generation has a spending cap before it has images
 
-Recipe photos are not live yet. Two pieces exist so that photo generation can't overspend once it ships:
+Recipe photos and ingredient thumbnails are not on any screen yet. The backend serves them from `POST /api/images/recipes/{recipe_id}` and `POST /api/images/foods/{food_id}`, and generation is off until `IMAGE_GENERATION_ENABLED` is true and an OpenAI key is set.
 
-- The `image_assets` table and the `reserve_image_asset` function deduplicate images by kind and cache key. They reserve an upper-bound cost against a global monthly cap before any provider call. A missing or zero cap turns reservations off.
-- `OpenAIImageProvider` in `backend/app/ai/images/openai.py` makes one image request and checks that the result is a PNG no larger than 4096 pixels on a side. It never retries, so one reservation pays for at most one call.
+- Each image is generated at most once. A recipe photo is keyed by a hash of the recipe's title, ingredients and steps, so the feed and saved copies share it. An ingredient thumbnail is keyed by its food profile, or by its normalized name when it has none, so every household's tomato shares one.
+- Before any provider call, `claim_image_asset` reserves an upper-bound cost against a global monthly cap ($10 by default, recipes and ingredients combined) and a per-user monthly cap. The backend then settles the claim with the stored image or releases it. A release refunds the reservation only when the provider returned an error response, which it does not bill.
+- A failed image is attempted again only by a later request, after a cooldown, and only up to a fixed number of possibly billed attempts. Requests never retry the provider themselves.
+- Only recipes from the caller's feed, which the backend writes, can start a generation. Saved recipes, which members write directly, get the matching feed photo or a placeholder.
+- Images are WebP files in the private `generated-images` Storage bucket. Responses carry a signed URL and a stable `image_key`. When there is no image, the response says `pending` or `unavailable` with a reason, so the screen shows its placeholder.
+- `OpenAIImageProvider` in `backend/app/ai/images/openai.py` makes one image request and checks that the result is a PNG no larger than 4096 pixels on a side.
 
 ## Where to go next
 
