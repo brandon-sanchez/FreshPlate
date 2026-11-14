@@ -23,11 +23,8 @@ import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import Toast from "react-native-toast-message";
 import { useTheme } from "@/hooks/useTheme";
-import {
-  daysUntilExpiration,
-  InventoryItem,
-  useInventoryItems,
-} from "@/hooks/useInventoryItems";
+import { InventoryItem, useInventoryItems } from "@/hooks/useInventoryItems";
+import { daysUntilExpiration } from "@/lib/expiry";
 import { useFoodCategories } from "@/hooks/useFoodCategories";
 import { useDeleteItem } from "@/hooks/useDeleteItem";
 import { useCenterToast } from "@/stores/centerToast";
@@ -41,9 +38,13 @@ import FilterSheet, {
   EMPTY_FILTERS,
   InventoryFilters,
 } from "@/components/FilterSheet";
-
-type GroupBy = "Urgency" | "Location" | "Category";
-type Section = { key: string; label: string; tone?: "crit" | "warn"; data: InventoryItem[] };
+import {
+  type FoodRow,
+  type FoodSection,
+  type GroupBy,
+  groupFoodRows,
+  stackLots,
+} from "@/lib/foodRows";
 
 const GROUP_BY_OPTIONS: GroupBy[] = ["Urgency", "Location", "Category"];
 
@@ -119,57 +120,14 @@ export default function InventoryScreen() {
     });
   }, [items, query, filters]);
 
-  const sections: Section[] = useMemo(() => {
-    if (groupBy === "Urgency") {
-      const withDays = filtered.map((i) => ({
-        item: i,
-        days: daysUntilExpiration(i.expiration_date),
-      }));
-      const bucket = (test: (d: number | null) => boolean) =>
-        withDays
-          .filter((x) => test(x.days))
-          .sort((a, b) => (a.days ?? Infinity) - (b.days ?? Infinity))
-          .map((x) => x.item);
-      return [
-        { key: "expired", label: "Expired", tone: "crit", data: bucket((d) => d !== null && d < 0) },
-        {
-          key: "today",
-          label: "Use today or tomorrow",
-          tone: "warn",
-          data: bucket((d) => d !== null && d >= 0 && d <= 1),
-        },
-        { key: "week", label: "This week", data: bucket((d) => d !== null && d >= 2 && d <= 6) },
-        { key: "fresh", label: "Fresh", data: bucket((d) => d === null || d > 6) },
-      ];
-    }
-    if (groupBy === "Location") {
-      const locs: InventoryItem["storage_location"][] = ["fridge", "freezer", "pantry"];
-      return locs.map((loc) => ({
-        key: loc,
-        label: capitalize(loc),
-        data: filtered.filter((i) => i.storage_location === loc),
-      }));
-    }
-    const byCat = new Map<string, InventoryItem[]>();
-    filtered.forEach((i) => {
-      const key = i.category?.id ?? "uncategorized";
-      const arr = byCat.get(key) ?? [];
-      arr.push(i);
-      byCat.set(key, arr);
-    });
-    return Array.from(byCat.entries()).map(([key, data]) => ({
-      key,
-      label: data[0]?.category?.name ?? "Uncategorized",
-      data,
-    }));
-  }, [filtered, groupBy]);
+  const sections = useMemo(() => groupFoodRows(filtered, groupBy), [filtered, groupBy]);
 
   /* Auto-open the collapsible section containing the highlighted row so the
    * pulse animation isn't hidden behind a closed group. */
   useEffect(() => {
     if (!highlightId) return;
     for (const s of sections) {
-      if (s.data.some((it) => it.id === highlightId)) {
+      if (s.data.some((row) => holdsLot(row, highlightId))) {
         if (openGroups[s.key] === false) {
           setOpenGroups((g) => ({ ...g, [s.key]: true }));
         }
@@ -178,15 +136,13 @@ export default function InventoryScreen() {
     }
   }, [highlightId, sections, openGroups]);
 
-  const visibleSections: Section[] = sections
+  const visibleSections: FoodSection[] = sections
     .filter((s) => s.data.length > 0)
     .map((s) => ({ ...s, data: openGroups[s.key] === false ? [] : s.data }));
 
   const activeFilterCount = countActiveFilters(filters);
-  const expiredCount = items.filter((i) => {
-    const d = daysUntilExpiration(i.expiration_date);
-    return d !== null && d < 0;
-  }).length;
+  const allRows = useMemo(() => stackLots(items), [items]);
+  const expiredCount = allRows.filter((r) => r.expiredLots > 0).length;
 
   if (inventory.isPending) {
     return (
@@ -231,14 +187,16 @@ export default function InventoryScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <SectionList
+    // The top inset pads the container rather than the list so sticky section
+    // headers pin below the status bar.
+    <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
+      <SectionList<FoodRow, FoodSection>
         sections={visibleSections}
-        keyExtractor={(item) => item.id}
-        stickySectionHeadersEnabled={false}
+        keyExtractor={(row) => row.key}
+        stickySectionHeadersEnabled
         contentContainerStyle={{
           paddingHorizontal: 16,
-          paddingTop: insets.top + 8,
+          paddingTop: 8,
           paddingBottom: tabBarHeight + 24,
         }}
         ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
@@ -254,7 +212,7 @@ export default function InventoryScreen() {
           <View style={{ paddingTop: 4 }}>
             <TopBar
               title="Inventory"
-              subtitle={`${items.length} item${items.length === 1 ? "" : "s"} · ${expiredCount} expired`}
+              subtitle={`${allRows.length} item${allRows.length === 1 ? "" : "s"} · ${expiredCount} expired`}
               colors={colors}
               fonts={fonts}
               padded={false}
@@ -432,8 +390,7 @@ export default function InventoryScreen() {
             </View>
           </View>
         }
-        renderSectionHeader={({ section }) => {
-          const s = section as unknown as Section;
+        renderSectionHeader={({ section: s }) => {
           const open = openGroups[s.key] !== false;
           const labelColor =
             s.tone === "crit"
@@ -452,6 +409,7 @@ export default function InventoryScreen() {
                 gap: 6,
                 paddingTop: 14,
                 paddingBottom: 8,
+                backgroundColor: colors.bg,
               }}
             >
               <FontAwesome
@@ -482,11 +440,11 @@ export default function InventoryScreen() {
             </Pressable>
           );
         }}
-        renderItem={({ item }) => (
+        renderItem={({ item: row }) => (
           <SwipeableInventoryRow
-            item={item}
-            highlight={item.id === highlightId}
-            onPress={() => router.push(`/item/${item.id}`)}
+            row={row}
+            highlight={highlightId !== null && holdsLot(row, highlightId)}
+            onPress={() => router.push(`/item/${row.lots[0].id}`)}
             onSwipeDelete={handleSwipeDelete}
           />
         )}
@@ -619,8 +577,12 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+function holdsLot(row: FoodRow, lotId: string): boolean {
+  return row.lots.some((lot) => lot.id === lotId);
+}
+
 type SwipeableInventoryRowProps = {
-  item: InventoryItem;
+  row: FoodRow;
   highlight: boolean;
   onPress: () => void;
   onSwipeDelete: (
@@ -642,7 +604,7 @@ function fireHaptic(style: Haptics.ImpactFeedbackStyle) {
 }
 
 function SwipeableInventoryRow({
-  item,
+  row,
   highlight,
   onPress,
   onSwipeDelete,
@@ -657,12 +619,13 @@ function SwipeableInventoryRow({
     if (committedRef.current) return;
     committedRef.current = true;
     fireHaptic(Haptics.ImpactFeedbackStyle.Medium);
-    onSwipeDelete(item, swipeRef.current);
+    if (row.soleLot) onSwipeDelete(row.soleLot, swipeRef.current);
   };
 
   return (
     <ReanimatedSwipeable
       ref={swipeRef}
+      enabled={row.soleLot !== null}
       friction={1}
       rightThreshold={COMMIT_THRESHOLD}
       overshootRight={false}
@@ -679,7 +642,7 @@ function SwipeableInventoryRow({
         />
       )}
     >
-      <InventoryRow item={item} highlight={highlight} onPress={onPress} />
+      <InventoryRow row={row} highlight={highlight} onPress={onPress} />
     </ReanimatedSwipeable>
   );
 }
