@@ -29,6 +29,8 @@ describe("recipe request helpers", () => {
         is_leftover: false,
         notes: "wash first",
         added_by: "user-1",
+        opened_at: null,
+        created_at: "2026-08-01T12:00:00+00:00",
         category: { id: "produce", name: "Produce", icon: "leaf" },
       },
     ];

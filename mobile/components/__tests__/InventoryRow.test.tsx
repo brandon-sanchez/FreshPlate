@@ -20,6 +20,8 @@ function lot(overrides: Partial<InventoryItem>): InventoryItem {
     is_leftover: false,
     notes: null,
     added_by: null,
+    opened_at: null,
+    created_at: "2026-11-01T12:00:00+00:00",
     category: { id: "c1", name: "Produce", icon: "leaf" },
     ...overrides,
   };

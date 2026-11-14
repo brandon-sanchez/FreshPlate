@@ -69,18 +69,31 @@ describe("useUpdateItem", () => {
     expect(mockWrites).toEqual([{ table: "foods", payload: { name: "Kale" }, id: "food-1" }]);
   });
 
-  it("sends a changed quantity to the lot so the database decides", async () => {
-    mockErrors.lots = { message: "permission denied for table lots" };
+  it("saves a batch's date, location and notes to its lot alone", async () => {
     const { result } = renderHook(() => useUpdateItem(), { wrapper });
     result.current.mutate({
       id: "lot-1",
       foodId: "food-1",
-      patch: { quantity: 2 },
+      patch: { expiration_date: null, storage_location: "pantry", notes: "half left" },
     });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockWrites).toEqual([
+      {
+        table: "lots",
+        payload: { expiration_date: null, storage_location: "pantry", notes: "half left" },
+        id: "lot-1",
+      },
+    ]);
+  });
+
+  it("surfaces a failed lot write", async () => {
+    mockErrors.lots = { message: "permission denied for table lots" };
+    const { result } = renderHook(() => useUpdateItem(), { wrapper });
+    result.current.mutate({ id: "lot-1", foodId: "food-1", patch: { notes: "opened" } });
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.error?.message).toBe("permission denied for table lots");
-    expect(mockWrites).toEqual([{ table: "lots", payload: { quantity: 2 }, id: "lot-1" }]);
   });
 
   it("stops before the lot write when another food has the name", async () => {

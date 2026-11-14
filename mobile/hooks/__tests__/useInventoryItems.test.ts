@@ -40,6 +40,8 @@ const spinachLot = {
   storage_location: "fridge",
   notes: null,
   added_by: "u1",
+  opened_at: "2026-05-30T09:15:00+00:00",
+  created_at: "2026-05-28T18:00:00+00:00",
   food: {
     id: "food-1",
     name: "Spinach",
@@ -56,6 +58,8 @@ const soupLot = {
   storage_location: "freezer",
   notes: "Tuesday's batch",
   added_by: null,
+  opened_at: null,
+  created_at: "2026-05-29T20:30:00+00:00",
   food: {
     id: "food-2",
     name: "Chicken soup",
@@ -84,7 +88,7 @@ describe("useInventoryItems", () => {
 
     expect(mockFrom).toHaveBeenCalledWith("lots");
     expect(mockSelect.mock.calls[0][0].replace(/\s+/g, " ").trim()).toBe(
-      "id, quantity, expiration_date, storage_location, notes, added_by, " +
+      "id, quantity, expiration_date, storage_location, notes, added_by, opened_at, created_at, " +
         "food:food_stock!inner(id, name, stock_base, each_label, " +
         "category:food_categories(id, name, icon))",
     );
@@ -96,7 +100,7 @@ describe("useInventoryItems", () => {
     });
   });
 
-  it("maps each lot into one inventory row named and unitized by its food", async () => {
+  it("maps each lot into one inventory row named and unitized by its food, with its opened and added times", async () => {
     mockOrder.mockResolvedValue({ data: [spinachLot, soupLot], error: null });
 
     const { result } = renderHook(() => useInventoryItems(), { wrapper });
@@ -115,6 +119,8 @@ describe("useInventoryItems", () => {
         is_leftover: false,
         notes: null,
         added_by: "u1",
+        opened_at: "2026-05-30T09:15:00+00:00",
+        created_at: "2026-05-28T18:00:00+00:00",
         category: { id: "c1", name: "Produce", icon: "leaf" },
       },
       {
@@ -128,6 +134,8 @@ describe("useInventoryItems", () => {
         is_leftover: true,
         notes: "Tuesday's batch",
         added_by: null,
+        opened_at: null,
+        created_at: "2026-05-29T20:30:00+00:00",
         category: { id: "c2", name: "Leftovers", icon: "inbox" },
       },
     ]);
