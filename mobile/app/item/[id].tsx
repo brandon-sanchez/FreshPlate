@@ -16,8 +16,10 @@ import { useTheme } from "@/hooks/useTheme";
 import SegmentedControl from "@/components/SegmentedControl";
 import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";
+import LotRemainingControl from "@/components/LotRemainingControl";
 import { InventoryItem, useInventoryItems } from "@/hooks/useInventoryItems";
 import { daysUntilExpiration } from "@/lib/expiry";
+import { formatAmount } from "@/lib/amount";
 import { FoodNameTakenError, useUpdateItem } from "@/hooks/useUpdateItem";
 import { useDeleteItem } from "@/hooks/useDeleteItem";
 import { useAuthStore } from "@/stores/auth";
@@ -226,10 +228,12 @@ export default function ItemDetailScreen() {
                 marginTop: 2,
               }}
             >
-              {`${item.category?.name ?? "Uncategorized"} · ${formatQuantity(item.quantity)} ${item.unit}`}
+              {`${item.category?.name ?? "Uncategorized"} · ${formatAmount(item.quantity, item.unit, item.is_estimate)}`}
             </Text>
           </View>
         </View>
+
+        <LotRemainingControl lot={item} />
 
         <SectionLabel text="Name" />
         <TextInput
@@ -407,10 +411,6 @@ function SectionLabel({ text, inline }: { text: string; inline?: boolean }) {
       {text}
     </Text>
   );
-}
-
-function formatQuantity(q: number): string {
-  return Number.isInteger(q) ? String(q) : q.toFixed(1);
 }
 
 function capitalize(s: string): string {
