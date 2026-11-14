@@ -221,3 +221,43 @@ it("offers a retry when the inventory fails to load", async () => {
   expect(await screen.findByText("Something went wrong")).toBeTruthy();
   expect(screen.queryByText("Item not found")).toBeNull();
 });
+
+it("combines the picked batches into the one cooking draws first", async () => {
+  renderScreen();
+
+  fireEvent.press(await screen.findByRole("button", { name: "Combine" }));
+  fireEvent.press(screen.getByLabelText("1000 ml, Fridge, Expires in 2 days"));
+  fireEvent.press(screen.getByLabelText("500 ml, Freezer, Opened, Expires in 6 days, use first"));
+  fireEvent.press(screen.getByRole("button", { name: "Combine 2 batches" }));
+
+  await waitFor(() =>
+    expect(mockRpc).toHaveBeenCalledWith("combine_lots", {
+      p_household_id: "household-1",
+      p_into_lot_id: "milk-opened",
+      p_lot_ids: ["milk-sealed"],
+    }),
+  );
+  expect(mockPush).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Combine" })).toBeTruthy());
+});
+
+it("needs two picked batches to combine, and cancels without changes", async () => {
+  renderScreen();
+
+  fireEvent.press(await screen.findByRole("button", { name: "Combine" }));
+  fireEvent.press(screen.getByLabelText("1000 ml, Fridge, Expires in 2 days"));
+  fireEvent.press(screen.getByRole("button", { name: "Combine 1 batch" }));
+  fireEvent.press(screen.getByRole("button", { name: "Cancel" }));
+
+  expect(mockRpc).not.toHaveBeenCalled();
+  expect(screen.getAllByTestId("swipe-row")).toHaveLength(3);
+});
+
+it("offers no combine for a food with one batch", async () => {
+  mockLots.current = [lotRow("milk-last", 3)];
+  renderScreen();
+
+  await screen.findByText("Milk");
+
+  expect(screen.queryByRole("button", { name: "Combine" })).toBeNull();
+});
