@@ -10,6 +10,7 @@ import BarcodeScanner from "@/components/BarcodeScanner";
 import ItemForm from "@/components/ItemForm";
 import { useTheme } from "@/hooks/useTheme";
 import { useFoodCategories } from "@/hooks/useFoodCategories";
+import { useInventoryItems } from "@/hooks/useInventoryItems";
 import {
   addItemErrorToast,
   addItemSuccessToast,
@@ -71,12 +72,14 @@ type ManualFormProps = {
 function ManualForm({ tabBarHeight }: ManualFormProps) {
   const router = useRouter();
   const { data: categories } = useFoodCategories();
+  const { data: lots } = useInventoryItems();
   const addItem = useAddItem();
   const [resetKey, setResetKey] = useState(0);
 
   return (
     <ItemForm
       categories={categories}
+      existingLots={lots}
       resetKey={resetKey}
       submitLabel="Add to inventory"
       submittingLabel="Adding…"

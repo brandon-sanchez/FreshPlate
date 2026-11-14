@@ -4,18 +4,23 @@ import UrgencyBar from "@/components/UrgencyBar";
 import type { DrawnLot } from "@/lib/foodRows";
 import { formatAmount } from "@/lib/amount";
 
+// Border plus padding, so the content stays put when the border thickens.
+const CARD_INSET = 15;
+
 type BatchCardProps = {
   /** The batch to show, with its expiry and its place in draw order. */
   batch: DrawnLot;
   /** Called when the card is tapped. */
   onPress: () => void;
+  /** Whether the card is picked in a multi-select, such as choosing batches to combine. */
+  selected?: boolean;
 };
 
 /**
  * Renders one batch of a food as a card: amount, location, opened state,
  * expiry with an urgency bar, notes, and "Use first" or "Expired" pills.
  */
-function BatchCard({ batch, onPress }: BatchCardProps) {
+function BatchCard({ batch, onPress, selected = false }: BatchCardProps) {
   const { colors, fonts, card } = useTheme();
   const { lot, days, expired, useFirst } = batch;
   const amount = formatAmount(lot.quantity, lot.unit, lot.is_estimate);
@@ -31,6 +36,7 @@ function BatchCard({ batch, onPress }: BatchCardProps) {
           ? colors.warn
           : colors.textMuted;
 
+  const borderWidth = selected ? 2 : 1;
   const label = [amount, ...meta, expiry];
   if (useFirst) label.push("use first");
 
@@ -39,12 +45,13 @@ function BatchCard({ batch, onPress }: BatchCardProps) {
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={label.join(", ")}
+      accessibilityState={{ selected }}
       style={({ pressed }) => ({
         borderRadius: 14,
-        borderWidth: 1,
-        borderColor: colors.border,
+        borderWidth,
+        borderColor: selected ? colors.accent : colors.border,
+        padding: CARD_INSET - borderWidth,
         backgroundColor: colors.surface,
-        padding: 14,
         gap: 6,
         opacity: pressed ? 0.85 : 1,
         shadowColor: card.shadowColor,
