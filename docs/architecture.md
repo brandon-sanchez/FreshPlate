@@ -38,7 +38,7 @@ flowchart LR
 	API --> OFF
 ```
 
-This split keeps the backend small. Simple reads and writes don't pass through it, so the API holds no inventory logic. The cost is two write paths into the same tables. The cook flow is the one place where that matters, and it goes through a single database function for that reason.
+This split keeps the backend small. Simple reads and writes don't pass through it. The API reads a household's foods only to generate recipes, and it never writes inventory except through the cook flow. The cost is two write paths into the same tables. The cook flow is the one place where that matters, and it goes through a single database function for that reason.
 
 The backend has these routers, registered in `backend/app/main.py`:
 
@@ -93,10 +93,10 @@ flowchart LR
 
 Each node has one job:
 
-1. `analyze_inventory` drops expired, used-up, and zero-quantity items. It puts items that expire within five days first and flags them, so the prompt can favor food that is about to go bad. It uses no model.
+1. `analyze_inventory` gets one line per food, read by the API from the `food_stock` and `food_facts` views as the caller. Each line has the food's unexpired total, its batch count, its next expiry date, and its unit facts. Expired batches never count toward the total. The node drops foods with nothing left, and it lists the units the unit converter can turn into a number for each food, such as `head, clove, g` for garlic. It puts foods that expire within five days first and flags them, so the prompt can favor food that is about to go bad. It uses no model.
 2. `retrieve_recipes` turns the item names into one query, embeds it with `gemini-embedding-001` (768 dimensions), and calls the `match_recipe_embeddings` function. That function searches an HNSW cosine index over the Food.com recipes in `recipe_embeddings`.
-3. `generate_recipes` sends the usable items and up to five retrieved recipes to `gemini-3.6-flash` with the `generate_recipes_v4` prompt. Gemini returns JSON that must match a Pydantic schema. Each ingredient names the inventory item it uses and how much.
-4. `check_quality` runs in two stages. Code checks first. Every ingredient must map to a real inventory item with the same name and unit, and it can't use more than the household has. Recipes that pass then go to a Gemini judge (`assess_meals_v2`). The judge answers a short checklist for each recipe, and code turns the first failed answer into `insufficient`, `incoherent`, or `unsupported_ingredient`. Only recipes that pass every answer reach the user.
+3. `generate_recipes` sends the usable foods and up to five retrieved recipes to `gemini-3.6-flash` with the `generate_recipes_v5` prompt. Gemini returns JSON that must match a schema built for this kitchen. Each ingredient names one listed food, and its unit must be one of that food's listed units, so every amount converts when the user cooks.
+4. `check_quality` runs in two stages. Code checks first. Every ingredient must map to a listed food. The converter turns each amount into the food's stock unit, and a recipe fails only when the exact conversions for a food add up to more than the household has. Estimated and unconvertible amounts pass, because the cook flow confirms them. Recipes that pass then go to a Gemini judge (`assess_meals_v2`). The judge answers a short checklist for each recipe, and code turns the first failed answer into `insufficient`, `incoherent`, or `unsupported_ingredient`. Only recipes that pass every answer reach the user.
 
 The code check runs before the judge because it is free and exact. A recipe that asks for three eggs when the household has two is wrong, and no model call is needed to say so. The judge handles what code can't decide, such as whether "rice and ketchup" is a meal.
 
@@ -128,7 +128,8 @@ sequenceDiagram
 	participant DB as Postgres
 	participant G as Pipeline
 
-	App->>API: POST /api/recipes/sessions (inventory, answers)
+	App->>API: POST /api/recipes/sessions (household_id, answers)
+	API->>DB: Read food_stock and food_facts as the user
 	API->>G: Full pipeline, 5 recipes, retrieve 30 docs
 	G-->>API: Valid recipes
 	API->>DB: create_recipe_feed_session

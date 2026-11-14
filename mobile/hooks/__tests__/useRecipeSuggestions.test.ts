@@ -24,16 +24,7 @@ function wrapper({ children }: { children: React.ReactNode }) {
 }
 
 const request: RecipeSuggestionRequest = {
-  inventory: [
-    {
-      id: "spinach",
-      name: "Baby Spinach",
-      quantity: 1,
-      unit: "bag",
-      expiration_date: "2026-08-06",
-      category: "Produce",
-    },
-  ],
+  household_id: "household-1",
   preferences: {
     meal: "Dinner",
     time: "<30 min",

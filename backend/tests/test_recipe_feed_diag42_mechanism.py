@@ -15,18 +15,20 @@ from fastapi.testclient import TestClient
 
 from app.ai.llm.errors import ProviderError
 from app.api.recipes import (
+    get_food_line_source,
     get_recipe_feed_store,
     get_recipe_provider,
     get_recipe_retriever,
 )
 from app.core.config import settings
 from app.main import create_app
+from tests.conftest import HOUSEHOLD_ID, FakeFoodLineSource
 
 
 def _inventory() -> list[dict[str, Any]]:
     return [
-        {"id": "itm-01", "name": "Chicken breast", "quantity": 2, "unit": "lb"},
-        {"id": "itm-02", "name": "Rice", "quantity": 1, "unit": "lb"},
+        {"id": "itm-01", "name": "Chicken breast", "available": 900, "stock_base": "g"},
+        {"id": "itm-02", "name": "Rice", "available": 450, "stock_base": "g"},
     ]
 
 
@@ -134,6 +136,9 @@ def _client(provider: Any) -> TestClient:
     app.dependency_overrides[get_recipe_provider] = lambda: provider
     app.dependency_overrides[get_recipe_retriever] = StubRetriever
     app.dependency_overrides[get_recipe_feed_store] = UnusedStore
+    app.dependency_overrides[get_food_line_source] = lambda: FakeFoodLineSource(
+        _inventory()
+    )
     return TestClient(app)
 
 
@@ -141,7 +146,7 @@ def _post_session(client: TestClient, signing_key) -> Any:
     return client.post(
         "/api/recipes/sessions",
         headers={"Authorization": f"Bearer {signing_key.sign()}"},
-        json={"inventory": _inventory(), "preferences": {}},
+        json={"household_id": HOUSEHOLD_ID, "preferences": {}},
     )
 
 
@@ -183,6 +188,9 @@ def test_zero_valid_generation_late_in_budget_skips_the_quality_retry(
     app.dependency_overrides[get_recipe_provider] = lambda: provider
     app.dependency_overrides[get_recipe_retriever] = StubRetriever
     app.dependency_overrides[get_recipe_feed_store] = InMemoryRecipeFeedStore
+    app.dependency_overrides[get_food_line_source] = lambda: FakeFoodLineSource(
+        _inventory()
+    )
     with TestClient(app) as client:
         response = _post_session(client, signing_key)
 
@@ -212,7 +220,6 @@ async def test_refill_deadline_observes_provider_failure_during_cancellation(
         StubRetriever,
         _auth_headers,
         _install_dependencies,
-        _inventory,
         _recipe,
     )
 
@@ -279,7 +286,7 @@ async def test_refill_deadline_observes_provider_failure_during_cancellation(
             first = await client.post(
                 "/api/recipes/sessions",
                 headers=_auth_headers(signing_key),
-                json={"inventory": _inventory()},
+                json={"household_id": HOUSEHOLD_ID},
             )
             assert first.status_code == 200
             app.dependency_overrides[get_recipe_provider] = lambda: provider

@@ -23,16 +23,7 @@ jest.mock("@/lib/recipe-feed-api", () => ({
 import { useRecipeFeed } from "@/hooks/useRecipeFeed";
 
 const request: RecipeFeedSessionRequest = {
-  inventory: [
-    {
-      id: "spinach",
-      name: "Baby Spinach",
-      quantity: 1,
-      unit: "bag",
-      expiration_date: "2026-08-06",
-      category: "Produce",
-    },
-  ],
+  household_id: "household-1",
   preferences: { meal: "Dinner" },
 };
 
