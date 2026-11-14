@@ -61,9 +61,9 @@ type ItemFormProps = {
   header?: ReactNode;
   contentContainerStyle?: object;
   /**
-   * The household's live batches. Batches of the food whose name is typed are
-   * offered under "Add to" as containers the food can go into, such as a jug
-   * or an egg tray. Omit to offer only a new batch.
+   * The household's live batches. Opened batches of the food whose name is
+   * typed are offered under "Add to an open container" as containers the food
+   * can go into, such as a jug or an egg tray. Omit to offer only a new batch.
    */
   existingLots?: readonly InventoryItem[];
 };
@@ -151,7 +151,10 @@ function ItemForm({
   const storageLabel = storage.charAt(0).toUpperCase() + storage.slice(1);
 
   const trimmedName = name.trim();
-  const containers = batchesOfFoodNamed(name, existingLots ?? []);
+  // Sealed batches stay separate; only an opened one is a container in use.
+  const containers = batchesOfFoodNamed(name, existingLots ?? []).filter(
+    (lot) => lot.opened_at !== null,
+  );
   const container = containers.find((lot) => lot.id === pickedLotId) ?? null;
   const parsedQuantity = parseFloat(quantity);
   const errors = {

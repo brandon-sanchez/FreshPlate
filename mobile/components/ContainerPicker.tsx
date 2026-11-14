@@ -4,7 +4,7 @@ import type { InventoryItem } from "@/hooks/useInventoryItems";
 import { formatAmount } from "@/lib/amount";
 
 type ContainerPickerProps = {
-  /** The live batches of the food being added. Renders nothing when empty. */
+  /** The opened batches of the food being added. Renders nothing when empty. */
   containers: readonly InventoryItem[];
   /** The picked batch, or `null` for a new batch. */
   selected: InventoryItem | null;
@@ -13,18 +13,19 @@ type ContainerPickerProps = {
 };
 
 /**
- * Renders the "Add to" choice on the add form: a new batch, or one of the
- * food's live batches the food was put into, such as a jug or an egg tray.
+ * Renders the "Add to an open container" choice on the add form: a new batch,
+ * or one of the food's opened batches the food was put into, such as a jug or
+ * an egg tray.
  */
 function ContainerPicker({ containers, selected, onSelect }: ContainerPickerProps) {
   if (containers.length === 0) return null;
   return (
     <Field
-      label="Add to"
+      label="Add to an open container"
       hint={
         selected === null
           ? undefined
-          : "Goes into this batch, which stays where it is, counts as opened and keeps the earlier date."
+          : "Goes into this container, which stays where it is and keeps the earlier date."
       }
     >
       <ChoiceChips
@@ -40,12 +41,8 @@ function ContainerPicker({ containers, selected, onSelect }: ContainerPickerProp
 }
 
 function containerLabel(lot: InventoryItem): string {
-  const parts = [
-    formatAmount(lot.quantity, lot.unit, lot.is_estimate),
-    lot.storage_location.charAt(0).toUpperCase() + lot.storage_location.slice(1),
-  ];
-  if (lot.opened_at !== null) parts.push("Opened");
-  return parts.join(" · ");
+  const location = lot.storage_location.charAt(0).toUpperCase() + lot.storage_location.slice(1);
+  return `${formatAmount(lot.quantity, lot.unit, lot.is_estimate)} · ${location}`;
 }
 
 export default ContainerPicker;

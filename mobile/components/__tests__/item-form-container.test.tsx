@@ -57,24 +57,24 @@ function renderForm(existingLots?: InventoryItem[]) {
 
 beforeEach(() => onSubmit.mockReset());
 
-it("offers the typed food's batches as containers to add into", () => {
+it("offers the typed food's opened batches as containers to add into", () => {
   renderForm([
     lot("lot-jug"),
     lot("lot-carton", { quantity: 1000, opened_at: null, storage_location: "pantry" }),
     lot("lot-milk", { food_id: "food-milk", name: "Milk" }),
   ]);
 
-  expect(screen.getByText("Add to")).toBeTruthy();
+  expect(screen.getByText("Add to an open container")).toBeTruthy();
   expect(screen.getByRole("button", { name: "New batch" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "500 ml · Fridge · Opened" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "1000 ml · Pantry" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "500 ml · Fridge" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "1000 ml · Pantry" })).toBeNull();
   expect(screen.queryByText(/Milk/)).toBeNull();
 });
 
 it("submits into the picked container in its unit, without needing a category", () => {
   renderForm([lot("lot-jug", { storage_location: "freezer" })]);
 
-  fireEvent.press(screen.getByRole("button", { name: "500 ml · Freezer · Opened" }));
+  fireEvent.press(screen.getByRole("button", { name: "500 ml · Freezer" }));
   fireEvent.press(screen.getByText("Add to inventory"));
 
   expect(onSubmit).toHaveBeenCalledWith(
@@ -92,7 +92,7 @@ it("dates the food going in by the container's location", () => {
   renderForm([lot("lot-jug", { storage_location: "freezer" })]);
   fireEvent.press(screen.getByText("Dairy"));
 
-  fireEvent.press(screen.getByRole("button", { name: "500 ml · Freezer · Opened" }));
+  fireEvent.press(screen.getByRole("button", { name: "500 ml · Freezer" }));
   fireEvent.press(screen.getByText("Add to inventory"));
 
   expect(onSubmit.mock.calls[0][0].expiration_date).toBe(dateInDays(90));
@@ -109,18 +109,24 @@ it("adds a new batch by default", () => {
 
 it("drops a picked container when the name changes to another food", () => {
   renderForm([lot("lot-jug")]);
-  fireEvent.press(screen.getByRole("button", { name: "500 ml · Fridge · Opened" }));
+  fireEvent.press(screen.getByRole("button", { name: "500 ml · Fridge" }));
 
   fireEvent.changeText(screen.getByPlaceholderText("What are you adding?"), "Milk");
   fireEvent.press(screen.getByText("Dairy"));
   fireEvent.press(screen.getByText("Add to inventory"));
 
-  expect(screen.queryByText("Add to")).toBeNull();
+  expect(screen.queryByText("Add to an open container")).toBeNull();
   expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ into_lot_id: null }));
 });
 
 it("offers no containers when the screen passes no batches", () => {
   renderForm();
 
-  expect(screen.queryByText("Add to")).toBeNull();
+  expect(screen.queryByText("Add to an open container")).toBeNull();
+});
+
+it("offers no containers when every batch of the food is sealed", () => {
+  renderForm([lot("lot-carton", { opened_at: null })]);
+
+  expect(screen.queryByText("Add to an open container")).toBeNull();
 });
