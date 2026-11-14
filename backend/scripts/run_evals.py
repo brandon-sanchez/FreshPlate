@@ -16,24 +16,23 @@ from app.ai.eval.judge import JudgeResult, judge_recipe
 from app.ai.eval.scorers import completeness_percent, ingredient_coverage_percent
 from app.ai.llm.providers import FakeProvider, GeminiProvider
 from app.ai.rag.vector_store import RetrievedRecipe
+from app.inventory.food_facts import FoodLine
 
 DATASET = Path(__file__).parents[1] / "app/ai/eval/dataset.json"
 
 
 def _fixture_recipe(case: dict[str, Any]) -> Recipe:
-    """Build a recipe whose tracked ingredient maps to the case inventory."""
-    inventory = case["inventory"]
-    item = inventory[0]
+    item = FoodLine.model_validate(case["inventory"][0])
     return Recipe(
         title=case["name"].title(),
         cook_time_minutes=20,
         servings=2,
         ingredients=[
             RecipeIngredient(
-                name=item["name"],
-                inventory_item_id=item["id"],
+                name=item.name,
+                inventory_item_id=item.id,
                 use_amount=1,
-                unit=item["unit"],
+                unit=item.stock_unit,
             ),
         ],
         steps=["Prepare the ingredients.", "Cook until tender.", "Serve warm."],

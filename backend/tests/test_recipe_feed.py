@@ -14,13 +14,14 @@ from fastapi.testclient import TestClient
 from app.ai.llm.providers import FakeProvider
 from app.ai.rag.vector_store import RetrievedRecipe
 from app.api.recipes import (
+    get_food_line_source,
     get_recipe_feed_store,
     get_recipe_provider,
     get_recipe_retriever,
 )
 from app.main import create_app
 from app.services.recipe_feed_store import RecipeFeedSession, RecipeFeedStoreError
-from tests.conftest import SigningKey
+from tests.conftest import HOUSEHOLD_ID, FakeFoodLineSource, SigningKey
 
 
 def _auth_headers(signing_key: SigningKey) -> dict[str, str]:
@@ -32,16 +33,18 @@ def _inventory() -> list[dict[str, Any]]:
         {
             "id": "spinach",
             "name": "Baby Spinach",
-            "quantity": 1,
-            "unit": "bag",
-            "expiration_date": (date.today() + timedelta(days=2)).isoformat(),
+            "available": 1,
+            "stock_base": "each",
+            "each_label": "bag",
+            "next_expiry": (date.today() + timedelta(days=2)).isoformat(),
         },
         {
             "id": "tomatoes",
             "name": "Tomatoes",
-            "quantity": 3,
-            "unit": "item",
-            "expiration_date": (date.today() + timedelta(days=30)).isoformat(),
+            "available": 3,
+            "stock_base": "each",
+            "each_label": "each",
+            "next_expiry": (date.today() + timedelta(days=30)).isoformat(),
         },
     ]
 
@@ -210,7 +213,10 @@ def _install_dependencies(
     provider: Any,
     retriever: Any,
     store: InMemoryRecipeFeedStore,
+    inventory: list[dict[str, Any]] | None = None,
 ) -> None:
+    foods = FakeFoodLineSource(_inventory() if inventory is None else inventory)
+    app.dependency_overrides[get_food_line_source] = lambda: foods
     app.dependency_overrides[get_recipe_provider] = lambda: provider
     app.dependency_overrides[get_recipe_retriever] = lambda: retriever
     app.dependency_overrides[get_recipe_feed_store] = lambda: store
@@ -239,7 +245,7 @@ def test_initial_feed_page_uses_a_five_card_head_batch(
         response = client.post(
             "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory(), "preferences": {}},
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
         )
 
     assert response.status_code == 200
@@ -285,7 +291,7 @@ def test_initial_feed_keeps_partial_results_without_a_quality_retry(
         response = client.post(
             "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory(), "preferences": {}},
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
         )
 
     assert response.status_code == 200
@@ -321,7 +327,7 @@ def test_initial_feed_retries_when_no_recipe_passes_quality(
         response = client.post(
             "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory(), "preferences": {}},
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
         )
 
     assert response.status_code == 200
@@ -359,7 +365,7 @@ def test_refill_returns_partial_results_without_a_second_quality_pass(
         first = client.post(
             "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory(), "preferences": {}},
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
         )
         session_id = first.json()["data"]["session_id"]
         refill = client.post(
@@ -397,7 +403,7 @@ def test_empty_refill_ends_the_feed_with_honest_exhaustion(
         first = client.post(
             "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory(), "preferences": {}},
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
         )
         session_id = first.json()["data"]["session_id"]
         empty_refill = client.post(
@@ -449,7 +455,7 @@ def test_session_with_zero_valid_recipes_returns_explicit_empty_state(
         response = client.post(
             "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory(), "preferences": {}},
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
         )
 
     assert response.status_code == 200
@@ -477,7 +483,7 @@ def test_honest_empty_session_reaches_the_empty_state_without_a_retry(
         response = client.post(
             "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory(), "preferences": {}},
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
         )
 
     assert response.status_code == 200
@@ -492,21 +498,25 @@ def test_session_retrieval_query_leads_with_expiring_items_then_proteins(
     patch_jwks([signing_key])
     retriever = StubRetriever()
     app = create_app()
-    _install_dependencies(
-        app, FakeProvider([{"recipes": []}]), retriever, InMemoryRecipeFeedStore()
-    )
     inventory = [
         {**item, "category": "Produce"} for item in _inventory()
     ] + [
-        {"id": "salmon", "name": "Salmon", "quantity": 400, "unit": "g",
+        {"id": "salmon", "name": "Salmon", "available": 400, "stock_base": "g",
          "category": "Meat & Seafood"},
     ]
+    _install_dependencies(
+        app,
+        FakeProvider([{"recipes": []}]),
+        retriever,
+        InMemoryRecipeFeedStore(),
+        inventory,
+    )
 
     with TestClient(app) as client:
         response = client.post(
             "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
-            json={"inventory": inventory, "preferences": {}},
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
         )
 
     assert response.status_code == 200
@@ -541,7 +551,7 @@ def test_feed_stops_generating_at_the_six_run_session_cap(
         first = client.post(
             "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory(), "preferences": {}},
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
         )
         session_id = first.json()["data"]["session_id"]
         cursor = first.json()["data"]["next_cursor"]
@@ -583,7 +593,7 @@ def test_feed_pages_from_a_server_owned_pool_before_refilling(
         first = client.post(
             "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory(), "preferences": {"meal": "dinner"}},
+            json={"household_id": HOUSEHOLD_ID, "preferences": {"meal": "dinner"}},
         )
         session_id = first.json()["data"]["session_id"]
         second = client.post(
@@ -697,7 +707,7 @@ def test_refill_runs_never_reuse_grounding_docs_from_earlier_runs(
         first = client.post(
             "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory(), "preferences": {}},
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
         )
         session_id = first.json()["data"]["session_id"]
         client.post(
@@ -729,7 +739,7 @@ def test_feed_page_does_not_cross_user_session_boundaries(
         first = client.post(
             "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory()},
+            json={"household_id": HOUSEHOLD_ID},
         )
         assert first.status_code == 200
         session_id = first.json()["data"]["session_id"]
@@ -760,13 +770,16 @@ def test_feed_keeps_items_without_a_searchable_name(signing_key, patch_jwks) -> 
     retriever = StubRetriever()
     store = InMemoryRecipeFeedStore()
     app = create_app()
-    _install_dependencies(app, provider, retriever, store)
-    inventory = [*_inventory(), {"id": "emoji", "name": "🥦!!!", "quantity": 1}]
+    inventory = [
+        *_inventory(),
+        {"id": "emoji", "name": "🥦!!!", "available": 1, "stock_base": "g"},
+    ]
+    _install_dependencies(app, provider, retriever, store, inventory)
     with TestClient(app) as client:
         response = client.post(
             "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
-            json={"inventory": inventory},
+            json={"household_id": HOUSEHOLD_ID},
         )
     assert response.status_code == 200
     assert retriever.calls == ["baby spinach tomatoes"]
@@ -789,7 +802,7 @@ def test_early_exhaustion_is_persisted(signing_key, patch_jwks) -> None:
         first = client.post(
             "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory()},
+            json={"household_id": HOUSEHOLD_ID},
         )
         session_id = UUID(first.json()["data"]["session_id"])
         store.sessions[session_id] = store.sessions[session_id].model_copy(
@@ -838,7 +851,7 @@ async def test_concurrent_refills_share_the_last_generation_run(
         first = await client.post(
             "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory()},
+            json={"household_id": HOUSEHOLD_ID},
         )
         session_id = UUID(first.json()["data"]["session_id"])
         store.sessions[session_id] = store.sessions[session_id].model_copy(
@@ -885,7 +898,7 @@ def test_failed_refill_can_retry_without_refunding_its_run(signing_key, patch_jw
         first = client.post(
             "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory()},
+            json={"household_id": HOUSEHOLD_ID},
         )
         session_id = UUID(first.json()["data"]["session_id"])
         failure = client.post(

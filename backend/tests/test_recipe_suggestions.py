@@ -17,9 +17,14 @@ from app.ai.eval.scorers import ingredient_coverage_percent
 from app.ai.llm.errors import ProviderError
 from app.ai.llm.providers import FakeProvider
 from app.ai.rag.vector_store import RetrievedRecipe
-from app.api.recipes import get_recipe_provider, get_recipe_retriever
+from app.api.recipes import (
+    get_food_line_source,
+    get_recipe_provider,
+    get_recipe_retriever,
+)
 from app.main import create_app
-from tests.conftest import SigningKey
+from app.services.food_lines import FoodLinesError
+from tests.conftest import HOUSEHOLD_ID, FakeFoodLineSource, SigningKey
 
 
 def _auth_headers(signing_key: SigningKey) -> dict[str, str]:
@@ -36,16 +41,18 @@ def _inventory(*, expiring: bool = True) -> list[dict[str, Any]]:
         {
             "id": "spinach",
             "name": "Baby Spinach",
-            "quantity": 1,
-            "unit": "bag",
-            "expiration_date": expiration_date.isoformat(),
+            "available": 1,
+            "stock_base": "each",
+            "each_label": "bag",
+            "next_expiry": expiration_date.isoformat(),
         },
         {
             "id": "tomatoes",
             "name": "Tomatoes",
-            "quantity": 3,
-            "unit": "item",
-            "expiration_date": (date.today() + timedelta(days=30)).isoformat(),
+            "available": 3,
+            "stock_base": "each",
+            "each_label": "each",
+            "next_expiry": (date.today() + timedelta(days=30)).isoformat(),
         },
     ]
 
@@ -102,7 +109,11 @@ def _install_graph_dependencies(
     app: FastAPI,
     provider: Any,
     retriever: Any | None = None,
+    *,
+    foods: FakeFoodLineSource | None = None,
 ) -> None:
+    source = foods or FakeFoodLineSource(_inventory())
+    app.dependency_overrides[get_food_line_source] = lambda: source
     app.dependency_overrides[get_recipe_provider] = lambda: provider
     app.dependency_overrides[get_recipe_retriever] = (
         lambda: retriever or StubRetriever()
@@ -137,7 +148,7 @@ def test_authenticated_suggestion_returns_identity_match_and_expiry_badge(
             "/api/recipes/suggestions",
             headers=_auth_headers(signing_key),
             json={
-                "inventory": _inventory(),
+                "household_id": HOUSEHOLD_ID,
                 "preferences": {"meal": "dinner"},
                 "exclude_titles": [],
                 "batch_ceiling": 5,
@@ -160,6 +171,7 @@ def test_same_title_regeneration_gets_a_new_recipe_id(
     patch_jwks,
 ) -> None:
     patch_jwks([signing_key])
+    _install_graph_dependencies(recipe_app, None)
     recipe_app.dependency_overrides[get_recipe_provider] = lambda: FakeProvider(
         [
             {"recipes": [_recipe()]},
@@ -168,18 +180,17 @@ def test_same_title_regeneration_gets_a_new_recipe_id(
             },
         ]
     )
-    recipe_app.dependency_overrides[get_recipe_retriever] = lambda: StubRetriever()
 
     with TestClient(recipe_app) as client:
         first = client.post(
             "/api/recipes/suggestions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory()},
+            json={"household_id": HOUSEHOLD_ID},
         )
         second = client.post(
             "/api/recipes/suggestions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory()},
+            json={"household_id": HOUSEHOLD_ID},
         )
 
     assert first.status_code == 200
@@ -229,14 +240,16 @@ def test_suggestion_honors_exclusions_and_batch_ceiling(
             ]},
         ]
     )
-    _install_graph_dependencies(recipe_app, provider)
+    _install_graph_dependencies(
+        recipe_app, provider, foods=FakeFoodLineSource(_inventory(expiring=False))
+    )
 
     with TestClient(recipe_app) as client:
         response = client.post(
             "/api/recipes/suggestions",
             headers=_auth_headers(signing_key),
             json={
-                "inventory": _inventory(expiring=False),
+                "household_id": HOUSEHOLD_ID,
                 "exclude_titles": [" excluded   recipe "],
                 "batch_ceiling": 2,
             },
@@ -258,7 +271,7 @@ def test_suggestion_rejects_invalid_request_with_422(
         response = client.post(
             "/api/recipes/suggestions",
             headers=_auth_headers(signing_key),
-            json={"inventory": [], "batch_ceiling": -1},
+            json={"household_id": HOUSEHOLD_ID, "batch_ceiling": -1},
         )
 
     assert response.status_code == 422
@@ -275,7 +288,7 @@ def test_suggestion_rejects_a_batch_ceiling_above_the_server_limit(
         response = client.post(
             "/api/recipes/suggestions",
             headers=_auth_headers(signing_key),
-            json={"inventory": [], "batch_ceiling": 11},
+            json={"household_id": HOUSEHOLD_ID, "batch_ceiling": 11},
         )
 
     assert response.status_code == 422
@@ -285,7 +298,7 @@ def test_suggestion_requires_authentication(recipe_app: FastAPI) -> None:
     with TestClient(recipe_app) as client:
         response = client.post(
             "/api/recipes/suggestions",
-            json={"inventory": []},
+            json={"household_id": HOUSEHOLD_ID},
         )
 
     assert response.status_code == 401
@@ -307,7 +320,7 @@ def test_provider_failure_returns_ai_unavailable(
         response = client.post(
             "/api/recipes/suggestions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory()},
+            json={"household_id": HOUSEHOLD_ID},
         )
 
     assert response.status_code == 503
@@ -354,7 +367,7 @@ def test_deadline_exhaustion_returns_ai_unavailable(
         response = client.post(
             "/api/recipes/suggestions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory()},
+            json={"household_id": HOUSEHOLD_ID},
         )
 
     assert response.status_code == 503
@@ -379,7 +392,72 @@ def test_deadline_starts_when_a_delayed_request_enters_the_server(
         response = client.post(
             "/api/recipes/suggestions",
             headers=_auth_headers(signing_key),
-            json={"inventory": _inventory()},
+            json={"household_id": HOUSEHOLD_ID},
         )
 
     assert response.status_code == 200
+
+
+def test_suggestion_reads_the_requested_households_foods(
+    recipe_app: FastAPI,
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    patch_jwks([signing_key])
+    foods = FakeFoodLineSource(_inventory())
+    _install_graph_dependencies(
+        recipe_app,
+        FakeProvider([{"recipes": [_recipe()]}, {"checks": [_eligible()]}]),
+        foods=foods,
+    )
+
+    with TestClient(recipe_app) as client:
+        response = client.post(
+            "/api/recipes/suggestions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID},
+        )
+
+    assert response.status_code == 200
+    assert foods.household_ids == [UUID(HOUSEHOLD_ID)]
+
+
+def test_suggestion_requires_a_household(
+    recipe_app: FastAPI,
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    patch_jwks([signing_key])
+
+    with TestClient(recipe_app) as client:
+        response = client.post(
+            "/api/recipes/suggestions",
+            headers=_auth_headers(signing_key),
+            json={"inventory": _inventory()},
+        )
+
+    assert response.status_code == 422
+
+
+def test_unreadable_foods_return_ai_unavailable(
+    recipe_app: FastAPI,
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    class FailingFoods:
+        async def list_food_lines(self, household_id: Any) -> list[Any]:
+            raise FoodLinesError("Reading food_stock failed")
+
+    patch_jwks([signing_key])
+    _install_graph_dependencies(recipe_app, FakeProvider([]))
+    recipe_app.dependency_overrides[get_food_line_source] = FailingFoods
+
+    with TestClient(recipe_app) as client:
+        response = client.post(
+            "/api/recipes/suggestions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID},
+        )
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "AI_UNAVAILABLE"

@@ -39,8 +39,9 @@ class MealCheck(BaseModel):
         "meal? Compare the main component and total food to the stated servings."
     )
     unlisted_foods: list[str] = Field(
-        description="Foods named in the title or steps that are not in the kitchen "
-        "items. Water never counts."
+        description="Foods named in the title, steps or ingredients that are not in "
+        "the kitchen items. An ingredient is listed only when it is the same food "
+        "as the kitchen item whose recipe_names include it. Water never counts."
     )
     is_full_meal: bool = Field(
         description="True if this is a dish a person would serve as their meal. "
@@ -133,20 +134,28 @@ async def assess_meals(
 def _kitchen_items(
     recipe: Recipe, inventory_by_id: Mapping[str, Mapping[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Return the inventory items this recipe uses, in the user's own units.
+    """Return the inventory items this recipe uses, in their stock units.
 
     The judge only needs the items a recipe draws on, so its prompt stays the
-    same size whether the kitchen holds ten items or five hundred.
+    same size whether the kitchen holds ten items or five hundred. Each item
+    lists the recipe's names for the ingredients mapped to it, because the
+    generation schema makes every ingredient pick a food, and the judge is
+    what catches "chicken thighs" mapped to the olive oil.
     """
     items: dict[str, dict[str, Any]] = {}
     for ingredient in recipe.ingredients:
         if ingredient.inventory_item_id in inventory_by_id:
             item = inventory_by_id[ingredient.inventory_item_id]
-            items[item["id"]] = {
-                "name": item["name"],
-                "quantity": item["quantity"],
-                "unit": item["unit"],
-            }
+            entry = items.setdefault(
+                item["id"],
+                {
+                    "name": item["name"],
+                    "quantity": item["quantity"],
+                    "unit": item["unit"],
+                    "recipe_names": [],
+                },
+            )
+            entry["recipe_names"].append(ingredient.name)
     return list(items.values())
 
 
