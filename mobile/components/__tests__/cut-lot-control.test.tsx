@@ -15,6 +15,7 @@ jest.mock("@/stores/auth", () => ({
     selector({ householdId: "household-1" }),
 }));
 jest.mock("react-native-toast-message", () => ({ __esModule: true, default: { show: jest.fn() } }));
+jest.mock("@expo/vector-icons/Feather", () => () => null);
 
 import CutLotControl from "@/components/CutLotControl";
 
