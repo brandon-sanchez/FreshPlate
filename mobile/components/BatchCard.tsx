@@ -1,21 +1,31 @@
 import { Pressable, Text, View } from "react-native";
+import Feather from "@expo/vector-icons/Feather";
 import { useTheme } from "@/hooks/useTheme";
 import UrgencyBar from "@/components/UrgencyBar";
 import type { DrawnLot } from "@/lib/foodRows";
 import { formatAmount } from "@/lib/amount";
+
+// Border plus padding, so the content stays put when the border thickens.
+const CARD_INSET = 15;
 
 type BatchCardProps = {
   /** The batch to show, with its expiry and its place in draw order. */
   batch: DrawnLot;
   /** Called when the card is tapped. */
   onPress: () => void;
+  /**
+   * Whether the card is picked in a multi-select, such as choosing batches to
+   * combine. When set, the card shows a checkbox and reads as one. Omit
+   * outside a multi-select.
+   */
+  selected?: boolean;
 };
 
 /**
  * Renders one batch of a food as a card: amount, location, opened state,
  * expiry with an urgency bar, notes, and "Use first" or "Expired" pills.
  */
-function BatchCard({ batch, onPress }: BatchCardProps) {
+function BatchCard({ batch, onPress, selected }: BatchCardProps) {
   const { colors, fonts, card } = useTheme();
   const { lot, days, expired, useFirst } = batch;
   const amount = formatAmount(lot.quantity, lot.unit, lot.is_estimate);
@@ -31,20 +41,23 @@ function BatchCard({ batch, onPress }: BatchCardProps) {
           ? colors.warn
           : colors.textMuted;
 
+  const selectable = selected !== undefined;
+  const borderWidth = selected ? 2 : 1;
   const label = [amount, ...meta, expiry];
   if (useFirst) label.push("use first");
 
   return (
     <Pressable
       onPress={onPress}
-      accessibilityRole="button"
+      accessibilityRole={selectable ? "checkbox" : "button"}
       accessibilityLabel={label.join(", ")}
+      accessibilityState={selectable ? { checked: selected } : undefined}
       style={({ pressed }) => ({
         borderRadius: 14,
-        borderWidth: 1,
-        borderColor: colors.border,
+        borderWidth,
+        borderColor: selected ? colors.accent : colors.border,
+        padding: CARD_INSET - borderWidth,
         backgroundColor: colors.surface,
-        padding: 14,
         gap: 6,
         opacity: pressed ? 0.85 : 1,
         shadowColor: card.shadowColor,
@@ -55,6 +68,7 @@ function BatchCard({ batch, onPress }: BatchCardProps) {
       })}
     >
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        {selectable ? <Checkbox checked={selected} /> : null}
         <Text
           style={{
             flex: 1,
@@ -87,6 +101,26 @@ function BatchCard({ batch, onPress }: BatchCardProps) {
         </Text>
       ) : null}
     </Pressable>
+  );
+}
+
+function Checkbox({ checked }: { checked: boolean }) {
+  const { colors } = useTheme();
+  return (
+    <View
+      style={{
+        width: 22,
+        height: 22,
+        borderRadius: 6,
+        borderWidth: checked ? 0 : 1.5,
+        borderColor: colors.textSubtle,
+        backgroundColor: checked ? colors.accent : colors.surface,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      {checked ? <Feather name="check" size={15} color={colors.accentInk} /> : null}
+    </View>
   );
 }
 

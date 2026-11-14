@@ -17,6 +17,10 @@ import {
   shelfLifeFor,
   StorageLocation,
 } from "@/hooks/useFoodCategories";
+import ContainerPicker from "@/components/ContainerPicker";
+import type { InventoryItem } from "@/hooks/useInventoryItems";
+import { dateInDays } from "@/lib/expiry";
+import { batchesOfFoodNamed } from "@/lib/foodName";
 
 const STORAGE_OPTIONS = ["Fridge", "Freezer", "Pantry"] as const;
 const MIN_DAYS = 1;
@@ -40,6 +44,8 @@ export type ItemFormSubmission = {
   expiration_date: string;
   storage_location: StorageLocation;
   notes: null;
+  /** The live batch picked under "Add to", or `null` for a new batch. */
+  into_lot_id: string | null;
 };
 
 type ItemFormProps = {
@@ -54,6 +60,12 @@ type ItemFormProps = {
   onSubmit: (input: ItemFormSubmission) => void;
   header?: ReactNode;
   contentContainerStyle?: object;
+  /**
+   * The household's live batches. Opened batches of the food whose name is
+   * typed are offered under "Add to an open container" as containers the food
+   * can go into, such as a jug or an egg tray. Omit to offer only a new batch.
+   */
+  existingLots?: readonly InventoryItem[];
 };
 
 function formatExpirationDate(daysFromNow: number): string {
@@ -95,6 +107,7 @@ function ItemForm({
   onSubmit,
   header,
   contentContainerStyle,
+  existingLots,
 }: ItemFormProps) {
   const { colors, fonts } = useTheme();
 
@@ -111,6 +124,7 @@ function ItemForm({
   const [userEditedDate, setUserEditedDate] = useState(
     defaults?.userEditedDate ?? false,
   );
+  const [pickedLotId, setPickedLotId] = useState<string | null>(null);
   const [touched, setTouched] = useState({
     name: false,
     quantity: false,
@@ -128,6 +142,7 @@ function ItemForm({
     setUnit(defaults?.unit ?? "item");
     setExpDays(defaults?.expDays ?? 7);
     setUserEditedDate(defaults?.userEditedDate ?? false);
+    setPickedLotId(null);
     setTouched({ name: false, quantity: false, category: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetKey]);
@@ -136,6 +151,11 @@ function ItemForm({
   const storageLabel = storage.charAt(0).toUpperCase() + storage.slice(1);
 
   const trimmedName = name.trim();
+  // Sealed batches stay separate; only an opened one is a container in use.
+  const containers = batchesOfFoodNamed(name, existingLots ?? []).filter(
+    (lot) => lot.opened_at !== null,
+  );
+  const container = containers.find((lot) => lot.id === pickedLotId) ?? null;
   const parsedQuantity = parseFloat(quantity);
   const errors = {
     name: trimmedName.length === 0 ? "Name is required" : null,
@@ -143,7 +163,7 @@ function ItemForm({
       !Number.isFinite(parsedQuantity) || parsedQuantity <= 0
         ? "Quantity must be greater than 0"
         : null,
-    category: categoryId === null ? "Pick a category" : null,
+    category: categoryId === null && container === null ? "Pick a category" : null,
   };
   const isValid = !errors.name && !errors.quantity && !errors.category;
 
@@ -174,29 +194,30 @@ function ItemForm({
     setTouched((t) => ({ ...t, category: true }));
   };
 
+  // The container's food fixes the unit, and its location sets the shelf-life
+  // default for the date of the food going in.
+  const handleContainerSelect = (lot: InventoryItem | null) => {
+    setPickedLotId(lot?.id ?? null);
+    if (lot === null) return;
+    setUnit(lot.unit);
+    setStorage(lot.storage_location);
+  };
+
   const handleSubmit = () => {
     if (isSubmitting) return;
     if (!isValid) {
       setTouched({ name: true, quantity: true, category: true });
       return;
     }
-    /* Local-calendar math, not UTC slicing: `.toISOString().slice(0,10)` shifts
-     * to UTC and rounds to next-day for evening adds in negative-UTC zones. */
-    const now = new Date();
-    const target = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate() + expDays,
-    );
-    const expirationDate = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;
     onSubmit({
       name: trimmedName,
       category_id: categoryId,
       quantity: parsedQuantity,
       unit: unit.trim() || "item",
-      expiration_date: expirationDate,
+      expiration_date: dateInDays(expDays),
       storage_location: storage,
       notes: null,
+      into_lot_id: container?.id ?? null,
     });
   };
 
@@ -317,15 +338,23 @@ function ItemForm({
           </View>
         </View>
 
-        <Field label="Storage">
-          <SegmentedControl
-            options={[...STORAGE_OPTIONS]}
-            selected={storageLabel}
-            onSelect={handleStorageSelect}
-          />
-        </Field>
+        <ContainerPicker
+          containers={containers}
+          selected={container}
+          onSelect={handleContainerSelect}
+        />
 
-        {storageNotRecommended && selectedCategory ? (
+        {container === null ? (
+          <Field label="Storage">
+            <SegmentedControl
+              options={[...STORAGE_OPTIONS]}
+              selected={storageLabel}
+              onSelect={handleStorageSelect}
+            />
+          </Field>
+        ) : null}
+
+        {container === null && storageNotRecommended && selectedCategory ? (
           <View
             style={[
               styles.warningRow,

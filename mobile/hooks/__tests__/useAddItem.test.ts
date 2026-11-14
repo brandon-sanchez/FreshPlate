@@ -21,7 +21,7 @@ jest.mock("@/stores/auth", () => {
   return { useAuthStore };
 });
 
-import { StockUnitMismatchError, useAddItem } from "@/hooks/useAddItem";
+import { addItemErrorToast, StockUnitMismatchError, useAddItem } from "@/hooks/useAddItem";
 import { useAuthStore } from "@/stores/auth";
 
 let client: QueryClient;
@@ -38,6 +38,7 @@ const validInput = {
   expiration_date: "2026-06-01",
   storage_location: "fridge" as const,
   notes: null,
+  into_lot_id: null,
 };
 
 function rpcResolves(lotMerged: boolean) {
@@ -132,6 +133,46 @@ describe("useAddItem", () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.error).not.toBeInstanceOf(StockUnitMismatchError);
     expect(result.current.error?.message).toBe("Quantity must be finite and positive");
+  });
+
+  it("adds into an existing container through add_to_lot", async () => {
+    mockRpc.mockResolvedValue({ data: null, error: null });
+    const invalidate = jest.spyOn(client, "invalidateQueries");
+    const { result } = renderHook(() => useAddItem(), { wrapper });
+    result.current.mutate({ ...validInput, name: "Horchata", quantity: 1, unit: "l", into_lot_id: "lot-jug" });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(mockRpc).toHaveBeenCalledWith("add_to_lot", {
+      p_household_id: "household-1",
+      p_lot_id: "lot-jug",
+      p_stock_base: "ml",
+      p_quantity: 1000,
+      p_expiration_date: "2026-06-01",
+      p_each_label: null,
+    });
+    expect(result.current.data).toEqual({ id: "lot-jug", merged: true });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["inventory"] });
+  });
+
+  it("reads the tracked unit when a container's food is tracked in another unit", async () => {
+    rpcFailsWith("STOCK_BASE_MISMATCH", "Food 7c1e is stored as ml");
+    const { result } = renderHook(() => useAddItem(), { wrapper });
+    result.current.mutate({ ...validInput, into_lot_id: "lot-jug" });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect((result.current.error as StockUnitMismatchError).trackedUnit).toBe("ml");
+  });
+
+  it("says the container changed elsewhere when it is no longer live", async () => {
+    rpcFailsWith("LOT_NOT_LIVE", null);
+    const { result } = renderHook(() => useAddItem(), { wrapper });
+    result.current.mutate({ ...validInput, into_lot_id: "lot-jug" });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(addItemErrorToast(result.current.error!, "Horchata")).toEqual(
+      expect.objectContaining({ text1: "Couldn't add Horchata", text2: expect.stringMatching(/another phone/) }),
+    );
   });
 
   it("throws when the user is not signed in", async () => {
