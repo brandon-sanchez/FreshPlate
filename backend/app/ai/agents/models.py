@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import math
+from functools import cache
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
 
 class RecipeIngredient(BaseModel):
@@ -68,3 +69,24 @@ class RecipeGenerationResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     recipes: list[Recipe] = Field(default_factory=list)
+
+
+@cache
+def recipe_batch_model(batch_ceiling: int) -> type[RecipeGenerationResponse]:
+    """Return a response model whose JSON schema caps the batch size.
+
+    Gemini enforces the schema's ``maxItems`` while it decodes, so the model
+    stops at the ceiling instead of writing recipes the caller would discard.
+    Pydantic does not enforce ``maxItems``, so an oversized batch still
+    validates and ``generate_recipes`` trims it. There is deliberately no
+    minimum: an empty list is the honest answer for a kitchen that cannot make
+    a meal.
+    """
+    return create_model(
+        f"RecipeBatchOf{batch_ceiling}",
+        __base__=RecipeGenerationResponse,
+        recipes=(
+            list[Recipe],
+            Field(default_factory=list, json_schema_extra={"maxItems": batch_ceiling}),
+        ),
+    )

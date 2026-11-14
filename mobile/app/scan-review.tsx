@@ -9,7 +9,11 @@ import ErrorState from "@/components/ErrorState";
 import ItemForm, { ItemFormDefaults } from "@/components/ItemForm";
 import LoadingState from "@/components/LoadingState";
 import { useTheme } from "@/hooks/useTheme";
-import { useAddItem } from "@/hooks/useAddItem";
+import {
+  addItemErrorToast,
+  addItemSuccessToast,
+  useAddItem,
+} from "@/hooks/useAddItem";
 import { useBarcodeLookup, isValidBarcode } from "@/hooks/useBarcodeLookup";
 import { FoodCategory, useFoodCategories } from "@/hooks/useFoodCategories";
 import {
@@ -200,27 +204,15 @@ export default function ScanReviewScreen() {
             onSubmit={(input) => {
               const addedName = input.name;
               addItem.mutate(input, {
-                onSuccess: ({ id, merged }) => {
-                  Toast.show({
-                    type: "success",
-                    text1: merged
-                      ? `Updated ${addedName}`
-                      : `Added ${addedName}`,
-                    text2: merged
-                      ? "Added to your existing item."
-                      : "Tap to view in your inventory.",
-                  });
+                onSuccess: (result) => {
+                  Toast.show(addItemSuccessToast(result, addedName));
                   router.replace({
                     pathname: "/(tabs)/inventory",
-                    params: { added: id },
+                    params: { added: result.id },
                   });
                 },
-                onError: () => {
-                  Toast.show({
-                    type: "error",
-                    text1: "Couldn't save",
-                    text2: "Check your connection and try again.",
-                  });
+                onError: (error) => {
+                  Toast.show(addItemErrorToast(error, addedName));
                 },
               });
             }}

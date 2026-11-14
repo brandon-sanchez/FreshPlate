@@ -56,7 +56,7 @@ async def test_vector_store_returns_ranked_recipe_rows_from_similarity_rpc() -> 
         [1.0, *([0.0] * (EMBEDDING_DIMENSIONS - 1))],
         limit=2,
         match_threshold=0.7,
-        deadline=PipelineDeadline(5.0),
+        deadline=PipelineDeadline(5.0, clock=lambda: 0.0),
     )
 
     assert [recipe.title for recipe in results] == [
@@ -78,7 +78,7 @@ async def test_vector_store_returns_ranked_recipe_rows_from_similarity_rpc() -> 
         "match_threshold": 0.7,
         "match_count": 2,
     }
-    assert call["timeout"] == pytest.approx(5.0, rel=1e-4)
+    assert call["timeout"] == 5.0
 
 
 @pytest.mark.asyncio
@@ -106,7 +106,7 @@ async def test_vector_store_uses_publishable_key_without_jwt_bearer_header(
 
     await store.search(
         [1.0, *([0.0] * (EMBEDDING_DIMENSIONS - 1))],
-        deadline=PipelineDeadline(5.0),
+        deadline=PipelineDeadline(5.0, clock=lambda: 0.0),
     )
 
     assert http_client.calls[0]["headers"] == {

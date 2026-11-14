@@ -222,6 +222,8 @@ function ItemForm({
             placeholder="What are you adding?"
             placeholderTextColor={colors.textSubtle}
             value={name}
+            // Mirrors the 80-character CHECK on foods.name.
+            maxLength={80}
             onChangeText={setName}
             onBlur={() => setTouched((t) => ({ ...t, name: true }))}
             style={[

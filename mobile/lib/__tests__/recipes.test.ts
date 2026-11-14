@@ -20,6 +20,7 @@ describe("recipe request helpers", () => {
     const items = [
       {
         id: "spinach",
+        food_id: "food-spinach",
         name: "Baby Spinach",
         quantity: 1,
         unit: "bag",
@@ -28,7 +29,7 @@ describe("recipe request helpers", () => {
         is_leftover: false,
         notes: "wash first",
         added_by: "user-1",
-        category: null,
+        category: { id: "produce", name: "Produce", icon: "leaf" },
       },
     ];
     const preferences = { meal: "Dinner" as const };
@@ -40,6 +41,7 @@ describe("recipe request helpers", () => {
         quantity: 1,
         unit: "bag",
         expiration_date: "2026-08-06",
+        category: "Produce",
       },
     ]);
     expect(buildRecipeSuggestionRequest(items, preferences)).toEqual({
@@ -50,6 +52,7 @@ describe("recipe request helpers", () => {
           quantity: 1,
           unit: "bag",
           expiration_date: "2026-08-06",
+          category: "Produce",
         },
       ],
       preferences,
@@ -64,6 +67,7 @@ describe("recipe request helpers", () => {
           quantity: 1,
           unit: "bag",
           expiration_date: "2026-08-06",
+          category: "Produce",
         },
       ],
       preferences,

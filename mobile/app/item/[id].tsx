@@ -21,7 +21,7 @@ import {
   InventoryItem,
   useInventoryItems,
 } from "@/hooks/useInventoryItems";
-import { useUpdateItem } from "@/hooks/useUpdateItem";
+import { FoodNameTakenError, useUpdateItem } from "@/hooks/useUpdateItem";
 import { useDeleteItem } from "@/hooks/useDeleteItem";
 import { useAuthStore } from "@/stores/auth";
 import { getUrgency } from "@/constants/theme";
@@ -114,16 +114,27 @@ export default function ItemDetailScreen() {
 
   const handleSave = () => {
     if (!isValid || updateItem.isPending) return;
+    const trimmedNotes = notes.trim() || null;
+    if ((unit.trim() || item.unit) !== item.unit) {
+      Toast.show({
+        type: "error",
+        text1: "Couldn't save",
+        text2: `${item.name} is tracked in ${item.unit}.`,
+      });
+      return;
+    }
     updateItem.mutate(
       {
         id: item.id,
+        foodId: item.food_id,
         patch: {
-          name: trimmedName,
-          quantity,
-          unit: unit.trim() || "item",
-          expiration_date: expirationISO,
-          storage_location: storage,
-          notes: notes.trim() || null,
+          ...(trimmedName !== item.name && { name: trimmedName }),
+          ...(quantity !== item.quantity && { quantity }),
+          ...(expirationISO !== item.expiration_date && {
+            expiration_date: expirationISO,
+          }),
+          ...(storage !== item.storage_location && { storage_location: storage }),
+          ...(trimmedNotes !== item.notes && { notes: trimmedNotes }),
         },
       },
       {
@@ -131,11 +142,14 @@ export default function ItemDetailScreen() {
           Toast.show({ type: "success", text1: "Saved" });
           router.back();
         },
-        onError: () =>
+        onError: (error) =>
           Toast.show({
             type: "error",
             text1: "Couldn't save",
-            text2: "Check your connection and try again.",
+            text2:
+              error instanceof FoodNameTakenError
+                ? `Another item is already called ${trimmedName}.`
+                : "Check your connection and try again.",
           }),
       },
     );
@@ -240,6 +254,8 @@ export default function ItemDetailScreen() {
         <SectionLabel text="Name" />
         <TextInput
           value={name}
+          // Mirrors the 80-character CHECK on foods.name.
+          maxLength={80}
           onChangeText={setName}
           placeholder="Item name"
           placeholderTextColor={colors.textSubtle}

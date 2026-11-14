@@ -19,6 +19,7 @@ export type RecipeInventoryContext = {
   quantity: number;
   unit: string;
   expiration_date: string | null;
+  category: string | null;
 };
 
 export type RecipeSuggestionRequest = {

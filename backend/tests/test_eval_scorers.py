@@ -73,3 +73,25 @@ async def test_fake_provider_output_scores_through_public_seam():
     generated = response.recipes[0]
     assert ingredient_coverage_percent(generated, [{"id": "t", "quantity": 4}]) == 50
     assert mapping_validity_percent(generated, [{"id": "t", "quantity": 4}]) == 100
+
+
+def test_coverage_leaves_out_unmapped_water():
+    soup = recipe().model_copy(
+        update={
+            "ingredients": [
+                RecipeIngredient(name="tomato", inventory_item_id="t", use_amount=2, unit="each"),
+                RecipeIngredient(name=" Water ", use_amount=500, unit="ml"),
+            ]
+        }
+    )
+    assert ingredient_coverage_percent(soup, [{"id": "t", "quantity": 4}]) == 100
+
+
+def test_mapping_compares_amounts_in_a_common_unit():
+    rice = [{"id": "t", "quantity": 2, "unit": "kg"}]
+    light = recipe().ingredients[0].model_copy(update={"use_amount": 300, "unit": "g"})
+    heavy = light.model_copy(update={"use_amount": 2.5, "unit": "kg"})
+    light_recipe = recipe().model_copy(update={"ingredients": [light]})
+    heavy_recipe = recipe().model_copy(update={"ingredients": [heavy]})
+    assert mapping_validity_percent(light_recipe, rice) == 100
+    assert mapping_validity_percent(heavy_recipe, rice) == 0

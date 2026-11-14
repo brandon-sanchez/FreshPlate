@@ -74,6 +74,7 @@ class RecordingProvider:
             response_model=kwargs["response_model"],
             system_instruction=kwargs.get("system_instruction"),
             deadline=kwargs.get("deadline"),
+            thinking=kwargs.get("thinking"),
         )
 
 
@@ -412,11 +413,15 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
             bad_response,
             good_response,
             {
-                "decisions": [
+                "checks": [
                     {
                         "candidate_index": 0,
-                        "verdict": "eligible",
-                        "reason": "substantial",
+                        "main_component": "pasta",
+                        "portion_reasoning": "substantial",
+                        "unlisted_foods": [],
+                        "is_full_meal": True,
+                        "realistic_portions": True,
+                        "coherent_method": True,
                     }
                 ]
             },
@@ -457,7 +462,7 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
     assert all(call["deadline"] is deadline for call in provider.calls)
     assert retriever.calls[0]["deadline"] is deadline
     assert result["metadata"]["prompt_name"] == "generate_recipes"
-    assert result["metadata"]["prompt_version"] == 3
+    assert result["metadata"]["prompt_version"] == 4
     assert result["metadata"]["request_id"] == "request-123"
 
 
@@ -599,3 +604,213 @@ async def test_graph_skips_quality_retry_below_the_20s_budget_floor() -> None:
     assert result["valid_recipes"] == []
     assert result["retry_count"] == 0
     assert len(provider.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_generation_runs_at_minimal_thinking_with_a_capped_open_batch() -> None:
+    provider = RecordingProvider([{"recipes": []}])
+    await generate_recipes(
+        {"usable_items": [_usable_item()], "batch_ceiling": 3}, provider
+    )
+
+    call = provider.calls[0]
+    assert call["thinking"] == "minimal"
+    schema = call["response_model"].model_json_schema()["properties"]["recipes"]
+    assert schema["maxItems"] == 3
+    assert "minItems" not in schema
+    assert "Maximum number of recipes: 3" in call["prompt"]
+    assert "every recipe may use the full listed inventory" in call["prompt"]
+    assert "return an empty list" in call["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_generation_prompt_says_water_is_the_only_free_ingredient() -> None:
+    provider = RecordingProvider([{"recipes": []}])
+    await generate_recipes({"usable_items": [_usable_item()]}, provider)
+    prompt = provider.calls[0]["prompt"]
+    assert "Water is always available" in prompt
+    assert "salt, pepper, oil" in prompt
+
+
+def test_check_quality_allows_unmapped_water_but_no_other_unmapped_staple() -> None:
+    tomatoes = _ingredient(
+        "Tomatoes", inventory_item_id="tomatoes", use_amount=1, unit="item"
+    )
+    with_water = Recipe.model_validate(
+        _recipe(
+            tomatoes,
+            _ingredient(" Water ", inventory_item_id=None, use_amount=500, unit="ml"),
+            title="Tomato Soup",
+        )
+    )
+    with_salt = Recipe.model_validate(
+        _recipe(
+            tomatoes,
+            _ingredient("Salt", inventory_item_id=None, use_amount=2, unit="g"),
+            title="Salted Tomatoes",
+        )
+    )
+    only_water = Recipe.model_validate(
+        _recipe(
+            _ingredient("Water", inventory_item_id=None, use_amount=1, unit="l"),
+            title="Hot Water",
+        )
+    )
+    result = check_quality(
+        {
+            "usable_items": [_usable_item()],
+            "generated_recipes": [with_water, with_salt, only_water],
+        }
+    )
+    assert result["valid_recipes"] == [with_water]
+    assert "ingredient 'Salt' is not mapped to inventory" in result["quality_feedback"]
+    assert "Recipe 'Hot Water': recipe has no grounded" in result["quality_feedback"]
+
+
+@pytest.mark.asyncio
+async def test_honest_empty_batch_finishes_without_a_quality_retry() -> None:
+    provider = RecordingProvider([{"recipes": []}])
+    result = await build_recipe_graph(provider, RecordingRetriever()).ainvoke(
+        {"inventory": [{"id": "salt", "name": "Salt", "quantity": 500, "unit": "g"}]}
+    )
+    assert result["valid_recipes"] == []
+    assert result["retry_count"] == 0
+    assert len(provider.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_graph_accepts_a_recipe_measured_in_a_smaller_unit_than_stock() -> None:
+    provider = RecordingProvider(
+        [
+            {
+                "recipes": [
+                    _recipe(
+                        _ingredient(
+                            "Basmati rice",
+                            inventory_item_id="rice",
+                            use_amount=300,
+                            unit="g",
+                        ),
+                        title="Lemon Herb Rice",
+                    )
+                ]
+            },
+            {
+                "checks": [
+                    {
+                        "candidate_index": 0,
+                        "main_component": "rice",
+                        "portion_reasoning": "substantial",
+                        "unlisted_foods": [],
+                        "is_full_meal": True,
+                        "realistic_portions": True,
+                        "coherent_method": True,
+                    }
+                ]
+            },
+        ]
+    )
+    graph = build_recipe_graph(provider, RecordingRetriever())
+
+    result = await graph.ainvoke(
+        {
+            "inventory": [
+                {
+                    "id": "rice",
+                    "name": "Basmati rice",
+                    "quantity": 2,
+                    "unit": "kg",
+                    "expiration_date": None,
+                }
+            ],
+            "preferences": {},
+            "exclude_titles": [],
+            "batch_ceiling": 1,
+            "deadline": PipelineDeadline(15.0),
+        }
+    )
+
+    assert [recipe.title for recipe in result["valid_recipes"]] == ["Lemon Herb Rice"]
+    assert result["quality_feedback"] is None
+    assert result["retry_count"] == 0
+
+
+@pytest.mark.parametrize(
+    ("name", "use_amount", "unit", "quantity", "stock_unit"),
+    [
+        ("Rice", 300, "g", 2, "kg"),
+        ("Milk", 2, "cups", 1, "L"),
+        ("Milk", 8, "oz", 1, "L"),
+        ("Eggs", 2, "pieces", 3, "item"),
+        ("Eggs", 2, "large", 3, "item"),
+        ("Flour", 1, "lb", 500, "grams"),
+        ("Flour", 500, "g", 500, "grams"),
+    ],
+)
+def test_check_quality_compares_amounts_in_a_common_unit(
+    name: str, use_amount: float, unit: str, quantity: float, stock_unit: str
+) -> None:
+    recipe = Recipe.model_validate(
+        _recipe(
+            _ingredient(
+                name, inventory_item_id="food", use_amount=use_amount, unit=unit
+            )
+        )
+    )
+
+    result = check_quality(
+        {
+            "usable_items": [
+                _usable_item("food", name=name, quantity=quantity, unit=stock_unit)
+            ],
+            "generated_recipes": [recipe],
+        }
+    )
+
+    assert result["valid_recipes"] == [recipe]
+    assert result["quality_feedback"] is None
+
+
+def test_check_quality_rejects_overuse_after_unit_conversion() -> None:
+    recipe = Recipe.model_validate(
+        _recipe(
+            _ingredient(
+                "Tomatoes", inventory_item_id="tomatoes", use_amount=1500, unit="g"
+            ),
+            _ingredient(
+                "Tomatoes", inventory_item_id="tomatoes", use_amount=1, unit="kg"
+            ),
+        )
+    )
+
+    result = check_quality(
+        {
+            "usable_items": [_usable_item(quantity=2, unit="kg")],
+            "generated_recipes": [recipe],
+        }
+    )
+
+    assert result["valid_recipes"] == []
+    assert "'tomatoes' use 2500 g in total" in result["quality_feedback"]
+    assert "more than the available 2.0 kg" in result["quality_feedback"]
+
+
+def test_check_quality_rejects_units_of_different_dimensions() -> None:
+    recipe = Recipe.model_validate(
+        _recipe(
+            _ingredient(
+                "Tomatoes", inventory_item_id="tomatoes", use_amount=1, unit="cup"
+            )
+        )
+    )
+
+    result = check_quality(
+        {
+            "usable_items": [_usable_item(quantity=2, unit="kg")],
+            "generated_recipes": [recipe],
+        }
+    )
+
+    assert result["valid_recipes"] == []
+    assert "uses unit 'cup'" in result["quality_feedback"]
+    assert "express it in 'kg'" in result["quality_feedback"]

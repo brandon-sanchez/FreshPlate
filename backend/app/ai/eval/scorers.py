@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from decimal import Decimal
 from typing import Any
 
 from app.ai.agents.models import Recipe
+from app.ai.agents.nodes import is_water
+from app.inventory.units import in_stock, measure
 
 
 def ingredient_coverage_percent(
@@ -18,9 +21,15 @@ def ingredient_coverage_percent(
 
     The API and the future eval runner call this same function so the match
     percentage shown in the mobile feed cannot drift from the measured metric.
-    Untracked staples count in the denominator but not the numerator.
+    Untracked staples count in the denominator but not the numerator. Water
+    is always on hand, so an unmapped water ingredient is left out of both.
     """
-    total_ingredients = len(recipe.ingredients)
+    ingredients = [
+        ingredient
+        for ingredient in recipe.ingredients
+        if ingredient.inventory_item_id is not None or not is_water(ingredient.name)
+    ]
+    total_ingredients = len(ingredients)
     if total_ingredients == 0:
         return 0
 
@@ -31,7 +40,7 @@ def ingredient_coverage_percent(
     }
     mapped_ingredients = sum(
         ingredient.inventory_item_id in inventory_ids
-        for ingredient in recipe.ingredients
+        for ingredient in ingredients
     )
     return round(mapped_ingredients * 100 / total_ingredients)
 
@@ -64,10 +73,16 @@ def mapping_validity_percent(
         and item.use_amount is not None
         and math.isfinite(item.use_amount)
         and item.use_amount > 0
-        and item.use_amount <= float(by_id[item.inventory_item_id].get("quantity", 0))
+        and _within_stock(item.use_amount, item.unit, by_id[item.inventory_item_id])
         for item in mapped
     )
     return round(valid * 100 / len(mapped))
+
+
+def _within_stock(amount: float, unit: str, item: Mapping[str, Any]) -> bool:
+    stock = measure(Decimal(str(item.get("quantity", 0))), item.get("unit") or "each")
+    used = in_stock(Decimal(str(amount)), unit, stock)
+    return used is not None and used <= stock.amount
 
 
 def embedding_diversity(embeddings: Sequence[Sequence[float]]) -> float:

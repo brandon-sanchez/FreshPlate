@@ -65,11 +65,15 @@ def _recipe(title: str) -> dict[str, Any]:
 
 def _assessment(count: int) -> dict[str, Any]:
     return {
-        "decisions": [
+        "checks": [
             {
                 "candidate_index": index,
-                "verdict": "eligible",
-                "reason": "complete meal",
+                "main_component": "vegetables",
+                "portion_reasoning": "complete meal",
+                "unlisted_foods": [],
+                "is_full_meal": True,
+                "realistic_portions": True,
+                "coherent_method": True,
             }
             for index in range(count)
         ]
@@ -455,6 +459,60 @@ def test_session_with_zero_valid_recipes_returns_explicit_empty_state(
     assert response.json()["data"]["next_cursor"] is None
 
 
+def test_honest_empty_session_reaches_the_empty_state_without_a_retry(
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    patch_jwks([signing_key])
+    provider = FakeProvider([{"recipes": []}])
+    app = create_app()
+    _install_dependencies(
+        app,
+        provider,
+        StubRetriever(),
+        InMemoryRecipeFeedStore(),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"inventory": _inventory(), "preferences": {}},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["recipes"] == []
+    assert response.json()["data"]["empty_reason"] == "INVENTORY_UNSUPPORTED"
+
+
+def test_session_retrieval_query_leads_with_expiring_items_then_proteins(
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    patch_jwks([signing_key])
+    retriever = StubRetriever()
+    app = create_app()
+    _install_dependencies(
+        app, FakeProvider([{"recipes": []}]), retriever, InMemoryRecipeFeedStore()
+    )
+    inventory = [
+        {**item, "category": "Produce"} for item in _inventory()
+    ] + [
+        {"id": "salmon", "name": "Salmon", "quantity": 400, "unit": "g",
+         "category": "Meat & Seafood"},
+    ]
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"inventory": inventory, "preferences": {}},
+        )
+
+    assert response.status_code == 200
+    assert retriever.calls == ["baby spinach salmon tomatoes"]
+
+
 def test_feed_stops_generating_at_the_six_run_session_cap(
     signing_key: SigningKey,
     patch_jwks,
@@ -587,6 +645,7 @@ class PromptRecordingProvider:
         response_model: Any,
         system_instruction: Any = None,
         deadline: Any = None,
+        thinking: Any = None,
     ) -> Any:
         self.prompts.append(prompt)
         return await self._inner.generate(
@@ -594,6 +653,7 @@ class PromptRecordingProvider:
             response_model=response_model,
             system_instruction=system_instruction,
             deadline=deadline,
+            thinking=thinking,
         )
 
 
@@ -647,7 +707,7 @@ def test_refill_runs_never_reuse_grounding_docs_from_earlier_runs(
         )
 
     initial_prompt, refill_prompt = [
-        prompt for prompt in provider.prompts if prompt.startswith("Create up")
+        prompt for prompt in provider.prompts if prompt.startswith("Suggest up to")
     ]
     assert "Doc 01" in initial_prompt and "Doc 05" in initial_prompt
     assert "Doc 06" not in initial_prompt
@@ -795,7 +855,7 @@ async def test_concurrent_refills_share_the_last_generation_run(
             ]
         )
     assert len(
-        [prompt for prompt in provider.prompts if prompt.startswith("Create up")]
+        [prompt for prompt in provider.prompts if prompt.startswith("Suggest up to")]
     ) == 2
     assert all(page.status_code == 200 for page in pages)
     assert pages[0].json() == pages[1].json()

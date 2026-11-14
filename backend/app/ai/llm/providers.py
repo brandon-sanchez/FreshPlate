@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from collections import deque
 from collections.abc import Iterable, Mapping
 from typing import Any, TypeVar, cast
@@ -15,8 +17,11 @@ from app.ai.llm.errors import (
     retry_after_seconds_from_error,
     status_code_from_error,
 )
+from app.ai.llm.protocol import ThinkingLevel
 from app.ai.llm.retry import PipelineDeadline, RetryPolicy
 from app.core.config import settings
+
+logger = logging.getLogger("freshplate.llm.provider")
 
 # Gemini Developer API pricing lists this model in the free tier. Keep the
 # model pin explicit so a future change does not accidentally add paid usage.
@@ -44,9 +49,10 @@ class FakeProvider:
         response_model: type[ResponseModel],
         system_instruction: str | None = None,
         deadline: PipelineDeadline | None = None,
+        thinking: ThinkingLevel | None = None,
     ) -> ResponseModel:
         """Return the next queued response, validated as the requested model."""
-        del prompt, system_instruction
+        del prompt, system_instruction, thinking
 
         if deadline is not None and deadline.expired:
             raise ProviderError("LLM pipeline deadline exhausted")
@@ -97,6 +103,7 @@ class GeminiProvider:
         response_model: type[ResponseModel],
         system_instruction: str | None = None,
         deadline: PipelineDeadline | None = None,
+        thinking: ThinkingLevel | None = None,
     ) -> ResponseModel:
         """Generate and validate one structured response from Gemini."""
         client = self._get_client()
@@ -109,6 +116,7 @@ class GeminiProvider:
                 response_model=response_model,
                 system_instruction=system_instruction,
                 deadline=shared_deadline,
+                thinking=thinking,
             )
 
         return await self._retry_policy.run(
@@ -124,6 +132,7 @@ class GeminiProvider:
         response_model: type[ResponseModel],
         system_instruction: str | None,
         deadline: PipelineDeadline,
+        thinking: ThinkingLevel | None,
     ) -> ResponseModel:
         """Make one SDK request using only the remaining shared budget."""
         config_kwargs: dict[str, Any] = {
@@ -132,6 +141,10 @@ class GeminiProvider:
         }
         if system_instruction is not None:
             config_kwargs["system_instruction"] = system_instruction
+        if thinking is not None:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(
+                thinking_level=types.ThinkingLevel(thinking.upper())
+            )
         if deadline.remaining_seconds < GEMINI_MIN_DEADLINE_SECONDS:
             raise ProviderError("Gemini pipeline deadline exhausted")
         timeout_ms = deadline.remaining_milliseconds
@@ -140,6 +153,7 @@ class GeminiProvider:
             retry_options=types.HttpRetryOptions(attempts=1),
         )
 
+        started = time.monotonic()
         try:
             response = await client.aio.models.generate_content(
                 model=self.model,
@@ -149,12 +163,21 @@ class GeminiProvider:
                 ),
             )
         except Exception as exc:
+            status_code = status_code_from_error(exc)
+            self._log_call(
+                None,
+                response_model,
+                thinking,
+                started,
+                outcome=f"error:{status_code or type(exc).__name__}",
+            )
             raise ProviderError(
                 "Gemini generation failed",
                 cause=exc,
-                status_code=status_code_from_error(exc),
+                status_code=status_code,
                 retry_after_seconds=retry_after_seconds_from_error(exc),
             ) from exc
+        self._log_call(response, response_model, thinking, started, outcome="ok")
 
         try:
             response_text = response.text
@@ -170,6 +193,37 @@ class GeminiProvider:
         except ValidationError as exc:
             raise ProviderError("Gemini returned invalid structured output") from exc
 
+    def _log_call(
+        self,
+        response: Any,
+        response_model: type[BaseModel],
+        thinking: ThinkingLevel | None,
+        started: float,
+        *,
+        outcome: str,
+    ) -> None:
+        """Log one structured record per Gemini call for latency and spend.
+
+        Failed calls are logged too, with zero tokens, because a timeout that
+        used up the deadline is the slowest call a request can make.
+        """
+        usage = getattr(response, "usage_metadata", None)
+        call = {
+            "model": self.model,
+            "thinking": thinking or "default",
+            "response_model": response_model.__name__,
+            "outcome": outcome,
+            "prompt_tokens": _token_count(usage, "prompt_token_count"),
+            "output_tokens": _token_count(usage, "candidates_token_count"),
+            "thinking_tokens": _token_count(usage, "thoughts_token_count"),
+            "latency_ms": round((time.monotonic() - started) * 1000),
+        }
+        logger.info(
+            "Gemini call %s",
+            " ".join(f"{key}={value}" for key, value in call.items()),
+            extra={"gemini_call": call},
+        )
+
     def _get_client(self) -> Any:
         if self._client is not None:
             return self._client
@@ -183,3 +237,8 @@ class GeminiProvider:
                 "Gemini client could not be created", cause=exc
             ) from exc
         return self._client
+
+
+def _token_count(usage: Any, field: str) -> int:
+    value = getattr(usage, field, None)
+    return value if isinstance(value, int) else 0

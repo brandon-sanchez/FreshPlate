@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from app.ai.agents.graph import build_recipe_graph
-from app.ai.agents.meal_quality import MealAssessment
+from app.ai.agents.meal_quality import MealChecklist
 from app.ai.agents.models import Recipe, RecipeIngredient
 from app.ai.eval.judge import JudgeResult, judge_recipe
 from app.ai.eval.scorers import completeness_percent, ingredient_coverage_percent
@@ -64,15 +64,17 @@ async def run(mode: str, experiment: str) -> dict[str, float | int | str]:
     for index, case in enumerate(cases):
         rejected = index in {0, len(cases) - 1}
         recipe = _fixture_recipe(case)
-        assessment = MealAssessment.model_validate(
+        assessment = MealChecklist.model_validate(
             {
-                "decisions": [
+                "checks": [
                     {
                         "candidate_index": 0,
-                        "verdict": "insufficient" if rejected else "eligible",
-                        "reason": "Intentional deterministic rejection"
-                        if rejected
-                        else "Grounded offline fixture",
+                        "main_component": "Grounded offline fixture",
+                        "portion_reasoning": "Deterministic offline fixture",
+                        "unlisted_foods": [],
+                        "is_full_meal": not rejected,
+                        "realistic_portions": True,
+                        "coherent_method": True,
                     }
                 ]
             }

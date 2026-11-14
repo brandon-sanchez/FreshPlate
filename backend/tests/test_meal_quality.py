@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from app.ai.agents.graph import build_recipe_generation_graph, build_recipe_graph
-from app.ai.agents.meal_quality import MealAssessment, assess_meals, review_recipes
+from app.ai.agents.meal_quality import MealChecklist, assess_meals, review_recipes
 from app.ai.agents.models import Recipe, RecipeGenerationResponse
 from app.ai.agents.nodes import analyze_inventory
 from app.ai.llm.errors import ProviderError
@@ -29,18 +29,41 @@ class RecordingProvider(FakeProvider):
         return await super().generate(prompt, **kwargs)
 
 
+def _kind(response_model):
+    if issubclass(response_model, RecipeGenerationResponse):
+        return RecipeGenerationResponse
+    return response_model
+
+
 class EmptyRetriever:
     async def search(self, query, **kwargs):
         return []
 
 
-def assessment(*verdicts):
+CHECKLIST_ANSWERS = {
+    "eligible": {},
+    "insufficient": {"is_full_meal": False},
+    "thin_portions": {"realistic_portions": False},
+    "incoherent": {"coherent_method": False},
+    "unsupported_ingredient": {"unlisted_foods": ["cod"]},
+}
+
+
+def check(index, answers="eligible"):
     return {
-        "decisions": [
-            {"candidate_index": i, "verdict": verdict, "reason": "Fixture decision"}
-            for i, verdict in enumerate(verdicts)
-        ]
+        "candidate_index": index,
+        "main_component": "Fixture main component",
+        "portion_reasoning": "Fixture portions",
+        "unlisted_foods": [],
+        "is_full_meal": True,
+        "realistic_portions": True,
+        "coherent_method": True,
+        **CHECKLIST_ANSWERS[answers],
     }
+
+
+def assessment(*verdicts):
+    return {"checks": [check(i, verdict) for i, verdict in enumerate(verdicts)]}
 
 
 def inventory():
@@ -80,14 +103,14 @@ async def test_both_graphs_regenerate_rejected_meals_under_one_deadline(refill):
     result = await graph.ainvoke(state)
     assert [r.model_dump() for r in result["valid_recipes"]] == [substantial]
     assert result["retry_count"] == 1
-    assert [call["response_model"] for call in provider.calls] == [
-        RecipeGenerationResponse, MealAssessment,
-        RecipeGenerationResponse, MealAssessment,
+    assert [_kind(call["response_model"]) for call in provider.calls] == [
+        RecipeGenerationResponse, MealChecklist,
+        RecipeGenerationResponse, MealChecklist,
     ]
     assert all(call["deadline"] is result["deadline"] for call in provider.calls)
     assert "insufficient" in provider.calls[2]["prompt"]
     assert result["metadata"]["trace_key"] == "keep"
-    assert result["metadata"]["assessment_prompt_version"] == 1
+    assert result["metadata"]["assessment_prompt_version"] == 2
 
 
 @pytest.mark.asyncio
@@ -95,7 +118,7 @@ async def test_semantically_rejected_meals_exhaust_existing_retry_and_return_emp
     recipe = CASES[0]["recipe"]
     provider = RecordingProvider([
         {"recipes": [recipe]}, assessment("insufficient"),
-        {"recipes": [recipe]}, assessment("unknown"),
+        {"recipes": [recipe]}, assessment("incoherent"),
     ])
     result = await build_recipe_graph(provider, EmptyRetriever()).ainvoke(
         {"inventory": inventory()}
@@ -133,13 +156,58 @@ async def test_quality_feedback_keeps_inventory_and_semantic_rejections():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("answers", "verdict"),
+    [
+        ("insufficient", "insufficient"),
+        ("thin_portions", "insufficient"),
+        ("incoherent", "incoherent"),
+        ("unsupported_ingredient", "unsupported_ingredient"),
+    ],
+)
+async def test_any_failed_checklist_answer_rejects_the_meal(answers, verdict):
+    recipe = Recipe.model_validate(CASES[1]["recipe"])
+    valid, feedback, _ = await assess_meals(
+        [recipe], {}, FakeProvider([{"checks": [check(0, answers)]}]),
+        deadline=PipelineDeadline(30),
+    )
+    assert valid == []
+    assert f"Recipe '{recipe.title}': {verdict}" in feedback
+
+
+@pytest.mark.asyncio
+async def test_water_is_never_an_unlisted_food():
+    recipe = Recipe.model_validate(CASES[1]["recipe"])
+    response = {"checks": [{**check(0), "unlisted_foods": [" Water "]}]}
+    valid, feedback, _ = await assess_meals(
+        [recipe], {}, FakeProvider([response]), deadline=PipelineDeadline(30)
+    )
+    assert valid == [recipe]
+    assert feedback is None
+
+
+@pytest.mark.asyncio
+async def test_judge_sees_only_each_recipes_own_inventory_items_at_minimal_thinking():
+    recipe = Recipe.model_validate(CASES[1]["recipe"])
+    unrelated = {"id": "unrelated", "name": "Anchovies", "quantity": 1, "unit": "can"}
+    state = analyze_inventory({"inventory": [*inventory(), unrelated]})
+    provider = RecordingProvider([assessment("eligible")])
+    await assess_meals([recipe], state, provider, deadline=PipelineDeadline(30))
+
+    payload = json.loads(provider.calls[0]["prompt"])
+    assert "inventory" not in payload
+    [candidate] = payload["candidates"]
+    assert sorted(item["name"] for item in candidate["kitchen_items"]) == sorted(
+        ingredient.name for ingredient in recipe.ingredients
+    )
+    assert provider.calls[0]["thinking"] == "minimal"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("indices", [[], [0], [0, 0], [-1, 0], [0, 2], [True, 0]])
 async def test_incomplete_or_ambiguous_assessments_never_release_recipes(indices):
     recipes = [Recipe.model_validate(case["recipe"]) for case in CASES[:2]]
-    response = {"decisions": [
-        {"candidate_index": index, "verdict": "eligible", "reason": "Enough"}
-        for index in indices
-    ]}
+    response = {"checks": [check(index) for index in indices]}
     with pytest.raises(ProviderError):
         await assess_meals(
             recipes, {}, FakeProvider([response]), deadline=PipelineDeadline(30)
@@ -151,7 +219,7 @@ async def test_reordered_decisions_preserve_original_recipe_order_and_content():
     recipes = [Recipe.model_validate(case["recipe"]) for case in CASES[:2]]
     before = [recipe.model_dump() for recipe in recipes]
     response = assessment("eligible", "eligible")
-    response["decisions"].reverse()
+    response["checks"].reverse()
     result, _, _ = await assess_meals(
         recipes, {}, FakeProvider([response]), deadline=PipelineDeadline(30)
     )
@@ -160,7 +228,7 @@ async def test_reordered_decisions_preserve_original_recipe_order_and_content():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("response", [ProviderError("offline"), {"decisions": None}])
+@pytest.mark.parametrize("response", [ProviderError("offline"), {"checks": None}])
 async def test_provider_or_schema_failure_never_releases_unreviewed_recipe(response):
     with pytest.raises(ProviderError):
         await assess_meals(
@@ -190,7 +258,7 @@ async def test_assessment_cannot_release_a_response_after_deadline():
     class LateProvider:
         async def generate(self, *args, **kwargs):
             now[0] = 31.0
-            return MealAssessment.model_validate(assessment("eligible"))
+            return MealChecklist.model_validate(assessment("eligible"))
 
     with pytest.raises(ProviderError, match="deadline"):
         await assess_meals(
