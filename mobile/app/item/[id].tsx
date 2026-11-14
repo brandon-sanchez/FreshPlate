@@ -20,6 +20,7 @@ import { InventoryItem, useInventoryItems } from "@/hooks/useInventoryItems";
 import { daysUntilExpiration } from "@/lib/expiry";
 import { FoodNameTakenError, useUpdateItem } from "@/hooks/useUpdateItem";
 import { useDeleteItem } from "@/hooks/useDeleteItem";
+import { ChangedElsewhereError } from "@/hooks/useLotOutcome";
 import { useAuthStore } from "@/stores/auth";
 import { getUrgency } from "@/constants/theme";
 
@@ -151,7 +152,14 @@ export default function ItemDetailScreen() {
           onPress: () =>
             deleteItem.mutate(
               { id: item.id, name: item.name },
-              { onSuccess: () => router.back() },
+              {
+                onSuccess: () => router.back(),
+                // The refetch that follows drops the batch, so staying would
+                // leave the editor on "Item not found" under the toast.
+                onError: (error) => {
+                  if (error instanceof ChangedElsewhereError) router.back();
+                },
+              },
             ),
         },
       ],
