@@ -155,6 +155,16 @@ export function inDrawOrder(lots: InventoryItem[]): DrawnLot[] {
   return ordered;
 }
 
+/**
+ * Returns the expired lots among `lots`, across all foods, most overdue
+ * first, then by food name. These are the batches waiting for review.
+ */
+export function expiredLots(lots: InventoryItem[]): DrawnLot[] {
+  return inDrawOrder(lots)
+    .filter((d) => d.expired)
+    .sort((a, b) => a.days! - b.days! || a.lot.name.localeCompare(b.lot.name));
+}
+
 function inSection(sectionKey: string, rows: FoodRow[]): FoodRow[] {
   return rows.map((row) => ({ ...row, key: `${sectionKey}:${row.foodId}` }));
 }
@@ -165,8 +175,8 @@ function toRow(group: InventoryItem[]): FoodRow {
   const lots = withDays.map((d) => d.lot);
   const expired = withDays.filter((d) => d.days !== null && d.days < 0);
   const unexpired = withDays.filter((d) => d.days === null || d.days >= 0);
-  const days = unexpired.length ? unexpired[0].days : expired[0].days;
-  const counted = (unexpired.length ? unexpired : expired).map((d) => d.lot);
+  const counted = unexpired.length ? unexpired : expired;
+  const { days } = counted[0];
   const [first] = lots;
 
   return {
@@ -177,8 +187,8 @@ function toRow(group: InventoryItem[]): FoodRow {
     category: first.category,
     isLeftover: first.is_leftover,
     lots,
-    total: counted.reduce((sum, lot) => sum + lot.quantity, 0),
-    isEstimate: counted.some((lot) => lot.is_estimate),
+    total: counted.reduce((sum, d) => sum + d.lot.quantity, 0),
+    isEstimate: counted.some((d) => d.lot.is_estimate),
     locations: LOCATIONS.filter((loc) => lots.some((lot) => lot.storage_location === loc)),
     days,
     urgency: urgencyOf(days),

@@ -30,6 +30,7 @@ import {
   type FoodRow,
   type FoodSection,
   type GroupBy,
+  expiredLots,
   groupFoodRows,
   stackLots,
 } from "@/lib/foodRows";
@@ -110,6 +111,7 @@ export default function InventoryScreen() {
   const activeFilterCount = countActiveFilters(filters);
   const allRows = useMemo(() => stackLots(items), [items]);
   const expiredCount = allRows.filter((r) => r.expiredLots > 0).length;
+  const expiredLotCount = useMemo(() => expiredLots(items).length, [items]);
 
   if (inventory.isPending) {
     return (
@@ -183,6 +185,14 @@ export default function InventoryScreen() {
               colors={colors}
               fonts={fonts}
               padded={false}
+              action={
+                expiredLotCount > 0 ? (
+                  <ReviewExpiredButton
+                    expiredBatchCount={expiredLotCount}
+                    onPress={() => router.push("/review-expired")}
+                  />
+                ) : null
+              }
             />
 
             <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
@@ -452,43 +462,81 @@ function TopBar({
   colors,
   fonts,
   padded = true,
+  action,
 }: {
   title: string;
   subtitle?: string;
   colors: ReturnType<typeof useTheme>["colors"];
   fonts: ReturnType<typeof useTheme>["fonts"];
   padded?: boolean;
+  action?: React.ReactNode;
 }) {
   return (
     <View
       style={{
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
         paddingHorizontal: padded ? 16 : 0,
         paddingTop: padded ? 12 : 0,
       }}
     >
-      <Text
-        style={{
-          fontFamily: fonts.display,
-          fontSize: 26,
-          letterSpacing: -0.5,
-          color: colors.text,
-        }}
-      >
-        {title}
-      </Text>
-      {subtitle ? (
+      <View style={{ flex: 1, minWidth: 0 }}>
         <Text
           style={{
-            fontFamily: fonts.body,
-            fontSize: 13,
-            color: colors.textMuted,
-            marginTop: 2,
+            fontFamily: fonts.display,
+            fontSize: 26,
+            letterSpacing: -0.5,
+            color: colors.text,
           }}
         >
-          {subtitle}
+          {title}
         </Text>
-      ) : null}
+        {subtitle ? (
+          <Text
+            style={{
+              fontFamily: fonts.body,
+              fontSize: 13,
+              color: colors.textMuted,
+              marginTop: 2,
+            }}
+          >
+            {subtitle}
+          </Text>
+        ) : null}
+      </View>
+      {action}
     </View>
+  );
+}
+
+function ReviewExpiredButton({
+  expiredBatchCount,
+  onPress,
+}: {
+  expiredBatchCount: number;
+  onPress: () => void;
+}) {
+  const { colors, fonts } = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      hitSlop={6}
+      accessibilityRole="button"
+      accessibilityLabel={`Review ${expiredBatchCount} expired batch${expiredBatchCount === 1 ? "" : "es"}`}
+      style={({ pressed }) => ({
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+        borderRadius: 100,
+        borderWidth: 1,
+        borderColor: colors.crit,
+        opacity: pressed ? 0.7 : 1,
+      })}
+    >
+      <Text style={{ fontFamily: fonts.bodyStrong, fontSize: 12.5, color: colors.crit, letterSpacing: -0.1 }}>
+        Review expired
+      </Text>
+    </Pressable>
   );
 }
 

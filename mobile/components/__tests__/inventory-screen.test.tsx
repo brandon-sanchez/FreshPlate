@@ -192,6 +192,28 @@ it("counts a food with an expired batch behind a fresh one as expired and says s
   expect(screen.getByLabelText("Milk, 1000 ml, 2 batches, expires in 4 days, 1 expired")).toBeTruthy();
 });
 
+it("opens Review expired from any view, even when the expired batch sits behind a fresh one", async () => {
+  mockLots.current = [
+    lotRow("milk-old", milk, -2, "fridge", 500),
+    lotRow("milk-new", milk, 4, "fridge", 1000),
+  ];
+  renderScreen();
+  await screen.findByText("1 item · 1 expired");
+
+  fireEvent.press(screen.getByText("Location"));
+  fireEvent.press(screen.getByLabelText("Review 1 expired batch"));
+
+  expect(mockPush).toHaveBeenCalledWith("/review-expired");
+});
+
+it("offers no review when nothing has expired", async () => {
+  mockLots.current = [lotRow("milk-new", milk, 4, "fridge", 1000)];
+  renderScreen();
+  await screen.findByText("1 item · 0 expired");
+
+  expect(screen.queryByText(/Review/)).toBeNull();
+});
+
 it("opens the collapsed Fresh section to show a just-added batch", async () => {
   const butter = { id: "food-butter", name: "Butter", stock_base: "g", each_label: null };
   mockLots.current = [...mockLots.current, lotRow("butter-1", butter, 30, "fridge", 250)];
