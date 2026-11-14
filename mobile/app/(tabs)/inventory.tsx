@@ -418,7 +418,7 @@ export default function InventoryScreen() {
           );
         }}
         renderItem={({ item: row }) => (
-          <LotOutcomeSwipe lotIds={row.lots.map((lot) => lot.id)} name={row.name}>
+          <LotOutcomeSwipe lotIds={row.countedLots.map((lot) => lot.id)} name={row.name}>
             <InventoryRow
               row={row}
               highlight={highlightId !== null && holdsLot(row, highlightId)}

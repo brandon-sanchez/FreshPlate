@@ -93,12 +93,14 @@ describe("stackLots", () => {
     ]);
 
     expect(row).toMatchObject({ total: 1000, isEstimate: false, expiredLots: 1 });
+    expect(row.countedLots.map((l) => l.id)).toEqual(["new"]);
   });
 
   it("totals the expired batches when every batch has expired", () => {
     const [row] = stackLots([milk("a", -1, { quantity: 300 }), milk("b", -4, { quantity: 200 })]);
 
     expect(row.total).toBe(500);
+    expect(row.countedLots.map((l) => l.id)).toEqual(["b", "a"]);
   });
 
   it("treats an undated batch as unexpired, so an expired one beside it does not mark the food expired", () => {
