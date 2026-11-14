@@ -133,6 +133,10 @@ function RootLayoutNav() {
                 options={{ title: "" }}
               />
               <Stack.Screen
+                name="review-expired"
+                options={{ title: "Review expired" }}
+              />
+              <Stack.Screen
                 name="set-name"
                 options={{ headerShown: false, presentation: "modal" }}
               />

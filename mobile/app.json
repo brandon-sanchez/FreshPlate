@@ -40,7 +40,8 @@
         {
           "cameraPermission": "FreshPlate needs camera access to scan product barcodes."
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true

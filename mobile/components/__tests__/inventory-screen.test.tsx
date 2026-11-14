@@ -188,8 +188,59 @@ it("counts a food with an expired batch behind a fresh one as expired and says s
   renderScreen();
 
   expect(await screen.findByText("1 item · 1 expired")).toBeTruthy();
-  expect(screen.getByText("1500 ml · 2 batches · Fridge · 1 expired")).toBeTruthy();
-  expect(screen.getByLabelText("Milk, 1500 ml, 2 batches, expires in 4 days, 1 expired")).toBeTruthy();
+  expect(screen.getByText("1000 ml · 2 batches · Fridge · 1 expired")).toBeTruthy();
+  expect(screen.getByLabelText("Milk, 1000 ml, 2 batches, expires in 4 days, 1 expired")).toBeTruthy();
+});
+
+it("opens Review expired from the subtitle in any view, even when the expired batch sits behind a fresh one", async () => {
+  mockLots.current = [
+    lotRow("milk-old", milk, -2, "fridge", 500),
+    lotRow("milk-new", milk, 4, "fridge", 1000),
+  ];
+  renderScreen();
+  await screen.findByText("1 item · 1 expired");
+
+  fireEvent.press(screen.getByText("Location"));
+  fireEvent.press(screen.getByLabelText("1 expired. Review expired batches"));
+
+  expect(mockPush).toHaveBeenCalledWith("/review-expired");
+});
+
+it("opens Review expired from the Expired section header", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+
+  fireEvent.press(screen.getByText("Review"));
+
+  expect(mockPush).toHaveBeenCalledWith("/review-expired");
+});
+
+it("swipes away only the unexpired batches of a row, leaving the expired one for review", async () => {
+  mockLots.current = [
+    lotRow("milk-old", milk, -2, "fridge", 500),
+    lotRow("milk-new", milk, 4, "fridge", 1000),
+  ];
+  renderScreen();
+  await screen.findByText("1 item · 1 expired");
+  const milkRow = screen.getAllByTestId("swipe-row").find((row) => within(row).queryByText("Milk"));
+
+  fireEvent.press(within(milkRow!).getByLabelText("Used up"));
+
+  await waitFor(() =>
+    expect(mockRpc).toHaveBeenCalledWith("deplete_lots", {
+      p_household_id: "household-1",
+      p_lot_ids: ["milk-new"],
+      p_reason: "used",
+    }),
+  );
+});
+
+it("offers no review when nothing has expired", async () => {
+  mockLots.current = [lotRow("milk-new", milk, 4, "fridge", 1000)];
+  renderScreen();
+  await screen.findByText("1 item · 0 expired");
+
+  expect(screen.queryByText(/Review/)).toBeNull();
 });
 
 it("opens the collapsed Fresh section to show a just-added batch", async () => {

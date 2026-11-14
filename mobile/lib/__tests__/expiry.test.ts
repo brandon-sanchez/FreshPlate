@@ -1,4 +1,4 @@
-import { daysUntilExpiration } from "@/lib/expiry";
+import { dateInDays, daysUntilExpiration } from "@/lib/expiry";
 
 describe("daysUntilExpiration", () => {
   function localDateString(date: Date): string {
@@ -26,5 +26,17 @@ describe("daysUntilExpiration", () => {
     const future = new Date();
     future.setDate(future.getDate() + 7);
     expect(daysUntilExpiration(localDateString(future))).toBe(7);
+  });
+});
+
+describe("dateInDays", () => {
+  afterEach(() => jest.useRealTimers());
+
+  it("counts local calendar days, so a late-evening date does not slip to the next day", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date(2026, 11, 30, 23, 30));
+
+    expect(dateInDays(0)).toBe("2026-12-30");
+    expect(dateInDays(7)).toBe("2027-01-06");
   });
 });

@@ -15,9 +15,20 @@ export type FoodRow = {
   isLeftover: boolean;
   /** Never empty. Soonest expiry first, undated lots last. */
   lots: InventoryItem[];
-  /** Sum of the lots' quantities, in `unit`. */
+  /**
+   * Sum of the unexpired lots' quantities, in `unit`, because expired stock
+   * is not available until someone reviews it. When every lot has expired,
+   * the sum of the expired lots, so an Expired row still says how much is
+   * waiting for review.
+   */
   total: number;
-  /** True when any lot's amount is an estimate, so the total reads "about". */
+  /**
+   * The lots summed in `total`: the unexpired lots, or every lot when all
+   * have expired. Swipe actions on the row record only these, so a swipe on
+   * a fresh row leaves its expired batches for Review expired.
+   */
+  countedLots: InventoryItem[];
+  /** True when any lot counted in `total` is an estimate, so the total reads "about". */
   isEstimate: boolean;
   /** Distinct locations of the lots, in fridge, freezer, pantry order. */
   locations: StorageLocation[];
@@ -150,6 +161,16 @@ export function inDrawOrder(lots: InventoryItem[]): DrawnLot[] {
   return ordered;
 }
 
+/**
+ * Returns the expired lots among `lots`, across all foods, most overdue
+ * first, then by food name. These are the batches waiting for review.
+ */
+export function expiredLots(lots: InventoryItem[]): DrawnLot[] {
+  return inDrawOrder(lots)
+    .filter((d) => d.expired)
+    .sort((a, b) => a.days! - b.days! || a.lot.name.localeCompare(b.lot.name));
+}
+
 function inSection(sectionKey: string, rows: FoodRow[]): FoodRow[] {
   return rows.map((row) => ({ ...row, key: `${sectionKey}:${row.foodId}` }));
 }
@@ -160,7 +181,8 @@ function toRow(group: InventoryItem[]): FoodRow {
   const lots = withDays.map((d) => d.lot);
   const expired = withDays.filter((d) => d.days !== null && d.days < 0);
   const unexpired = withDays.filter((d) => d.days === null || d.days >= 0);
-  const days = unexpired.length ? unexpired[0].days : expired[0].days;
+  const counted = unexpired.length ? unexpired : expired;
+  const { days } = counted[0];
   const [first] = lots;
 
   return {
@@ -171,8 +193,9 @@ function toRow(group: InventoryItem[]): FoodRow {
     category: first.category,
     isLeftover: first.is_leftover,
     lots,
-    total: lots.reduce((sum, lot) => sum + lot.quantity, 0),
-    isEstimate: lots.some((lot) => lot.is_estimate),
+    countedLots: counted.map((d) => d.lot),
+    total: counted.reduce((sum, d) => sum + d.lot.quantity, 0),
+    isEstimate: counted.some((d) => d.lot.is_estimate),
     locations: LOCATIONS.filter((loc) => lots.some((lot) => lot.storage_location === loc)),
     days,
     urgency: urgencyOf(days),

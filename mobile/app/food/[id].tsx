@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { useIsFocused } from "@react-navigation/native";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useTheme } from "@/hooks/useTheme";
 import LoadingState from "@/components/LoadingState";
@@ -9,6 +8,7 @@ import ErrorState from "@/components/ErrorState";
 import BatchCard from "@/components/BatchCard";
 import LotOutcomeSwipe from "@/components/LotOutcomeSwipe";
 import { useInventoryItems } from "@/hooks/useInventoryItems";
+import { useLeaveWhenEmptied } from "@/hooks/useLeaveWhenEmptied";
 import { inDrawOrder, stackLots } from "@/lib/foodRows";
 import { formatAmount } from "@/lib/amount";
 
@@ -145,26 +145,4 @@ export default function FoodDetailScreen() {
       </ScrollView>
     </View>
   );
-}
-
-/**
- * Goes back once a screen that had content this visit loses it, and returns
- * true from then on so the screen can render blank while it leaves. Waits
- * while another screen is on top, such as the batch editor whose delete
- * emptied this one, and leaves when this screen is shown again.
- *
- * @param hasContent - Whether the screen has anything to show right now.
- */
-function useLeaveWhenEmptied(hasContent: boolean): boolean {
-  const router = useRouter();
-  const isFocused = useIsFocused();
-  const [hadContent, setHadContent] = useState(false);
-  if (hasContent && !hadContent) setHadContent(true);
-  const emptied = hadContent && !hasContent;
-
-  useEffect(() => {
-    if (emptied && isFocused) router.back();
-  }, [emptied, isFocused, router]);
-
-  return emptied;
 }

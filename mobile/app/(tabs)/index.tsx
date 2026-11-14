@@ -293,6 +293,7 @@ export default function HomeScreen() {
           useSoonCount={useThisWeekCount}
           expiredCount={expired.length}
           onPress={() => router.push("/(tabs)/inventory")}
+          onExpiredPress={() => router.push("/review-expired")}
         />
       </View>
 
@@ -321,7 +322,7 @@ export default function HomeScreen() {
               title="Expired"
               tone="crit"
               count={expired.length}
-              onSeeAll={() => router.push("/(tabs)/inventory")}
+              onSeeAll={() => router.push("/review-expired")}
             >
               {expired.slice(0, 3).map((row) => (
                 <InventoryRow
@@ -434,11 +435,13 @@ function StatRow({
   useSoonCount,
   expiredCount,
   onPress,
+  onExpiredPress,
 }: {
   inventoryCount: number;
   useSoonCount: number;
   expiredCount: number;
   onPress: () => void;
+  onExpiredPress: () => void;
 }) {
   const { colors, fonts } = useTheme();
   return (
@@ -456,7 +459,7 @@ function StatRow({
         label="Expired"
         value={expiredCount}
         warn={expiredCount > 0}
-        onPress={onPress}
+        onPress={onExpiredPress}
         colors={colors}
         fonts={fonts}
       />
