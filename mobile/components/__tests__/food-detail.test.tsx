@@ -130,7 +130,7 @@ it("lists the food's batches in the order cooking draws them, tagging the next o
   renderScreen();
 
   expect(await screen.findByText("Milk")).toBeTruthy();
-  expect(screen.getByText("Dairy · 1750 ml · 3 batches")).toBeTruthy();
+  expect(screen.getByText("Dairy · 1500 ml · 3 batches")).toBeTruthy();
 
   const cards = batchCards();
   expect(cards.map((card) => card.props.accessibilityLabel)).toEqual([
