@@ -21,7 +21,11 @@ jest.mock("@/stores/auth", () => {
   return { useAuthStore };
 });
 
-import { StockUnitMismatchError, useAddItem } from "@/hooks/useAddItem";
+import {
+  AddItemInput,
+  StockUnitMismatchError,
+  useAddItem,
+} from "@/hooks/useAddItem";
 import { useAuthStore } from "@/stores/auth";
 
 let client: QueryClient;
@@ -30,25 +34,32 @@ function wrapper({ children }: { children: React.ReactNode }) {
   return React.createElement(QueryClientProvider, { client }, children);
 }
 
-const validInput = {
+const validInput: AddItemInput = {
   name: "Spinach",
   category_id: "cat-1",
-  quantity: 1,
-  unit: "bag",
+  amount: { stockBase: "each", eachLabel: "bag", quantity: 1 },
   expiration_date: "2026-06-01",
-  storage_location: "fridge" as const,
+  storage_location: "fridge",
   notes: null,
 };
 
 function rpcResolves(lotMerged: boolean) {
   mockRpc.mockResolvedValue({
-    data: { food_id: "food-1", lot_id: "lot-1", food_created: !lotMerged, lot_merged: lotMerged },
+    data: {
+      food_id: "food-1",
+      lot_id: "lot-1",
+      food_created: !lotMerged,
+      lot_merged: lotMerged,
+    },
     error: null,
   });
 }
 
 function rpcFailsWith(message: string, details: string | null) {
-  mockRpc.mockResolvedValue({ data: null, error: { message, code: "22023", details } });
+  mockRpc.mockResolvedValue({
+    data: null,
+    error: { message, code: "22023", details },
+  });
 }
 
 describe("useAddItem", () => {
@@ -68,10 +79,13 @@ describe("useAddItem", () => {
     });
   });
 
-  it("adds a counted batch through add_lot with the singular unit as its label", async () => {
+  it("adds a counted batch through add_lot with its each label and no package", async () => {
     const invalidate = jest.spyOn(client, "invalidateQueries");
     const { result } = renderHook(() => useAddItem(), { wrapper });
-    result.current.mutate({ ...validInput, quantity: 2, unit: "Bags" });
+    result.current.mutate({
+      ...validInput,
+      amount: { stockBase: "each", eachLabel: "bag", quantity: 2 },
+    });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
@@ -84,21 +98,50 @@ describe("useAddItem", () => {
       p_expiration_date: "2026-06-01",
       p_category_id: "cat-1",
       p_each_label: "bag",
+      p_package_size: null,
+      p_package_label: null,
       p_notes: null,
     });
     expect(result.current.data).toEqual({ id: "lot-1", merged: false });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["inventory"] });
   });
 
-  it("converts a table unit into the food's stock base", async () => {
+  it.each<[string, AddItemInput["amount"], Record<string, unknown>]>([
+    [
+      "a loose weight",
+      { stockBase: "g", quantity: 1500, package: null },
+      {
+        p_stock_base: "g",
+        p_quantity: 1500,
+        p_each_label: null,
+        p_package_size: null,
+        p_package_label: null,
+      },
+    ],
+    [
+      "packages of a known size",
+      {
+        stockBase: "ml",
+        quantity: 2000,
+        package: { label: "bottle", size: 1000 },
+      },
+      {
+        p_stock_base: "ml",
+        p_quantity: 2000,
+        p_each_label: null,
+        p_package_size: 1000,
+        p_package_label: "bottle",
+      },
+    ],
+  ])("adds %s as a measured lot", async (_, amount, args) => {
     const { result } = renderHook(() => useAddItem(), { wrapper });
-    result.current.mutate({ ...validInput, name: "Rice", quantity: 1.5, unit: "kg" });
+    result.current.mutate({ ...validInput, name: "Milk", amount });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
     expect(mockRpc).toHaveBeenCalledWith(
       "add_lot",
-      expect.objectContaining({ p_stock_base: "g", p_quantity: 1500, p_each_label: null }),
+      expect.objectContaining(args),
     );
   });
 
@@ -121,7 +164,9 @@ describe("useAddItem", () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.error).toBeInstanceOf(StockUnitMismatchError);
-    expect((result.current.error as StockUnitMismatchError).trackedUnit).toBe(trackedUnit);
+    expect((result.current.error as StockUnitMismatchError).trackedUnit).toBe(
+      trackedUnit,
+    );
   });
 
   it("surfaces other RPC errors unchanged", async () => {
@@ -131,7 +176,9 @@ describe("useAddItem", () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.error).not.toBeInstanceOf(StockUnitMismatchError);
-    expect(result.current.error?.message).toBe("Quantity must be finite and positive");
+    expect(result.current.error?.message).toBe(
+      "Quantity must be finite and positive",
+    );
   });
 
   it("throws when the user is not signed in", async () => {

@@ -16,27 +16,29 @@ import {
 } from "@/hooks/useAddItem";
 import { useBarcodeLookup, isValidBarcode } from "@/hooks/useBarcodeLookup";
 import { FoodCategory, useFoodCategories } from "@/hooks/useFoodCategories";
-import {
-  defaultStorageForCategory,
-  matchCategory,
-  parseQuantity,
-} from "@/lib/categoryMatch";
+import { defaultStorageForCategory, matchCategory } from "@/lib/categoryMatch";
+import { draftFromBarcode } from "@/lib/lotAmount";
 import { BarcodeProduct } from "@/types/barcode";
 
 function buildDefaults(
   product: BarcodeProduct,
   matchedCategory: FoodCategory | null,
 ): ItemFormDefaults {
-  const parsedQty = parseQuantity(product.quantity);
   return {
     name: (product.name ?? product.brand ?? "").trim(),
     categoryId: matchedCategory?.id ?? null,
     storage: defaultStorageForCategory(matchedCategory),
-    quantity: parsedQty ? String(parsedQty.quantity) : "1",
-    unit: parsedQty ? parsedQty.unit : "item",
+    amount: draftFromBarcode(product.quantity),
+    // Open Food Facts categories are often wrong for the shelf (butter filed
+    // under beverages), so the user confirms the match with one tap.
+    confirmCategory: true,
     /* expDays omitted so ItemForm seeds the USDA default after the category
      * resolves. */
   };
+}
+
+function barcodeNote(product: BarcodeProduct): string | null {
+  return product.quantity ? `Open Food Facts: ${product.quantity}` : null;
 }
 
 function buildSubtitle(
@@ -51,6 +53,13 @@ function buildSubtitle(
   return parts.join(" · ");
 }
 
+/**
+ * Looks up the scanned `barcode` route param on Open Food Facts and shows the
+ * add form pre-filled with the product as one package. The category matched
+ * from the product stays a guess until the user taps a category chip, unless
+ * the name matches a household food. The add stores the product's quantity
+ * text, when it has one, as the lot's note.
+ */
 export default function ScanReviewScreen() {
   const { colors, fonts, card } = useTheme();
   const router = useRouter();
@@ -116,7 +125,11 @@ export default function ScanReviewScreen() {
                     justifyContent: "center",
                   }}
                 >
-                  <FontAwesome name="exclamation" size={22} color={colors.accent} />
+                  <FontAwesome
+                    name="exclamation"
+                    size={22}
+                    color={colors.accent}
+                  />
                 </View>
               }
               title="No barcode"
@@ -125,7 +138,7 @@ export default function ScanReviewScreen() {
               onCtaPress={() => router.back()}
             />
           </ScrollView>
-        ) : lookup.isLoading || lookup.isFetching && !lookup.data ? (
+        ) : lookup.isLoading || (lookup.isFetching && !lookup.data) ? (
           <View
             style={{
               flex: 1,
@@ -169,7 +182,11 @@ export default function ScanReviewScreen() {
                     justifyContent: "center",
                   }}
                 >
-                  <FontAwesome name="question" size={22} color={colors.accent} />
+                  <FontAwesome
+                    name="question"
+                    size={22}
+                    color={colors.accent}
+                  />
                 </View>
               }
               title="Product not found"
@@ -180,10 +197,10 @@ export default function ScanReviewScreen() {
           </ScrollView>
         ) : (
           <ItemForm
+            // The key changes when the categories load after the lookup, so
+            // the form remounts with the matched category.
+            key={`${product.barcode}:${matchedCategory?.id ?? "none"}`}
             categories={categories}
-            /* `resetKey` bumps when the matched category id changes so the
-             * form re-seeds once `useFoodCategories` resolves after the lookup. */
-            resetKey={`${product.barcode}:${matchedCategory?.id ?? "none"}`}
             defaults={defaults ?? undefined}
             submitLabel="Add to inventory"
             submittingLabel="Adding…"
@@ -203,18 +220,21 @@ export default function ScanReviewScreen() {
             }
             onSubmit={(input) => {
               const addedName = input.name;
-              addItem.mutate(input, {
-                onSuccess: (result) => {
-                  Toast.show(addItemSuccessToast(result, addedName));
-                  router.replace({
-                    pathname: "/(tabs)/inventory",
-                    params: { added: result.id },
-                  });
+              addItem.mutate(
+                { ...input, notes: barcodeNote(product) },
+                {
+                  onSuccess: (result) => {
+                    Toast.show(addItemSuccessToast(result, addedName));
+                    router.replace({
+                      pathname: "/(tabs)/inventory",
+                      params: { added: result.id },
+                    });
+                  },
+                  onError: (error) => {
+                    Toast.show(addItemErrorToast(error, addedName));
+                  },
                 },
-                onError: (error) => {
-                  Toast.show(addItemErrorToast(error, addedName));
-                },
-              });
+              );
             }}
           />
         )}
@@ -231,7 +251,13 @@ type ReviewHeaderProps = {
   card: ReturnType<typeof useTheme>["card"];
 };
 
-function ReviewHeader({ product, subtitle, colors, fonts, card }: ReviewHeaderProps) {
+function ReviewHeader({
+  product,
+  subtitle,
+  colors,
+  fonts,
+  card,
+}: ReviewHeaderProps) {
   const displayName =
     product.name?.trim() || product.brand?.trim() || "Unknown product";
 
