@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
+import type { StorageLocation } from "@/types/inventory";
 
-export type StorageLocation = "fridge" | "freezer" | "pantry";
+export type { StorageLocation };
 
 export type FoodCategory = {
   id: string;
