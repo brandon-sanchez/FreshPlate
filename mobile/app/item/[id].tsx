@@ -10,7 +10,7 @@ import {
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import Slider from "@react-native-community/slider";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "@/hooks/useTheme";
 import SegmentedControl from "@/components/SegmentedControl";

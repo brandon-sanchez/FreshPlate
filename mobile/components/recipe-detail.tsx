@@ -8,7 +8,7 @@ import {
 } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
-import Toast from "react-native-toast-message";
+import { ToastHost } from "@/components/toastConfig";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RecipePressable } from "@/components/recipe-motion";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
@@ -227,7 +227,7 @@ export default function RecipeDetail({
               <Feather name="bookmark" size={19} color="#1B1F1C" />
             )}
           </RecipePressable>
-          <Toast topOffset={insets.top + 60} />
+          <ToastHost bottomInset={insets.bottom} />
         </View>
       )}
     </Modal>
