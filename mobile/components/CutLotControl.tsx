@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Keyboard, Pressable, Text, TextInput, View } from "react-native";
+import Feather from "@expo/vector-icons/Feather";
 import Toast from "react-native-toast-message";
 import { useTheme } from "@/hooks/useTheme";
 import ChoiceChips, { type Choice } from "@/components/ChoiceChips";
-import SectionLabel from "@/components/SectionLabel";
 import type { InventoryItem } from "@/hooks/useInventoryItems";
 import { useCutLot } from "@/hooks/useCutLot";
 import { formatAmount } from "@/lib/amount";
@@ -20,14 +20,16 @@ type CutLotControlProps = {
 const SHORTER_DAYS = [5, 3, 1] as const;
 
 /**
- * Renders a labelled section that cuts up or opens part of a batch, such as
- * one sliced apple of five, into its own opened batch that cooking uses first.
- * The person types the amount and picks the cut part's date from the batch's
- * own date or a sooner one, never a later one.
+ * Renders a collapsed "Cut up or open part" row that expands in place into a
+ * form for cutting up or opening part of a batch, such as one sliced apple of
+ * five, into its own opened batch that cooking uses first. The person types
+ * the amount and picks how soon to use the cut part: the batch's own date or a
+ * sooner one, never a later one.
  */
 function CutLotControl({ lot, onCut }: CutLotControlProps) {
   const { colors, fonts } = useTheme();
   const cutLot = useCutLot();
+  const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
   const [days, setDays] = useState<number | null>(null);
 
@@ -64,9 +66,40 @@ function CutLotControl({ lot, onCut }: CutLotControlProps) {
     ...sooner.map((d) => ({ key: String(d), label: `${d} day${d === 1 ? "" : "s"}`, value: d })),
   ];
 
+  const toggle = (
+    <Pressable
+      onPress={() => setOpen((o) => !o)}
+      accessibilityRole="button"
+      accessibilityLabel="Cut up or open part"
+      accessibilityState={{ expanded: open }}
+      style={{
+        height: 48,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 14,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
+      }}
+    >
+      <Text style={{ fontFamily: fonts.body, fontSize: 15, color: colors.text }}>
+        Cut up or open part
+      </Text>
+      <Feather
+        name={open ? "chevron-down" : "chevron-right"}
+        size={18}
+        color={colors.textMuted}
+      />
+    </Pressable>
+  );
+
+  if (!open) return toggle;
+
   return (
     <>
-      <SectionLabel text="Cut up or open part" />
+      {toggle}
       <View
         style={{
           height: 48,
@@ -94,7 +127,7 @@ function CutLotControl({ lot, onCut }: CutLotControlProps) {
         </Text>
       </View>
       <Text style={{ fontFamily: fonts.body, fontSize: 12.5, color: colors.textMuted }}>
-        Cut part expires
+        Use within
       </Text>
       <View style={{ marginTop: -8 }}>
         <ChoiceChips choices={choices} selected={days} onSelect={setDays} />
