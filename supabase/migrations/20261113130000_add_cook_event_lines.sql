@@ -72,6 +72,7 @@ DECLARE
     v_food_ids UUID[] := ARRAY[]::UUID[];
     v_lines JSONB[] := ARRAY[]::JSONB[];
     v_line_food_ids UUID[] := ARRAY[]::UUID[];
+    v_line_claims BOOLEAN[] := ARRAY[]::BOOLEAN[];
     v_line_draws JSONB[] := ARRAY[]::JSONB[];
     v_line_shortfalls NUMERIC[] := ARRAY[]::NUMERIC[];
     v_live UUID[];
@@ -159,22 +160,23 @@ BEGIN
     v_live := public.lock_live_foods(p_household_id, v_food_ids || v_line_food_ids);
     v_food_ids := v_live[1:v_n];
     v_line_food_ids := v_live[v_n + 1:];
-    -- The cook planner sums every line of a food into one amount, so two lines
-    -- reaching one food (a food and its own lot, or two merged foods) are a
-    -- client bug, not two draws.
+    -- The cook planner sums every line of a food into one deduction, so two
+    -- deductions reaching one food (a food and its own lot, or two merged
+    -- foods) are a client bug, not two draws.
     IF (SELECT count(DISTINCT id) FROM unnest(v_food_ids) id) <> v_n THEN
         RAISE EXCEPTION 'DUPLICATE_FOOD' USING ERRCODE = '22023',
             DETAIL = 'Each food may appear in one deduction line only';
     END IF;
 
     -- A line claims part of a deduction when it has a stock amount and is not
-    -- Small. Every deduction needs a claiming line and every claiming line a
+    -- small. Every deduction needs a claiming line and every claiming line a
     -- deduction, so each drawn amount is accounted for by some ingredient.
     FOR i IN 1 .. cardinality(v_lines) LOOP
         v_line_draws := v_line_draws || '[]'::jsonb;
         v_line_shortfalls := v_line_shortfalls || 0::NUMERIC;
-        IF v_lines[i]->>'mode' <> 'small' AND v_lines[i]->>'stock_amount' IS NOT NULL
-            AND NOT v_line_food_ids[i] = ANY(v_food_ids) THEN
+        v_line_claims := v_line_claims
+            || (v_lines[i]->>'mode' <> 'small' AND v_lines[i]->>'stock_amount' IS NOT NULL);
+        IF v_line_claims[i] AND NOT v_line_food_ids[i] = ANY(v_food_ids) THEN
             RAISE EXCEPTION 'LINES_MISMATCH' USING ERRCODE = '22023',
                 DETAIL = format('Line %s draws from a food with no deduction', i);
         END IF;
@@ -183,9 +185,7 @@ BEGIN
     FOR i IN 1 .. v_n LOOP
         v_claims := ARRAY(
             SELECT k FROM generate_subscripts(v_lines, 1) k
-            WHERE v_line_food_ids[k] = v_food_ids[i]
-              AND v_lines[k]->>'mode' <> 'small'
-              AND v_lines[k]->>'stock_amount' IS NOT NULL
+            WHERE v_line_claims[k] AND v_line_food_ids[k] = v_food_ids[i]
             ORDER BY k);
         IF cardinality(v_claims) = 0 THEN
             RAISE EXCEPTION 'LINES_MISMATCH' USING ERRCODE = '22023',

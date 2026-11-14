@@ -57,7 +57,6 @@ def j(value: object) -> str:
 
 
 def draw_lines(deductions) -> list[dict]:
-    """One draw line per deduction, for tests about the deduction itself."""
     return [
         {
             "ingredient": "ingredient", "inventory_item_id": d["inventory_item_id"],
