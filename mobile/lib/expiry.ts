@@ -22,8 +22,12 @@ export function daysUntilExpiration(expirationDate: string | null): number | nul
  */
 export function dateInDays(days: number): string {
   const now = new Date();
-  const t = new Date(now.getFullYear(), now.getMonth(), now.getDate() + days);
-  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+  return toLocalIsoDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() + days));
+}
+
+/** Returns the local calendar day of `date` as `YYYY-MM-DD`, ignoring its time. */
+export function toLocalIsoDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 /**

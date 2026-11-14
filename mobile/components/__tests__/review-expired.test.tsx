@@ -36,6 +36,18 @@ jest.mock("expo-router", () => ({
   useRouter: () => ({ push: jest.fn(), back: mockBack }),
 }));
 jest.mock("@expo/vector-icons/FontAwesome", () => () => null);
+const mockPickerChange = { current: (_date: Date) => {} };
+jest.mock("@react-native-community/datetimepicker", () => {
+  const { View } = jest.requireActual("react-native");
+  return {
+    __esModule: true,
+    default: ({ onChange, testID }: { onChange: (e: unknown, d: Date) => void; testID: string }) => {
+      mockPickerChange.current = (date: Date) => onChange({ type: "set" }, date);
+      return <View testID={testID} />;
+    },
+    DateTimePickerAndroid: { open: jest.fn() },
+  };
+});
 jest.mock("@react-navigation/native", () => ({
   ...jest.requireActual("@react-navigation/native"),
   useIsFocused: () => true,
@@ -143,8 +155,8 @@ it("lists only expired batches, most overdue first", async () => {
 
   expect(await screen.findByText("2 expired batches")).toBeTruthy();
   expect(screen.getAllByLabelText(/Expired \d+ days ago/).map((c) => c.props.accessibilityLabel)).toEqual([
-    "Eggs, 6 egg, Fridge, Expired 9 days ago",
-    "Milk, 500 ml, Fridge, Expired 2 days ago",
+    "Eggs, 6 egg, Expired 9 days ago",
+    "Milk, 500 ml, Expired 2 days ago",
   ]);
 });
 
@@ -173,7 +185,7 @@ it("tosses every expired batch at once after confirming, and leaves the fresh on
   await screen.findByText("2 expired batches");
 
   fireEvent.press(screen.getByLabelText("Toss all"));
-  expect(alertSpy.mock.calls[0][0]).toBe("Toss 2 expired batches?");
+  expect(alertSpy.mock.calls[0][0]).toBe("Toss 2 batches?");
   answerAlert("Toss all");
 
   await waitFor(() =>
@@ -205,6 +217,30 @@ it("keeps a batch that is still good with the date picked", async () => {
   await waitFor(() =>
     expect(mockUpdate).toHaveBeenCalledWith("milk-old", { expiration_date: inDays(7) }),
   );
+});
+
+it("keeps a batch until an exact date picked from the calendar", async () => {
+  renderScreen();
+  await screen.findByText("2 expired batches");
+
+  fireEvent.press(within(card("Milk")).getByText("Still good"));
+  fireEvent.press(within(card("Milk")).getByText("Pick a date…"));
+  const [y, m, d] = inDays(10).split("-").map(Number);
+  act(() => mockPickerChange.current(new Date(y, m - 1, d, 15, 30)));
+  fireEvent.press(within(card("Milk")).getByText(/^Keep until /));
+
+  await waitFor(() =>
+    expect(mockUpdate).toHaveBeenCalledWith("milk-old", { expiration_date: inDays(10) }),
+  );
+});
+
+it("says nothing expired when opened with no expired batches", async () => {
+  mockLots.current = [lotRow("milk-fresh", milk, 4, 1000)];
+  renderScreen();
+
+  expect(await screen.findByText("Nothing expired")).toBeTruthy();
+  expect(screen.queryByLabelText("Toss all")).toBeNull();
+  expect(mockBack).not.toHaveBeenCalled();
 });
 
 it("lets a Still good choice be cancelled", async () => {
