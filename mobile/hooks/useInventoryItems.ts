@@ -13,6 +13,8 @@ type Category = {
  * own amount, date and location. `id` is the lot id, and `quantity` is in
  * `unit`, the food's stock unit ("g", "ml", or a count word such as "can").
  * `is_leftover` is true when the food is in the Leftovers category.
+ * `opened_at` is when the lot was first opened (`null` while sealed), and
+ * `created_at` is when it was added; both are ISO timestamps.
  */
 export type InventoryItem = {
   id: string;
@@ -25,6 +27,8 @@ export type InventoryItem = {
   is_leftover: boolean;
   notes: string | null;
   added_by: string | null;
+  opened_at: string | null;
+  created_at: string;
   category: Category | null;
 };
 
@@ -35,13 +39,20 @@ type FoodRow = { id: string; name: string; category: Category | null } & (
 
 type LotRow = Pick<
   InventoryItem,
-  "id" | "quantity" | "expiration_date" | "storage_location" | "notes" | "added_by"
+  | "id"
+  | "quantity"
+  | "expiration_date"
+  | "storage_location"
+  | "notes"
+  | "added_by"
+  | "opened_at"
+  | "created_at"
 > & { food: FoodRow };
 
 const LEFTOVERS_CATEGORY = "Leftovers";
 
 const SELECT = `
-  id, quantity, expiration_date, storage_location, notes, added_by,
+  id, quantity, expiration_date, storage_location, notes, added_by, opened_at, created_at,
   food:food_stock!inner(id, name, stock_base, each_label, category:food_categories(id, name, icon))
 ` as const;
 

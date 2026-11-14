@@ -1,5 +1,5 @@
 import type { InventoryItem } from "@/hooks/useInventoryItems";
-import { groupFoodRows, stackLots, type FoodSection } from "@/lib/foodRows";
+import { groupFoodRows, inDrawOrder, stackLots, type DrawnLot, type FoodSection } from "@/lib/foodRows";
 
 const TODAY = new Date(2026, 10, 8, 12);
 
@@ -23,6 +23,8 @@ function lot(overrides: Partial<InventoryItem> & Pick<InventoryItem, "id" | "foo
     is_leftover: false,
     notes: null,
     added_by: null,
+    opened_at: null,
+    created_at: "2026-11-01T12:00:00+00:00",
     category: null,
     ...overrides,
   };
@@ -84,11 +86,6 @@ describe("stackLots", () => {
     const [row] = stackLots([milk("old", -2), milk("undated", null)]);
 
     expect(row).toMatchObject({ days: null, urgency: "fresh", expiredLots: 1 });
-  });
-
-  it("exposes the only batch of a single-batch row and none for a stacked row", () => {
-    expect(stackLots([milk("only", 3)])[0].soleLot?.id).toBe("only");
-    expect(stackLots([milk("a", 3), milk("b", 5)])[0].soleLot).toBeNull();
   });
 
   it("reports the most overdue batch when every batch has expired", () => {
@@ -184,5 +181,55 @@ describe("groupFoodRows", () => {
       ["Uncategorized", ["Mystery jar"]],
     ]);
     expect(section(sections, "cat-dairy").data[0].lots).toHaveLength(2);
+  });
+});
+
+describe("inDrawOrder", () => {
+  const ids = (drawn: DrawnLot[]) => drawn.map((d) => d.lot.id);
+  const useFirst = (drawn: DrawnLot[]) => drawn.filter((d) => d.useFirst).map((d) => d.lot.id);
+
+  it("draws an opened batch before a sealed one that expires sooner", () => {
+    const drawn = inDrawOrder([
+      milk("sealed", 2),
+      milk("opened", 6, { opened_at: "2026-11-07T08:00:00+00:00" }),
+    ]);
+
+    expect(ids(drawn)).toEqual(["opened", "sealed"]);
+    expect(useFirst(drawn)).toEqual(["opened"]);
+  });
+
+  it("draws the soonest-expiring batch next, undated batches after dated ones", () => {
+    expect(ids(inDrawOrder([milk("undated", null), milk("late", 9), milk("soon", 1)]))).toEqual([
+      "soon",
+      "late",
+      "undated",
+    ]);
+  });
+
+  it("breaks ties by the oldest added batch", () => {
+    const drawn = inDrawOrder([
+      milk("newer", 4, { created_at: "2026-11-06T12:00:00+00:00" }),
+      milk("older", 4, { created_at: "2026-11-02T12:00:00+00:00" }),
+    ]);
+
+    expect(ids(drawn)).toEqual(["older", "newer"]);
+  });
+
+  it("puts expired batches last and never marks one to use first", () => {
+    const drawn = inDrawOrder([
+      milk("expired", -3, { opened_at: "2026-11-01T08:00:00+00:00" }),
+      milk("fresh", 5),
+    ]);
+
+    expect(ids(drawn)).toEqual(["fresh", "expired"]);
+    expect(drawn.map((d) => d.expired)).toEqual([false, true]);
+    expect(useFirst(drawn)).toEqual(["fresh"]);
+  });
+
+  it("marks no batch to use first when every batch has expired", () => {
+    const drawn = inDrawOrder([milk("a", -1), milk("b", -4)]);
+
+    expect(ids(drawn)).toEqual(["b", "a"]);
+    expect(useFirst(drawn)).toEqual([]);
   });
 });

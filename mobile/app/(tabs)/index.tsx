@@ -327,7 +327,7 @@ export default function HomeScreen() {
                 <InventoryRow
                   key={row.key}
                   row={row}
-                  onPress={() => router.push(`/item/${row.lots[0].id}`)}
+                  onPress={() => router.push(`/food/${row.foodId}`)}
                 />
               ))}
             </Section>
@@ -343,7 +343,7 @@ export default function HomeScreen() {
                 <InventoryRow
                   key={row.key}
                   row={row}
-                  onPress={() => router.push(`/item/${row.lots[0].id}`)}
+                  onPress={() => router.push(`/food/${row.foodId}`)}
                 />
               ))}
             </Section>

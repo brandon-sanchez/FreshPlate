@@ -19,7 +19,6 @@ import Toast from "react-native-toast-message";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { toastConfig } from "@/components/toastConfig";
-import CenterToast from "@/components/CenterToast";
 import { bindActiveCookAuthLifecycle } from "@/stores/activeCook";
 
 const queryClient = new QueryClient({
@@ -127,7 +126,11 @@ function RootLayoutNav() {
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
               <Stack.Screen
                 name="item/[id]"
-                options={{ title: "Item", headerBackTitle: "Inventory" }}
+                options={{ title: "Batch" }}
+              />
+              <Stack.Screen
+                name="food/[id]"
+                options={{ title: "" }}
               />
               <Stack.Screen
                 name="set-name"
@@ -140,7 +143,6 @@ function RootLayoutNav() {
             </Stack>
           </ThemeProvider>
           <SafeAreaToast />
-          <CenterToast />
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
