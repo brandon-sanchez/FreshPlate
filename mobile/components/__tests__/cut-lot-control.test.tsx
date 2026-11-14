@@ -52,6 +52,7 @@ function renderControl(lot: InventoryItem) {
       <CutLotControl lot={lot} onCut={onCut} />
     </QueryClientProvider>,
   );
+  fireEvent.press(screen.getByRole("button", { name: "Cut up or open part" }));
 }
 
 beforeEach(() => {
@@ -59,6 +60,24 @@ beforeEach(() => {
   mockRpc.mockResolvedValue({ error: null });
   onCut.mockReset();
   (Toast.show as jest.Mock).mockReset();
+});
+
+it("starts collapsed and expands in place", () => {
+  const client = new QueryClient();
+  render(
+    <QueryClientProvider client={client}>
+      <CutLotControl lot={apples()} onCut={onCut} />
+    </QueryClientProvider>,
+  );
+  const toggle = screen.getByRole("button", { name: "Cut up or open part" });
+
+  expect(toggle.props.accessibilityState).toMatchObject({ expanded: false });
+  expect(screen.queryByLabelText("Amount to cut up, in apple")).toBeNull();
+
+  fireEvent.press(toggle);
+
+  expect(screen.getByLabelText("Amount to cut up, in apple")).toBeTruthy();
+  expect(screen.getByText("Use within")).toBeTruthy();
 });
 
 it("cuts the typed amount with a shorter date and reports it", async () => {
