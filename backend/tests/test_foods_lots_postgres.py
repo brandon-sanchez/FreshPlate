@@ -5,9 +5,6 @@
 
 from __future__ import annotations
 
-import subprocess
-import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
 import pytest
@@ -17,14 +14,13 @@ from tests.pg_support import (
     DSN,
     FOODS_MIGRATIONS,
     OTHER,
-    PSQL,
     USER,
     add_lot,
     add_lot_sql,
     disposable_database,
     household,
     q,
-    session_prefix,
+    while_holding,
 )
 
 pytestmark = pytest.mark.skipif(not DSN, reason="Requires disposable local PostgreSQL")
@@ -52,34 +48,6 @@ def lots(db: DB, food_id: str):
 
 def count(db: DB, sql: str, **kwargs) -> int:
     return int(db.run(f"SELECT count(*) FROM {sql}", **kwargs))
-
-
-def while_holding(db: DB, hold_sql: str, action, *, role=None, user=None):
-    """Run action while another session holds hold_sql's locks in an open transaction.
-
-    Commits the holder only after action is seen waiting on a lock, so every
-    caller exercises real overlap, then returns action's result.
-    """
-    proc = subprocess.Popen(
-        [*PSQL, db.dsn],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-    )
-    proc.stdin.write(session_prefix(role, user) + f"BEGIN; {hold_sql} SELECT 'holding';\n")
-    proc.stdin.flush()
-    while (line := proc.stdout.readline()) and line.strip() != "holding":
-        pass
-    assert line.strip() == "holding", proc.stderr.read()
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(action)
-        deadline = time.monotonic() + 5
-        waiting = "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
-        while db.run(waiting) == "0":
-            assert time.monotonic() < deadline and not future.done(), "action never waited on the held lock"
-            time.sleep(0.05)
-        proc.stdin.write("COMMIT;\n")
-        proc.stdin.close()
-        assert proc.wait(timeout=10) == 0, proc.stderr.read()
-        return future.result(timeout=10)
 
 
 def test_food_name_key_ignores_case_and_spacing(database):
