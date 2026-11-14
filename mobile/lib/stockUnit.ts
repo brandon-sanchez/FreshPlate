@@ -3,6 +3,9 @@
 // backend/app/inventory/backfill.py. backend/tests/fixtures/stock_unit_cases.json
 // holds the cases both sides must read the same way.
 
+/** A stock base measured by weight (g) or volume (ml). */
+export type MeasuredBase = "g" | "ml";
+
 /**
  * A typed unit read as a food's stock. `perUnit` is the stock amount one of the
  * typed unit stands for (1000 for "kg"). A counted unit names its count word in
@@ -10,7 +13,7 @@
  * mirroring the CHECK on `foods` that ties `each_label` to stock base "each".
  */
 export type StockUnit =
-  | { stockBase: "g" | "ml"; eachLabel: null; perUnit: number }
+  | { stockBase: MeasuredBase; eachLabel: null; perUnit: number }
   | { stockBase: "each"; eachLabel: string; perUnit: 1 };
 
 const MASS = new Map([
