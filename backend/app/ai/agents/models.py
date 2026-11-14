@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from functools import cache
+from collections.abc import Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
@@ -71,22 +71,58 @@ class RecipeGenerationResponse(BaseModel):
     recipes: list[Recipe] = Field(default_factory=list)
 
 
-@cache
-def recipe_batch_model(batch_ceiling: int) -> type[RecipeGenerationResponse]:
-    """Return a response model whose JSON schema caps the batch size.
+def recipe_batch_model(
+    batch_ceiling: int, units_by_food: Mapping[str, Sequence[str]]
+) -> type[RecipeGenerationResponse]:
+    """Return a response model whose JSON schema fits this kitchen.
 
-    Gemini enforces the schema's ``maxItems`` while it decodes, so the model
-    stops at the ceiling instead of writing recipes the caller would discard.
-    Pydantic does not enforce ``maxItems``, so an oversized batch still
-    validates and ``generate_recipes`` trims it. There is deliberately no
-    minimum: an empty list is the honest answer for a kitchen that cannot make
-    a meal.
+    Gemini enforces the schema while it decodes. ``maxItems`` stops the batch
+    at the ceiling instead of writing recipes the caller would discard. Each
+    ingredient must name one listed food and one of that food's units, so
+    every amount the model writes converts at cook time. Pydantic enforces
+    neither rule, so ``generate_recipes`` trims an oversized batch and
+    ``check_quality`` rejects unknown foods. There is deliberately no minimum:
+    an empty list is the honest answer for a kitchen that cannot make a meal.
+
+    Args:
+        batch_ceiling: The most recipes the model may return.
+        units_by_food: Each usable food's id and the units it may be used in.
+            Must not be empty, because an ingredient must name a food.
+
+    Raises:
+        ValueError: When ``units_by_food`` is empty.
     """
+    if not units_by_food:
+        raise ValueError("A recipe batch schema needs at least one food")
+    ingredient_schemas = [
+        {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "inventory_item_id": {"type": "string", "enum": [food_id]},
+                "use_amount": {"type": "number"},
+                "unit": {"type": "string", "enum": list(units)},
+            },
+            "required": ["name", "inventory_item_id", "use_amount", "unit"],
+        }
+        for food_id, units in units_by_food.items()
+    ]
+    recipe_model = create_model(
+        "KitchenRecipe",
+        __base__=Recipe,
+        ingredients=(
+            list[RecipeIngredient],
+            Field(
+                min_length=1,
+                json_schema_extra={"items": {"anyOf": ingredient_schemas}},
+            ),
+        ),
+    )
     return create_model(
         f"RecipeBatchOf{batch_ceiling}",
         __base__=RecipeGenerationResponse,
         recipes=(
-            list[Recipe],
+            list[recipe_model],
             Field(default_factory=list, json_schema_extra={"maxItems": batch_ceiling}),
         ),
     )

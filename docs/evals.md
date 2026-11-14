@@ -9,7 +9,7 @@ FreshPlate evaluates the recipe pipeline against a fixed set of kitchens. This p
 | Field | Meaning |
 | --- | --- |
 | `name` | The requested dish, such as `tomato pasta`. The runner sends it as the preference `request`. |
-| `inventory` | The kitchen for the case. Each item has `id`, `name`, `quantity`, and `unit`. |
+| `inventory` | The kitchen for the case, one line per food. Each line has `id`, `name`, `available`, and `stock_base` (`g`, `ml`, or `each`). A counted food also has `each_label`, such as `can`. |
 | `expected_coverage` | The lowest and highest acceptable ingredient coverage, as percentages. `backend/tests/test_eval_scorers.py` checks the fixture recipes against it. |
 
 ## Metrics

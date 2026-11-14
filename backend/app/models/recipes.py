@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-from datetime import date
 from typing import Any
 from uuid import UUID
 
@@ -13,43 +12,15 @@ from app.ai.agents.limits import DEFAULT_BATCH_CEILING, MAX_BATCH_CEILING
 from app.ai.agents.models import Recipe
 
 
-class RecipeInventoryContext(BaseModel):
-    """The client-owned inventory snapshot used for one generation request."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(min_length=1)
-    name: str = Field(min_length=1)
-    quantity: float = Field(default=1, ge=0)
-    unit: str = Field(default="item", min_length=1)
-    expiration_date: date | None = None
-    depleted_at: str | None = None
-    category: str | None = None
-
-    @field_validator("id", "name", "unit")
-    @classmethod
-    def normalize_required_text(cls, value: str) -> str:
-        """Reject blank labels while keeping the graph input canonical."""
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("Inventory text must not be blank")
-        return normalized
-
-    @field_validator("quantity")
-    @classmethod
-    def require_finite_quantity(cls, value: float) -> float:
-        """Prevent non-finite quantities from crossing the HTTP boundary."""
-        if not math.isfinite(value):
-            raise ValueError("Inventory quantity must be finite")
-        return value
-
-
 class RecipeSuggestionRequest(BaseModel):
-    """Request body for one session-scoped recipe suggestion batch."""
+    """Request body for one session-scoped recipe suggestion batch.
+
+    The backend reads ``household_id``'s foods itself, as the caller.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    inventory: list[RecipeInventoryContext] = Field(default_factory=list)
+    household_id: UUID
     preferences: dict[str, Any] = Field(default_factory=dict)
     exclude_titles: list[str] = Field(default_factory=list)
     batch_ceiling: StrictInt = Field(
@@ -86,11 +57,14 @@ class RecipeSuggestionsResponse(BaseModel):
 
 
 class RecipeFeedSessionRequest(BaseModel):
-    """Input used to create one server-owned recipe feed session."""
+    """Input used to create one server-owned recipe feed session.
+
+    The backend reads ``household_id``'s foods itself, as the caller.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    inventory: list[RecipeInventoryContext] = Field(default_factory=list)
+    household_id: UUID
     preferences: dict[str, Any] = Field(default_factory=dict)
 
 

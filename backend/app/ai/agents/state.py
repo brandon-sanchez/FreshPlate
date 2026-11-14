@@ -4,40 +4,38 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date
-from typing import Any, NotRequired, TypedDict
+from typing import Any, NotRequired
+
+# Pydantic validates feed refills' stored usable items against these, and on
+# Python 3.11 it accepts only typing_extensions TypedDicts.
+from typing_extensions import TypedDict
 
 from app.ai.agents.models import Recipe
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.rag.vector_store import RetrievedRecipe
 
 
-class InventoryItem(TypedDict, total=False):
-    """The inventory fields consumed by recipe analysis.
+class UsableItem(TypedDict):
+    """One food recipe generation may use, with its unexpired stock.
 
-    ``depleted_at`` is optional until the cook-flow migration adds the column
-    to the live inventory table. Keeping it optional lets the graph support
-    both the current and MVP inventory response shapes.
+    ``quantity`` is the food's available stock in ``unit``, its stock unit
+    ("g", "ml", or a count word such as "head"). ``units`` lists the recipe
+    units the converter can turn into a number for this food, and an
+    ingredient must use one of them. ``expiration_date`` is the soonest
+    unexpired batch's date. ``food`` is the ``FoodLine`` the item came from,
+    in JSON form, so a feed refill can rebuild its unit facts.
     """
 
     id: str
     name: str
     quantity: float
     unit: str
-    expiration_date: str | date | None
-    depleted_at: Any
-    category: str | None
-
-
-class UsableItem(TypedDict):
-    """An inventory item that is safe to include in recipe generation."""
-
-    id: str
-    name: str
-    quantity: float
-    unit: str
+    units: list[str]
+    lot_count: int
     expiration_date: date | None
     days_until_expiration: int | None
     is_expiring: bool
+    food: dict[str, Any]
 
 
 class InventoryAnalysis(TypedDict):
@@ -69,9 +67,12 @@ class QualityResult(TypedDict):
 
 
 class RecipeState(TypedDict, total=False):
-    """The shared state carried through the four-node recipe graph."""
+    """The shared state carried through the four-node recipe graph.
 
-    inventory: list[InventoryItem | Mapping[str, Any]]
+    ``inventory`` holds one ``FoodLine`` mapping per household food.
+    """
+
+    inventory: list[Mapping[str, Any]]
     preferences: Mapping[str, Any]
     exclude_titles: list[str]
     batch_ceiling: int
