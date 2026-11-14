@@ -676,3 +676,141 @@ async def test_honest_empty_batch_finishes_without_a_quality_retry() -> None:
     assert result["valid_recipes"] == []
     assert result["retry_count"] == 0
     assert len(provider.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_graph_accepts_a_recipe_measured_in_a_smaller_unit_than_stock() -> None:
+    provider = RecordingProvider(
+        [
+            {
+                "recipes": [
+                    _recipe(
+                        _ingredient(
+                            "Basmati rice",
+                            inventory_item_id="rice",
+                            use_amount=300,
+                            unit="g",
+                        ),
+                        title="Lemon Herb Rice",
+                    )
+                ]
+            },
+            {
+                "checks": [
+                    {
+                        "candidate_index": 0,
+                        "main_component": "rice",
+                        "portion_reasoning": "substantial",
+                        "unlisted_foods": [],
+                        "is_full_meal": True,
+                        "realistic_portions": True,
+                        "coherent_method": True,
+                    }
+                ]
+            },
+        ]
+    )
+    graph = build_recipe_graph(provider, RecordingRetriever())
+
+    result = await graph.ainvoke(
+        {
+            "inventory": [
+                {
+                    "id": "rice",
+                    "name": "Basmati rice",
+                    "quantity": 2,
+                    "unit": "kg",
+                    "expiration_date": None,
+                }
+            ],
+            "preferences": {},
+            "exclude_titles": [],
+            "batch_ceiling": 1,
+            "deadline": PipelineDeadline(15.0),
+        }
+    )
+
+    assert [recipe.title for recipe in result["valid_recipes"]] == ["Lemon Herb Rice"]
+    assert result["quality_feedback"] is None
+    assert result["retry_count"] == 0
+
+
+@pytest.mark.parametrize(
+    ("name", "use_amount", "unit", "quantity", "stock_unit"),
+    [
+        ("Rice", 300, "g", 2, "kg"),
+        ("Milk", 2, "cups", 1, "L"),
+        ("Milk", 8, "oz", 1, "L"),
+        ("Eggs", 2, "pieces", 3, "item"),
+        ("Eggs", 2, "large", 3, "item"),
+        ("Flour", 1, "lb", 500, "grams"),
+        ("Flour", 500, "g", 500, "grams"),
+    ],
+)
+def test_check_quality_compares_amounts_in_a_common_unit(
+    name: str, use_amount: float, unit: str, quantity: float, stock_unit: str
+) -> None:
+    recipe = Recipe.model_validate(
+        _recipe(
+            _ingredient(
+                name, inventory_item_id="food", use_amount=use_amount, unit=unit
+            )
+        )
+    )
+
+    result = check_quality(
+        {
+            "usable_items": [
+                _usable_item("food", name=name, quantity=quantity, unit=stock_unit)
+            ],
+            "generated_recipes": [recipe],
+        }
+    )
+
+    assert result["valid_recipes"] == [recipe]
+    assert result["quality_feedback"] is None
+
+
+def test_check_quality_rejects_overuse_after_unit_conversion() -> None:
+    recipe = Recipe.model_validate(
+        _recipe(
+            _ingredient(
+                "Tomatoes", inventory_item_id="tomatoes", use_amount=1500, unit="g"
+            ),
+            _ingredient(
+                "Tomatoes", inventory_item_id="tomatoes", use_amount=1, unit="kg"
+            ),
+        )
+    )
+
+    result = check_quality(
+        {
+            "usable_items": [_usable_item(quantity=2, unit="kg")],
+            "generated_recipes": [recipe],
+        }
+    )
+
+    assert result["valid_recipes"] == []
+    assert "'tomatoes' use 2500 g in total" in result["quality_feedback"]
+    assert "more than the available 2.0 kg" in result["quality_feedback"]
+
+
+def test_check_quality_rejects_units_of_different_dimensions() -> None:
+    recipe = Recipe.model_validate(
+        _recipe(
+            _ingredient(
+                "Tomatoes", inventory_item_id="tomatoes", use_amount=1, unit="cup"
+            )
+        )
+    )
+
+    result = check_quality(
+        {
+            "usable_items": [_usable_item(quantity=2, unit="kg")],
+            "generated_recipes": [recipe],
+        }
+    )
+
+    assert result["valid_recipes"] == []
+    assert "uses unit 'cup'" in result["quality_feedback"]
+    assert "express it in 'kg'" in result["quality_feedback"]
