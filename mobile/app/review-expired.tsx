@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Stack } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
@@ -9,7 +9,7 @@ import { useLotOutcome } from "@/hooks/useLotOutcome";
 import { useLeaveWhenEmptied } from "@/hooks/useLeaveWhenEmptied";
 import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";
-import ExpiredLotCard from "@/components/ExpiredLotCard";
+import ExpiredLotRow from "@/components/ExpiredLotRow";
 import EmptyState from "@/components/EmptyState";
 import { expiredLots } from "@/lib/foodRows";
 
@@ -18,17 +18,19 @@ import { expiredLots } from "@/lib/foodRows";
  * cleared: Still good gives a batch a new date and returns it to stock, Toss
  * records one batch as waste, and Toss all, after a confirmation, records every
  * listed batch. Tosses offer undo in their toast. The screen goes back once
- * nothing expired is left.
+ * the last expired batch leaves the list, and shows an empty state when
+ * opened with nothing expired.
  */
 export default function ReviewExpiredScreen() {
-  const { colors, fonts } = useTheme();
+  const { colors, fonts, card } = useTheme();
+  const insets = useSafeAreaInsets();
   const inventory = useInventoryItems();
   const { record } = useLotOutcome();
   const [tossingAll, setTossingAll] = useState(false);
 
   const expired = useMemo(() => expiredLots(inventory.data ?? []), [inventory.data]);
   const expiredIds = expired.map((e) => e.lot.id).join(",");
-  const batchCount = `${expired.length} expired batch${expired.length === 1 ? "" : "es"}`;
+  const batches = `${expired.length} batch${expired.length === 1 ? "" : "es"}`;
 
   // A Toss all that succeeded but left expired batches behind, such as one
   // another phone added meanwhile, takes taps again once the list changes.
@@ -73,7 +75,20 @@ export default function ReviewExpiredScreen() {
       <View style={{ flex: 1, backgroundColor: colors.bg }}>
         {header}
         <EmptyState
-          icon={<FontAwesome name="check-circle" size={28} color={colors.ok} />}
+          icon={
+            <View
+              style={{
+                width: 56,
+                height: 56,
+                borderRadius: 28,
+                backgroundColor: colors.accentSoft,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <FontAwesome name="check" size={24} color={colors.accent} />
+            </View>
+          }
           title="Nothing expired"
           message="Every batch in your kitchen is still in date."
         />
@@ -91,7 +106,7 @@ export default function ReviewExpiredScreen() {
   };
 
   const confirmTossAll = () =>
-    Alert.alert(`Toss ${batchCount}?`, "They are recorded as thrown out. You can undo right after.", [
+    Alert.alert(`Toss ${batches}?`, "They are recorded as thrown out. You can undo right after.", [
       { text: "Cancel", style: "cancel" },
       { text: "Toss all", style: "destructive", onPress: tossAll },
     ]);
@@ -99,37 +114,48 @@ export default function ReviewExpiredScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       {header}
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 140, gap: 10 }}>
-        <View style={{ marginBottom: 6 }}>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: Math.max(insets.bottom, 16) + 16 }}>
+        <View style={{ marginBottom: 14 }}>
           <Text
             style={{ fontFamily: fonts.display, fontSize: 22, letterSpacing: -0.4, color: colors.text }}
           >
-            {batchCount}
+            {`${expired.length} expired ${expired.length === 1 ? "batch" : "batches"}`}
           </Text>
           <Text style={{ fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginTop: 2 }}>
             Recipes and cooking skip these until you keep or toss them.
           </Text>
         </View>
 
-        {expired.map((batch) => (
-          <ExpiredLotCard key={batch.lot.id} batch={batch} disabled={tossingAll} />
-        ))}
-      </ScrollView>
+        <View
+          style={{
+            borderRadius: 14,
+            backgroundColor: colors.surface,
+            shadowColor: card.shadowColor,
+            shadowOffset: card.shadowOffset,
+            shadowOpacity: card.shadowOpacity,
+            shadowRadius: card.shadowRadius,
+            elevation: card.elevation,
+          }}
+        >
+          {expired.map((batch, i) => (
+            <Fragment key={batch.lot.id}>
+              {i > 0 ? (
+                <View
+                  style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginLeft: 14 }}
+                />
+              ) : null}
+              <ExpiredLotRow batch={batch} disabled={tossingAll} />
+            </Fragment>
+          ))}
+        </View>
 
-      <TossAllFooter
-        count={expired.length}
-        disabled={tossingAll}
-        onPress={confirmTossAll}
-      />
+        <TossAllButton count={expired.length} disabled={tossingAll} onPress={confirmTossAll} />
+      </ScrollView>
     </View>
   );
 }
 
-/**
- * Pins Toss all to the bottom of the screen, away from the toasts at the top,
- * so a late tap on a toast's Undo cannot land on it.
- */
-function TossAllFooter({
+function TossAllButton({
   count,
   disabled,
   onPress,
@@ -139,41 +165,26 @@ function TossAllFooter({
   onPress: () => void;
 }) {
   const { colors, fonts } = useTheme();
-  const insets = useSafeAreaInsets();
   return (
-    <View
-      style={{
-        position: "absolute",
-        bottom: 0,
-        left: 0,
-        right: 0,
-        padding: 16,
-        paddingBottom: Math.max(insets.bottom, 16),
-        backgroundColor: colors.bg,
-        borderTopWidth: 1,
-        borderTopColor: colors.border,
-      }}
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel="Toss all"
+      style={({ pressed }) => ({
+        marginTop: 20,
+        height: 48,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: colors.crit,
+        alignItems: "center",
+        justifyContent: "center",
+        opacity: disabled ? 0.5 : pressed ? 0.7 : 1,
+      })}
     >
-      <Pressable
-        onPress={onPress}
-        disabled={disabled}
-        accessibilityRole="button"
-        accessibilityLabel="Toss all"
-        style={({ pressed }) => ({
-          height: 50,
-          borderRadius: 12,
-          borderWidth: 1,
-          borderColor: colors.border,
-          backgroundColor: colors.surface,
-          alignItems: "center",
-          justifyContent: "center",
-          opacity: disabled ? 0.5 : pressed ? 0.8 : 1,
-        })}
-      >
-        <Text style={{ fontFamily: fonts.bodyStrong, fontSize: 14.5, color: colors.crit }}>
-          Toss all {count}
-        </Text>
-      </Pressable>
-    </View>
+      <Text style={{ fontFamily: fonts.bodyStrong, fontSize: 14.5, color: colors.crit }}>
+        Toss all {count}
+      </Text>
+    </Pressable>
   );
 }
