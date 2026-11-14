@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
@@ -117,6 +117,41 @@ class CookDeduction(BaseModel):
         return value
 
 
+class CookIngredientLine(BaseModel):
+    """One recipe ingredient as cooked, recorded on the cook event for Cook Again.
+
+    Attributes:
+        ingredient: The ingredient's name as the recipe lists it.
+        inventory_item_id: The food the line uses, or a lot id from a recipe
+            saved before foods existed.
+        recipe_amount: The recipe's amount in ``recipe_unit``. 0 for amounts
+            such as "to taste".
+        recipe_unit: The recipe's unit as written, such as "tbsp" or "clove".
+            Empty for a bare count.
+        mode: ``draw`` when the amount converted, ``small`` for a
+            seasoning-sized amount that is never drawn, or ``ask`` when the
+            cook was asked how much was used.
+        stock_amount: The line's amount in the food's stock base. Required for
+            ``draw``, null for ``small``, and null for an ``ask`` the cook
+            skipped. Postgres enforces these rules.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    ingredient: str = Field(min_length=1, max_length=200)
+    inventory_item_id: UUID
+    recipe_amount: float = Field(ge=0)
+    recipe_unit: str = Field(max_length=64)
+    mode: Literal["draw", "small", "ask"]
+    stock_amount: float | None = Field(default=None, ge=0)
+
+    @field_validator("recipe_amount", "stock_amount")
+    @classmethod
+    def require_finite_amount(cls, value: float | None) -> float | None:
+        if value is not None and not math.isfinite(value):
+            raise ValueError("Amount must be finite")
+        return value
+
+
 class CookConfirmationRequest(BaseModel):
     """Request body for confirming a finished cook.
 
@@ -128,6 +163,9 @@ class CookConfirmationRequest(BaseModel):
         recipe_snapshot: The recipe as cooked. Its ``recipe_id`` must match.
         deductions: One entry per food used. Two entries that reach the same
             food, such as a food and one of its lots, are rejected.
+        lines: One entry per recipe ingredient, in recipe order. Each
+            deduction needs at least one ``draw`` or answered ``ask`` line on
+            its food, and its draws are split across those lines.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -136,6 +174,7 @@ class CookConfirmationRequest(BaseModel):
     recipe_id: UUID
     recipe_snapshot: dict[str, Any]
     deductions: list[CookDeduction]
+    lines: list[CookIngredientLine] = Field(min_length=1)
 
     @field_validator("recipe_snapshot")
     @classmethod

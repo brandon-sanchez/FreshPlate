@@ -35,7 +35,11 @@ from tests.pg_support import (
 
 pytestmark = pytest.mark.skipif(not DSN, reason="Requires disposable local PostgreSQL")
 
-MIGRATIONS = (*FOODS_MIGRATIONS, "20261113120000_add_cook_recipe_v2.sql")
+MIGRATIONS = (
+    *FOODS_MIGRATIONS,
+    "20261113120000_add_cook_recipe_v2.sql",
+    "20261113130000_add_cook_event_lines.sql",
+)
 
 
 @pytest.fixture(scope="module")
@@ -52,11 +56,23 @@ def j(value: object) -> str:
     return q(json.dumps(value)) + "::jsonb"
 
 
-def cook_sql(home, deductions, *, operation=None, recipe=None, snapshot=None) -> str:
+def draw_lines(deductions) -> list[dict]:
+    """One draw line per deduction, for tests about the deduction itself."""
+    return [
+        {
+            "ingredient": "ingredient", "inventory_item_id": d["inventory_item_id"],
+            "recipe_amount": 1, "recipe_unit": "", "mode": "draw", "stock_amount": 1,
+        }
+        for d in deductions
+    ]
+
+
+def cook_sql(home, deductions, *, lines=None, operation=None, recipe=None, snapshot=None) -> str:
     operation = operation or str(uuid4())
     recipe = recipe or str(uuid4())
     snapshot = snapshot or {"recipe_id": recipe, "title": "Stew"}
-    return f"SELECT public.cook_recipe_v2({q(home)}, {q(operation)}, {q(recipe)}, {j(snapshot)}, {j(deductions)});"
+    lines = draw_lines(deductions) if lines is None else lines
+    return f"SELECT public.cook_recipe_v2({q(home)}, {q(operation)}, {q(recipe)}, {j(snapshot)}, {j(deductions)}, {j(lines)});"
 
 
 def cook(db: DB, home, deductions, *, user=USER, role="authenticated", check=True, **kwargs):
@@ -314,6 +330,137 @@ def test_a_cook_waits_for_a_batch_being_added_and_draws_from_it(database, today)
     assert lot_state(database, old)["quantity"] == 100
 
 
+def line(item, ingredient, recipe_amount, recipe_unit, mode, stock_amount=None) -> dict:
+    return {
+        "ingredient": ingredient, "inventory_item_id": item, "recipe_amount": recipe_amount,
+        "recipe_unit": recipe_unit, "mode": mode, "stock_amount": stock_amount,
+    }
+
+
+def stored_lines(db: DB, cook_event_id):
+    return db.json(f"SELECT lines FROM cook_events WHERE id = {q(cook_event_id)}")
+
+
+def test_each_ingredient_line_records_its_recipe_amount_stock_base_and_draws(database, today):
+    home = household(database)
+    oil, opened_oil = lot(database, home, "Olive oil", "ml", 20, "pantry")
+    _, sealed_oil = lot(database, home, "Olive oil", "ml", 500, "pantry", notes="sealed")
+    database.run(f"UPDATE lots SET opened_at = now() WHERE id = {q(opened_oil)}")
+    salt, _ = lot(database, home, "Salt", "each", 1, "pantry", each_label="box")
+    parmesan, parmesan_lot = lot(database, home, "Parmesan", "g", 200)
+
+    result = cook(
+        database, home,
+        [{"inventory_item_id": oil, "confirmed_amount": 45}, {"inventory_item_id": parmesan_lot, "confirmed_amount": 40}],
+        lines=[
+            line(oil, "olive oil", 2, "tbsp", "draw", 30),
+            line(salt, "salt", 1, "pinch", "small"),
+            line(parmesan_lot, "parmesan", 1, "handful", "ask", 40),
+            line(oil, "olive oil", 1, "tbsp", "draw", 15),
+        ],
+    )
+
+    assert result["lines"] == [
+        {"ingredient": "olive oil", "inventory_item_id": oil, "food_id": oil, "recipe_amount": 2, "recipe_unit": "tbsp",
+         "stock_base": "ml", "stock_amount": 30, "mode": "draw",
+         "draws": [{"lot_id": opened_oil, "amount": 20}, {"lot_id": sealed_oil, "amount": 10}], "shortfall": 0},
+        {"ingredient": "salt", "inventory_item_id": salt, "food_id": salt, "recipe_amount": 1, "recipe_unit": "pinch",
+         "stock_base": "each", "stock_amount": None, "mode": "small", "draws": [], "shortfall": 0},
+        {"ingredient": "parmesan", "inventory_item_id": parmesan_lot, "food_id": parmesan, "recipe_amount": 1, "recipe_unit": "handful",
+         "stock_base": "g", "stock_amount": 40, "mode": "ask", "draws": [{"lot_id": parmesan_lot, "amount": 40}], "shortfall": 0},
+        {"ingredient": "olive oil", "inventory_item_id": oil, "food_id": oil, "recipe_amount": 1, "recipe_unit": "tbsp",
+         "stock_base": "ml", "stock_amount": 15, "mode": "draw",
+         "draws": [{"lot_id": sealed_oil, "amount": 15}], "shortfall": 0},
+    ]
+    assert stored_lines(database, result["cook_event_id"]) == result["lines"]
+
+
+def test_the_last_line_of_a_food_takes_the_rounded_up_rest_and_the_shortfall(database):
+    home = household(database)
+    beans, can = lot(database, home, "Beans", "each", 1, "pantry", each_label="can", whole_units_only=True)
+
+    result = cook(
+        database, home, [{"inventory_item_id": beans, "confirmed_amount": 2}],
+        lines=[line(beans, "beans", 200, "g", "draw", 0.6), line(beans, "beans", 200, "g", "draw", 0.6)],
+    )
+
+    assert [(x["draws"], x["shortfall"]) for x in result["lines"]] == [
+        ([{"lot_id": can, "amount": 0.6}], 0),
+        ([{"lot_id": can, "amount": 0.4}], 1.0),
+    ]
+    assert result["deductions"][0]["committed_amount"] == 1
+
+
+def test_a_skipped_question_records_the_line_without_drawing(database):
+    home = household(database)
+    milk, milk_lot = lot(database, home, "Milk", "ml", 1000)
+    cheese, cheese_lot = lot(database, home, "Cheese", "each", 1, each_label="block")
+
+    result = cook(
+        database, home, [{"inventory_item_id": milk, "confirmed_amount": 250}],
+        lines=[line(milk, "milk", 1, "cup", "draw", 250), line(cheese, "cheese", 100, "g", "ask")],
+    )
+
+    assert (result["lines"][1]["stock_amount"], result["lines"][1]["draws"], result["lines"][1]["shortfall"]) == (None, [], 0)
+    assert lot_state(database, cheese_lot)["quantity"] == 1
+    assert lot_state(database, milk_lot)["quantity"] == 750
+
+
+def test_a_line_on_a_merged_food_records_the_live_food_and_its_base(database):
+    home = household(database)
+    target, _ = lot(database, home, "Basmati rice", "g", 1000, "pantry")
+    old = database.run(
+        f"INSERT INTO foods(household_id, name, stock_base, archived_at, merged_into_id) VALUES ({q(home)}, 'Rice', 'g', now(), {q(target)}) RETURNING id"
+    ).splitlines()[0]
+
+    result = cook(database, home, [{"inventory_item_id": old, "confirmed_amount": 185}],
+                  lines=[line(old, "rice", 1, "cup", "draw", 185)])
+
+    assert (result["lines"][0]["inventory_item_id"], result["lines"][0]["food_id"], result["lines"][0]["stock_base"]) == (old, target, "g")
+
+
+def test_lines_that_disagree_with_the_deductions_change_nothing(database):
+    home = household(database)
+    milk, milk_lot = lot(database, home, "Milk", "ml", 1000)
+    flour, _ = lot(database, home, "Flour", "g", 1000, "pantry")
+    deductions = [{"inventory_item_id": milk, "confirmed_amount": 100}]
+    milk_line = line(milk, "milk", 100, "ml", "draw", 100)
+
+    attempts = [
+        ([], "LINES_MISMATCH"),
+        ([line(flour, "flour", 1, "cup", "ask")], "LINES_MISMATCH"),
+        ([milk_line, line(flour, "flour", 1, "cup", "draw", 120)], "LINES_MISMATCH"),
+        ([milk_line, line(flour, "flour", 1, "cup", "small", 120)], "Invalid cook line"),
+        ([{**milk_line, "stock_amount": None}], "Invalid cook line"),
+        ([{**milk_line, "mode": "guess"}], "Invalid cook line"),
+        ([{**milk_line, "recipe_amount": -1}], "Invalid cook line"),
+        ([{**milk_line, "stock_amount": "NaN"}], "Invalid cook line"),
+        ([{**milk_line, "ingredient": ""}], "Invalid cook line"),
+        ([milk_line, line(str(uuid4()), "ghost", 1, "cup", "small")], "FOOD_NOT_FOUND"),
+    ]
+    for lines, error in attempts:
+        failed = cook(database, home, deductions, lines=lines, check=False)
+        assert failed.returncode != 0 and error in failed.stderr, (lines, failed.stderr)
+    assert lot_state(database, milk_lot)["quantity"] == 1000
+    assert database.run(f"SELECT count(*) FROM cook_events WHERE household_id = {q(home)}") == "0"
+
+
+def test_a_replayed_cook_returns_the_same_lines_and_changed_lines_fail(database):
+    home = household(database)
+    butter, own = lot(database, home, "Butter", "g", 250)
+    operation, recipe = str(uuid4()), str(uuid4())
+    deductions = [{"inventory_item_id": butter, "confirmed_amount": 28}]
+    lines = [line(butter, "butter", 2, "tbsp", "draw", 28)]
+
+    first = cook(database, home, deductions, lines=lines, operation=operation, recipe=recipe)
+    replay = cook(database, home, deductions, lines=lines, operation=operation, recipe=recipe)
+    changed = cook(database, home, deductions, lines=[{**lines[0], "recipe_unit": "pat"}], operation=operation, recipe=recipe, check=False)
+
+    assert replay == first and replay["lines"][0]["draws"] == [{"lot_id": own, "amount": 28}]
+    assert "different payload" in changed.stderr
+    assert lot_state(database, own)["quantity"] == 222
+
+
 class _RpcHttpClient:
     """Stands in for Supabase's REST API by running each RPC call through psql as the JWT's user."""
 
@@ -324,7 +471,7 @@ class _RpcHttpClient:
     async def post(self, url, *, headers, json, timeout):
         self.urls.append(url)
         user = jwt.get_unverified_claims(headers["Authorization"].removeprefix("Bearer "))["sub"]
-        sql = cook_sql(json["p_household_id"], json["p_deductions"], operation=json["p_operation_id"], recipe=json["p_recipe_id"], snapshot=json["p_recipe_snapshot"])
+        sql = cook_sql(json["p_household_id"], json["p_deductions"], lines=json["p_lines"], operation=json["p_operation_id"], recipe=json["p_recipe_id"], snapshot=json["p_recipe_snapshot"])
         result = await asyncio.to_thread(self.db.run, sql, role="authenticated", user=user, check=False)
         request = httpx.Request("POST", url)
         if result.returncode:
@@ -349,11 +496,12 @@ def api(database, patch_jwks, monkeypatch):
         yield client
 
 
-def body(home, deductions, operation=None):
+def body(home, deductions, operation=None, lines=None):
     recipe = str(uuid4())
     return {
         "household_id": home, "operation_id": operation or str(uuid4()), "recipe_id": recipe,
         "recipe_snapshot": {"recipe_id": recipe, "title": "Stew"}, "deductions": deductions,
+        "lines": draw_lines(deductions) if lines is None else lines,
     }
 
 
@@ -365,6 +513,7 @@ def test_confirm_endpoint_draws_through_cook_recipe_v2_as_the_caller(api, databa
 
     assert response.status_code == 200
     assert response.json()["data"]["deductions"][0]["draws"] == [{"lot_id": own, "amount": 250}]
+    assert response.json()["data"]["lines"][0]["draws"] == [{"lot_id": own, "amount": 250}]
     assert api.app.state.supabase_http_client.urls == ["https://supabase.test/rest/v1/rpc/cook_recipe_v2"]
     assert database.run(f"SELECT user_id FROM cook_events WHERE household_id = {q(home)}") == USER
     assert lot_state(database, own)["quantity"] == 750
