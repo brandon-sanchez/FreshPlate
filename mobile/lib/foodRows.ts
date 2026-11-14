@@ -22,6 +22,12 @@ export type FoodRow = {
    * waiting for review.
    */
   total: number;
+  /**
+   * The lots summed in `total`: the unexpired lots, or every lot when all
+   * have expired. Swipe actions on the row record only these, so a swipe on
+   * a fresh row leaves its expired batches for Review expired.
+   */
+  countedLots: InventoryItem[];
   /** True when any lot counted in `total` is an estimate, so the total reads "about". */
   isEstimate: boolean;
   /** Distinct locations of the lots, in fridge, freezer, pantry order. */
@@ -187,6 +193,7 @@ function toRow(group: InventoryItem[]): FoodRow {
     category: first.category,
     isLeftover: first.is_leftover,
     lots,
+    countedLots: counted.map((d) => d.lot),
     total: counted.reduce((sum, d) => sum + d.lot.quantity, 0),
     isEstimate: counted.some((d) => d.lot.is_estimate),
     locations: LOCATIONS.filter((loc) => lots.some((lot) => lot.storage_location === loc)),
