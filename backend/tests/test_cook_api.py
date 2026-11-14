@@ -73,6 +73,10 @@ def test_infinite_amount_is_rejected(client, signing_key: SigningKey, patch_jwks
         {"lines": [{**payload()["lines"][0], "mode": "guess"}]},
         {"lines": [{**payload()["lines"][0], "stock_amount": "Infinity"}]},
         {"lines": [{**payload()["lines"][0], "recipe_amount": -1}]},
+        {"lines": [{**payload()["lines"][0], "stock_amount": None}]},
+        {"lines": [{**payload()["lines"][0], "mode": "small"}]},
+        {"lines": [{**payload()["lines"][0], "ingredient": "  "}]},
+        {"lines": [{**payload()["lines"][0], "recipe_unit": ""}]},
     ],
 )
 def test_malformed_lines_are_rejected_before_supabase(client, signing_key: SigningKey, patch_jwks, change):

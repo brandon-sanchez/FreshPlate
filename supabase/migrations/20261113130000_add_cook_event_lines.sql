@@ -8,20 +8,24 @@
 ALTER TABLE public.cook_events
     ADD COLUMN lines JSONB NOT NULL DEFAULT '[]'::jsonb,
     ADD COLUMN request_lines JSONB NOT NULL DEFAULT '[]'::jsonb,
-    ADD CONSTRAINT cook_events_lines_array CHECK (jsonb_typeof(lines) = 'array');
+    ADD CONSTRAINT cook_events_lines_array CHECK (
+        jsonb_typeof(lines) = 'array' AND jsonb_typeof(request_lines) = 'array');
 
 COMMENT ON COLUMN public.cook_events.lines IS
-$$One entry per recipe ingredient, in recipe order: {ingredient,
-inventory_item_id, food_id, recipe_amount, recipe_unit, stock_base,
-stock_amount, mode, draws: [{lot_id, amount}], shortfall}. food_id is the live
+$$One entry per recipe ingredient matched to a food, in recipe order:
+{ingredient, inventory_item_id, food_id, recipe_amount, recipe_unit,
+stock_base, stock_amount, mode, draws: [{lot_id, amount}], shortfall}. food_id is the live
 food after merges, and stock_base is its unit for stock_amount, draws and
 shortfall. mode is draw, small (seasoning-sized, never drawn) or ask (the cook
 was asked the amount; stock_amount is null when the question was skipped).
+A food's draws are split across its lines in recipe order, each taking its
+stock_amount and the last taking the rest, so when the cook lowered the
+amount at the checklist the last lines draw less than their stock_amount.
 Empty for cooks recorded by cook_recipe, which kept no lines.$$;
 
 COMMENT ON COLUMN public.cook_events.request_lines IS
 $$The p_lines array exactly as cook_recipe_v2 received it, compared when the
-same operation id is retried.$$;
+same operation id is retried. Empty for cooks recorded by cook_recipe.$$;
 
 -- Returns the food an id names in p_household_id: the food itself, or the food
 -- of a lot, because recipes saved before foods existed hold lot ids. Raises
@@ -72,11 +76,11 @@ DECLARE
     v_food_ids UUID[] := ARRAY[]::UUID[];
     v_lines JSONB[] := ARRAY[]::JSONB[];
     v_line_food_ids UUID[] := ARRAY[]::UUID[];
-    v_line_claims BOOLEAN[] := ARRAY[]::BOOLEAN[];
     v_line_draws JSONB[] := ARRAY[]::JSONB[];
     v_line_shortfalls NUMERIC[] := ARRAY[]::NUMERIC[];
     v_live UUID[];
     v_n INTEGER;
+    v_position BIGINT;
     v_draw JSONB;
     v_draw_amounts NUMERIC[];
     v_draw_lots UUID[];
@@ -93,6 +97,7 @@ BEGIN
     IF p_operation_id IS NULL OR p_recipe_id IS NULL
         OR jsonb_typeof(p_deductions) IS DISTINCT FROM 'array'
         OR jsonb_typeof(p_lines) IS DISTINCT FROM 'array'
+        OR jsonb_array_length(p_lines) = 0
         OR jsonb_typeof(p_recipe_snapshot) IS DISTINCT FROM 'object'
         OR p_recipe_snapshot->>'recipe_id' IS DISTINCT FROM p_recipe_id::text THEN
         RAISE EXCEPTION 'Invalid cook request' USING ERRCODE = '22023';
@@ -132,21 +137,25 @@ BEGIN
 
     -- JSON numbers are always finite, so requiring the number type also keeps
     -- NaN and Infinity, which only arrive as strings, out of the stored lines.
-    FOR v_line IN SELECT value FROM jsonb_array_elements(p_lines) LOOP
+    FOR v_line, v_position IN SELECT value, ordinality
+        FROM jsonb_array_elements(p_lines) WITH ORDINALITY LOOP
         IF jsonb_typeof(v_line) IS DISTINCT FROM 'object'
             OR jsonb_typeof(v_line->'inventory_item_id') IS DISTINCT FROM 'string'
             OR jsonb_typeof(v_line->'ingredient') IS DISTINCT FROM 'string'
             OR btrim(v_line->>'ingredient') = ''
+            OR char_length(v_line->>'ingredient') > 200
             OR jsonb_typeof(v_line->'recipe_amount') IS DISTINCT FROM 'number'
             OR (v_line->>'recipe_amount')::NUMERIC < 0
             OR jsonb_typeof(v_line->'recipe_unit') IS DISTINCT FROM 'string'
+            OR char_length(v_line->>'recipe_unit') NOT BETWEEN 1 AND 64
             OR coalesce(v_line->>'mode', '') NOT IN ('draw', 'small', 'ask')
             OR coalesce(jsonb_typeof(v_line->'stock_amount'), 'null')
                 NOT IN ('number', 'null')
             OR (v_line->>'stock_amount')::NUMERIC < 0
             OR (v_line->>'mode' = 'draw' AND v_line->>'stock_amount' IS NULL)
             OR (v_line->>'mode' = 'small' AND v_line->>'stock_amount' IS NOT NULL) THEN
-            RAISE EXCEPTION 'Invalid cook line' USING ERRCODE = '22023';
+            RAISE EXCEPTION 'Invalid cook line' USING ERRCODE = '22023',
+                DETAIL = format('Line %s', v_position);
         END IF;
         v_lines := v_lines || v_line;
         v_line_food_ids := v_line_food_ids
@@ -168,15 +177,15 @@ BEGIN
             DETAIL = 'Each food may appear in one deduction line only';
     END IF;
 
-    -- A line claims part of a deduction when it has a stock amount and is not
-    -- small. Every deduction needs a claiming line and every claiming line a
-    -- deduction, so each drawn amount is accounted for by some ingredient.
+    -- A line with a stock amount claims part of its food's deduction. The
+    -- checks above keep small lines from having one. Every deduction needs a
+    -- claiming line and every claiming line a deduction, so each drawn amount
+    -- is accounted for by some ingredient.
     FOR i IN 1 .. cardinality(v_lines) LOOP
         v_line_draws := v_line_draws || '[]'::jsonb;
         v_line_shortfalls := v_line_shortfalls || 0::NUMERIC;
-        v_line_claims := v_line_claims
-            || (v_lines[i]->>'mode' <> 'small' AND v_lines[i]->>'stock_amount' IS NOT NULL);
-        IF v_line_claims[i] AND NOT v_line_food_ids[i] = ANY(v_food_ids) THEN
+        IF v_lines[i]->>'stock_amount' IS NOT NULL
+            AND NOT v_line_food_ids[i] = ANY(v_food_ids) THEN
             RAISE EXCEPTION 'LINES_MISMATCH' USING ERRCODE = '22023',
                 DETAIL = format('Line %s draws from a food with no deduction', i);
         END IF;
@@ -185,7 +194,8 @@ BEGIN
     FOR i IN 1 .. v_n LOOP
         v_claims := ARRAY(
             SELECT k FROM generate_subscripts(v_lines, 1) k
-            WHERE v_line_claims[k] AND v_line_food_ids[k] = v_food_ids[i]
+            WHERE v_lines[k]->>'stock_amount' IS NOT NULL
+              AND v_line_food_ids[k] = v_food_ids[i]
             ORDER BY k);
         IF cardinality(v_claims) = 0 THEN
             RAISE EXCEPTION 'LINES_MISMATCH' USING ERRCODE = '22023',
@@ -266,8 +276,8 @@ snapshot must carry the same recipe_id. p_deductions: an array of
 {inventory_item_id, confirmed_amount}, one per food, where inventory_item_id is
 a food id, or a lot id from a recipe saved before foods existed, and
 confirmed_amount is in the food's stock base. p_lines: one entry per recipe
-ingredient, in recipe order: {ingredient, inventory_item_id, recipe_amount,
-recipe_unit, mode, stock_amount}. mode is draw, small or ask. stock_amount is
+ingredient matched to a food, in recipe order: {ingredient,
+inventory_item_id, recipe_amount, recipe_unit, mode, stock_amount}. mode is draw, small or ask. stock_amount is
 the line's converted amount in the food's stock base; it is required for draw,
 must be null for small, and is null for an ask the cook skipped.
 
@@ -281,7 +291,9 @@ confirmed_amount, committed_amount (what stock covered) and draws
 draws and shortfall added. A shortfall is recorded, not refused.
 
 All or nothing. Errors: 28000 when signed out; 42501 when the caller is not a
-member of the household; 22023 for a malformed request or line, an amount
+member of the household; 22P02 for an id that is not a UUID; 22023 for a
+malformed request or line (ingredient up to 200 characters, recipe_unit 1 to
+64), an amount
 that is null, NaN, infinite or not positive, a fractional amount on a
 whole-units food, an operation id reused with a different payload,
 DUPLICATE_FOOD when two deductions reach the same live food,
