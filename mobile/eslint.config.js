@@ -15,4 +15,10 @@ module.exports = defineConfig([
       "import/first": "off",
     },
   },
+  {
+    files: ["jest.setup.js"],
+    languageOptions: {
+      globals: { jest: "readonly" },
+    },
+  },
 ]);
