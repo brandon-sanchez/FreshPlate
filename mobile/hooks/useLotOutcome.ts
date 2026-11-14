@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import Toast, { type ToastShowParams } from "react-native-toast-message";
+import Toast, { type ToastShowParams } from "@/lib/toast";
 import { supabase } from "@/lib/supabase";
 import { showUndoToast } from "@/components/toastConfig";
 import { useAuthStore } from "@/stores/auth";
