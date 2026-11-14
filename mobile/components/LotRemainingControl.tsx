@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Keyboard, Pressable, Text, TextInput, View } from "react-native";
+import { useRouter } from "expo-router";
 import { useTheme } from "@/hooks/useTheme";
 import SegmentedControl from "@/components/SegmentedControl";
 import type { InventoryItem } from "@/hooks/useInventoryItems";
@@ -10,6 +11,7 @@ import {
   parseExactAmount,
   remainingMode,
 } from "@/lib/fillLevel";
+import { ChangedElsewhereError } from "@/lib/lotRpc";
 
 type LotRemainingControlProps = {
   /** The batch whose remaining amount the control sets. */
@@ -22,10 +24,12 @@ type LotRemainingControlProps = {
  * (Full, ¾, ½ or ¼ of the full size) that saves on each tap. How full is
  * hidden for a batch with no known full size and for a food counted in whole
  * units. Used up is a swipe action and is not offered here, so a fill tap
- * never empties a batch.
+ * never empties a batch. Goes back to the previous screen when the batch was
+ * already used up, tossed or deleted on another phone.
  */
 function LotRemainingControl({ lot }: LotRemainingControlProps) {
   const { colors, fonts } = useTheme();
+  const router = useRouter();
   const setRemaining = useSetLotRemaining();
   const [exact, setExact] = useState("");
 
@@ -33,6 +37,12 @@ function LotRemainingControl({ lot }: LotRemainingControlProps) {
   const current = currentFillLevel(lot);
   const amount = parseExactAmount(exact, lot.whole_units_only);
   const busy = setRemaining.isPending;
+
+  // The refetch that follows drops a batch that is no longer live, so staying
+  // would leave the editor on "Item not found" under the toast.
+  const leaveIfGone = (error: Error) => {
+    if (error instanceof ChangedElsewhereError && error.message === "LOT_NOT_LIVE") router.back();
+  };
 
   const submitExact = () => {
     if (amount === null || busy) return;
@@ -43,6 +53,7 @@ function LotRemainingControl({ lot }: LotRemainingControlProps) {
           setExact("");
           Keyboard.dismiss();
         },
+        onError: leaveIfGone,
       },
     );
   };
@@ -117,7 +128,10 @@ function LotRemainingControl({ lot }: LotRemainingControlProps) {
           onSelect={(label) => {
             const level = FILL_LEVELS.find((l) => l.label === label);
             if (!level || busy || level === current) return;
-            setRemaining.mutate({ lot, remaining: { fraction: level.fraction } });
+            setRemaining.mutate(
+              { lot, remaining: { fraction: level.fraction } },
+              { onError: leaveIfGone },
+            );
           }}
         />
       ) : null}
