@@ -140,26 +140,22 @@ export default function ItemDetailScreen() {
   };
 
   const handleDelete = () => {
-    Alert.alert("Remove item?", `${item.name} will be removed from your fridge.`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Remove",
-        style: "destructive",
-        onPress: () =>
-          deleteItem.mutate(item.id, {
-            onSuccess: () => {
-              Toast.show({ type: "success", text1: "Removed" });
-              router.back();
-            },
-            onError: () =>
-              Toast.show({
-                type: "error",
-                text1: "Couldn't remove",
-                text2: "Check your connection and try again.",
-              }),
-          }),
-      },
-    ]);
+    Alert.alert(
+      "Delete this batch?",
+      `This erases the batch of ${item.name}. Use it for a batch added by mistake. To record that food was eaten or thrown out, swipe the batch and choose Used up or Toss.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () =>
+            deleteItem.mutate(
+              { id: item.id, name: item.name },
+              { onSuccess: () => router.back() },
+            ),
+        },
+      ],
+    );
   };
 
   const iconName = (item.category?.icon ?? "circle-o") as React.ComponentProps<
@@ -363,7 +359,7 @@ export default function ItemDetailScreen() {
               color: colors.crit,
             }}
           >
-            {deleteItem.isPending ? "Removing…" : "Remove"}
+            {deleteItem.isPending ? "Deleting…" : "Delete"}
           </Text>
         </Pressable>
         <Pressable

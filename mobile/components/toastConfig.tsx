@@ -1,18 +1,27 @@
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
-import type { ToastConfigParams } from "react-native-toast-message";
+import Toast, { type ToastConfigParams } from "react-native-toast-message";
 import { useTheme } from "@/hooks/useTheme";
 
 type Tone = "success" | "error" | "info";
+
+type UndoToastProps = {
+  /** Runs after the toast hides when the user taps Undo. */
+  onUndo: () => void;
+};
+
+const UNDO_WINDOW_MS = 5000;
 
 type ToastRowProps = {
   tone: Tone;
   text1?: string;
   text2?: string;
+  /** A text button on the right edge of the toast. */
+  action?: { label: string; onPress: () => void };
 };
 
-function ToastRow({ tone, text1, text2 }: ToastRowProps) {
+function ToastRow({ tone, text1, text2, action }: ToastRowProps) {
   const { colors, fonts, card } = useTheme();
   const insets = useSafeAreaInsets();
 
@@ -90,11 +99,64 @@ function ToastRow({ tone, text1, text2 }: ToastRowProps) {
             </Text>
           ) : null}
         </View>
+        {action ? (
+          <Pressable
+            onPress={action.onPress}
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel={action.label}
+          >
+            <Text
+              style={{
+                fontFamily: fonts.bodyStrong,
+                fontSize: 14,
+                color: colors.accent,
+                letterSpacing: -0.2,
+              }}
+            >
+              {action.label}
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
     </View>
   );
 }
 
+/**
+ * Shows a success toast with an Undo button for five seconds.
+ *
+ * `onUndo` runs at most once: the toast keeps its button pressable while it
+ * animates away, and a second tap must not send a second undo.
+ *
+ * @param toast.text1 - The headline, such as "Milk tossed".
+ * @param toast.text2 - An optional detail line.
+ * @param toast.onUndo - Reverses the action; runs after the toast hides.
+ */
+export function showUndoToast({
+  text1,
+  text2,
+  onUndo,
+}: {
+  text1: string;
+  text2?: string;
+  onUndo: () => void;
+}) {
+  let undone = false;
+  const props: UndoToastProps = {
+    onUndo: () => {
+      if (undone) return;
+      undone = true;
+      onUndo();
+    },
+  };
+  Toast.show({ type: "undo", text1, text2, props, visibilityTime: UNDO_WINDOW_MS });
+}
+
+/**
+ * Renders the app's top toasts: `success`, `error`, `info`, and `undo`, which
+ * {@link showUndoToast} shows.
+ */
 export const toastConfig = {
   success: (props: ToastConfigParams<unknown>) => (
     <ToastRow tone="success" text1={props.text1} text2={props.text2} />
@@ -104,5 +166,19 @@ export const toastConfig = {
   ),
   info: (props: ToastConfigParams<unknown>) => (
     <ToastRow tone="info" text1={props.text1} text2={props.text2} />
+  ),
+  undo: ({ text1, text2, hide, props }: ToastConfigParams<UndoToastProps>) => (
+    <ToastRow
+      tone="success"
+      text1={text1}
+      text2={text2}
+      action={{
+        label: "Undo",
+        onPress: () => {
+          hide();
+          props.onUndo();
+        },
+      }}
+    />
   ),
 };

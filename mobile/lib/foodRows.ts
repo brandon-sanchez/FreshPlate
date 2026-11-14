@@ -15,12 +15,6 @@ export type FoodRow = {
   isLeftover: boolean;
   /** Never empty. Soonest expiry first, undated lots last. */
   lots: InventoryItem[];
-  /**
-   * The row's only lot, or `null` when the row stacks several. Single-lot
-   * actions such as swipe-to-delete act on it, so they never touch a batch
-   * the row does not show on its own.
-   */
-  soleLot: InventoryItem | null;
   /** Sum of the lots' quantities, in `unit`. */
   total: number;
   /** Distinct locations of the lots, in fridge, freezer, pantry order. */
@@ -175,7 +169,6 @@ function toRow(group: InventoryItem[]): FoodRow {
     category: first.category,
     isLeftover: first.is_leftover,
     lots,
-    soleLot: lots.length === 1 ? first : null,
     total: lots.reduce((sum, lot) => sum + lot.quantity, 0),
     locations: LOCATIONS.filter((loc) => lots.some((lot) => lot.storage_location === loc)),
     days,
