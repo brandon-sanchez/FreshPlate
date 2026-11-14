@@ -60,7 +60,7 @@ def draw_lines(deductions) -> list[dict]:
     return [
         {
             "ingredient": "ingredient", "inventory_item_id": d["inventory_item_id"],
-            "recipe_amount": 1, "recipe_unit": "", "mode": "draw", "stock_amount": 1,
+            "recipe_amount": 1, "recipe_unit": "cup", "mode": "draw", "stock_amount": 1,
         }
         for d in deductions
     ]
@@ -390,6 +390,21 @@ def test_the_last_line_of_a_food_takes_the_rounded_up_rest_and_the_shortfall(dat
     assert result["deductions"][0]["committed_amount"] == 1
 
 
+def test_an_amount_lowered_at_the_checklist_comes_off_the_last_lines(database):
+    home = household(database)
+    oil, bottle = lot(database, home, "Olive oil", "ml", 500, "pantry")
+
+    result = cook(
+        database, home, [{"inventory_item_id": oil, "confirmed_amount": 35}],
+        lines=[line(oil, "olive oil", 2, "tbsp", "draw", 30), line(oil, "olive oil", 1, "tbsp", "draw", 15)],
+    )
+
+    assert [(x["stock_amount"], x["draws"], x["shortfall"]) for x in result["lines"]] == [
+        (30, [{"lot_id": bottle, "amount": 30}], 0),
+        (15, [{"lot_id": bottle, "amount": 5}], 0),
+    ]
+
+
 def test_a_skipped_question_records_the_line_without_drawing(database):
     home = household(database)
     milk, milk_lot = lot(database, home, "Milk", "ml", 1000)
@@ -422,11 +437,12 @@ def test_lines_that_disagree_with_the_deductions_change_nothing(database):
     home = household(database)
     milk, milk_lot = lot(database, home, "Milk", "ml", 1000)
     flour, _ = lot(database, home, "Flour", "g", 1000, "pantry")
+    foreign_food, _ = lot(database, household(database, member=OTHER), "Flour", "g", 1000, "pantry", user=OTHER)
     deductions = [{"inventory_item_id": milk, "confirmed_amount": 100}]
     milk_line = line(milk, "milk", 100, "ml", "draw", 100)
 
     attempts = [
-        ([], "LINES_MISMATCH"),
+        ([], "Invalid cook request"),
         ([line(flour, "flour", 1, "cup", "ask")], "LINES_MISMATCH"),
         ([milk_line, line(flour, "flour", 1, "cup", "draw", 120)], "LINES_MISMATCH"),
         ([milk_line, line(flour, "flour", 1, "cup", "small", 120)], "Invalid cook line"),
@@ -435,7 +451,10 @@ def test_lines_that_disagree_with_the_deductions_change_nothing(database):
         ([{**milk_line, "recipe_amount": -1}], "Invalid cook line"),
         ([{**milk_line, "stock_amount": "NaN"}], "Invalid cook line"),
         ([{**milk_line, "ingredient": ""}], "Invalid cook line"),
+        ([{**milk_line, "recipe_unit": ""}], "Invalid cook line"),
+        ([{**milk_line, "ingredient": "x" * 201}], "Invalid cook line"),
         ([milk_line, line(str(uuid4()), "ghost", 1, "cup", "small")], "FOOD_NOT_FOUND"),
+        ([milk_line, line(foreign_food, "flour", 1, "cup", "small")], "FOOD_NOT_FOUND"),
     ]
     for lines, error in attempts:
         failed = cook(database, home, deductions, lines=lines, check=False)
