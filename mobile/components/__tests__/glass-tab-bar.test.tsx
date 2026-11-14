@@ -5,7 +5,10 @@ import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import GlassTabBar from "@/components/glass-tab-bar";
 
 jest.mock("@expo/vector-icons/Feather", () => () => null);
-jest.mock("@/components/glass-tab-background", () => () => null);
+jest.mock("@/components/glass-surface", () => ({
+  __esModule: true,
+  default: ({ children }: { children?: React.ReactNode }) => children ?? null,
+}));
 jest.mock("@/hooks/useReducedMotion", () => ({ useReducedMotion: () => true }));
 jest.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, left: 0, right: 0, bottom: 34 }),
