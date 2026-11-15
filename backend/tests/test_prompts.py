@@ -27,7 +27,6 @@ def test_generate_prompt_requires_portions_and_observable_instruction_cues() -> 
     assert "observable cue" in system
     assert "165°f" in system
     assert "145°f" in system
-    assert "do not pad" in system
     assert "at least three" not in system
     assert "additional cues, not substitutes" in system
     assert "action heading" in system
@@ -43,6 +42,7 @@ def test_generate_prompt_teaches_cookbook_structure_without_step_numbers() -> No
         "equipment",
         "display_amount",
         "prep",
+        "phase",
         "doneness_cue",
         "why",
         "uses",
@@ -53,6 +53,17 @@ def test_generate_prompt_teaches_cookbook_structure_without_step_numbers() -> No
     assert not any(
         line.strip().lower().startswith("step ") for line in system.splitlines()
     )
+
+
+def test_generate_prompt_splits_steps_at_checkpoints_with_no_fixed_count() -> None:
+    system = load_prompt("generate_recipes").system.lower()
+
+    assert "ends at something they can check or hand off" in system
+    assert "split any step that would need two doneness cues" in system
+    assert "let each dish decide its own count" in system
+    assert "never merge stages to keep a recipe short" in system
+    assert "should not share a step count" in system
+    assert "too crammed" in system
 
 
 def test_load_prompt_rejects_a_prompt_without_a_version(

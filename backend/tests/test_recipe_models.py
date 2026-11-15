@@ -92,3 +92,14 @@ def test_a_zero_or_fractional_time_does_not_reject_the_batch() -> None:
     assert (timed.active_minutes, timed.total_minutes) == (None, 25)
     assert timed.cook_time_minutes == 25
     assert timed.steps[0].minutes is None
+
+
+def test_a_step_reads_its_phase_and_treats_a_blank_phase_as_none() -> None:
+    steps = [
+        RecipeStep.model_validate({"phase": " Rice ", "instruction": "Cook the rice."}),
+        RecipeStep.model_validate({"phase": "", "instruction": "Serve."}),
+        RecipeStep.model_validate({"instruction": "Toss the pasta."}),
+        RecipeStep.model_validate("Step 1: Boil the pasta."),
+    ]
+
+    assert [step.phase for step in steps] == ["Rice", None, None, None]

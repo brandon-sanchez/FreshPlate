@@ -319,8 +319,18 @@ async def test_generation_schema_asks_for_a_cookbook_recipe_with_structured_step
         "type": "integer",
         "minimum": 1,
     }
-    step_schema = recipe_schema["properties"]["steps"]["items"]
-    assert step_schema["required"] == ["instruction", "doneness_cue", "why", "uses"]
+    steps_schema = recipe_schema["properties"]["steps"]
+    assert steps_schema["minItems"] == 1
+    assert "maxItems" not in steps_schema
+    step_schema = steps_schema["items"]
+    assert step_schema["required"] == [
+        "phase",
+        "instruction",
+        "doneness_cue",
+        "why",
+        "uses",
+    ]
+    assert step_schema["properties"]["phase"] == {"type": "string"}
     assert step_schema["properties"]["minutes"] == {"type": "integer"}
     assert step_schema["properties"]["uses"]["items"] == {"type": "string"}
 

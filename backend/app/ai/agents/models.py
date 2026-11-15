@@ -91,9 +91,17 @@ class RecipeIngredient(BaseModel):
 class RecipeStep(BaseModel):
     """One stage of a recipe's method.
 
+    Steps are flat. ``phase`` labels the component a step works on without
+    grouping steps, so a recipe whose components interleave keeps its true
+    cooking order.
+
     Attributes:
+        phase: The meal component the stage works on, such as "Rice" or
+            "Finish". None for a dish with one component, and in string-step
+            recipes.
         instruction: What to do, as a short action heading, a newline, then
-            one or two sentences. In a string-step recipe, the whole step text.
+            one to three sentences. In a string-step recipe, the whole step
+            text.
         doneness_cue: A sentence on what the cook sees, smells or tests to
             know the stage is done, such as "Ready when the edges are set but
             the center still wobbles." None when the stage has no endpoint,
@@ -109,6 +117,7 @@ class RecipeStep(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    phase: _OptionalText = None
     instruction: str = Field(min_length=1)
     doneness_cue: _OptionalText = None
     minutes: _OptionalMinutes = None
@@ -257,9 +266,10 @@ def _recipe_schema(units_by_food: Mapping[str, Sequence[str]]) -> dict[str, Any]
     ``uses`` has no enum of food ids and ``minutes`` has no bound, because
     Gemini rejects a schema whose constraints have too many states, and
     enums and bounds add states. Validation and ``check_quality`` enforce
-    both instead. Text that may
-    be absent, such as ``prep`` and ``why``, is a plain string the model
-    leaves empty, and validation reads it as None. ``cook_time_minutes`` is
+    both instead. Text that may be absent, such as ``prep``, ``why`` and a
+    step's ``phase``, is a plain string the model leaves empty, and
+    validation reads it as None. ``steps`` has no ``maxItems``, because the
+    dish decides how many steps it needs. ``cook_time_minutes`` is
     left out, because validation copies it from ``total_minutes``.
     """
     text = {"type": "string"}
@@ -279,6 +289,7 @@ def _recipe_schema(units_by_food: Mapping[str, Sequence[str]]) -> dict[str, Any]
     ]
     step = _object(
         {
+            "phase": text,
             "instruction": text,
             "doneness_cue": text,
             "minutes": {"type": "integer"},
