@@ -14,7 +14,7 @@ def test_load_prompt_reads_the_versioned_generate_recipes_prompt() -> None:
     prompt = load_prompt("generate_recipes")
 
     assert prompt.name == "generate_recipes"
-    assert prompt.version == 5
+    assert prompt.version == 6
     assert prompt.model == "gemini-3.6-flash"
     assert prompt.thinking == "minimal"
     assert "inventory" in prompt.system.lower()
@@ -31,6 +31,28 @@ def test_generate_prompt_requires_portions_and_observable_instruction_cues() -> 
     assert "at least three" not in system
     assert "additional cues, not substitutes" in system
     assert "action heading" in system
+
+
+def test_generate_prompt_teaches_cookbook_structure_without_step_numbers() -> None:
+    system = load_prompt("generate_recipes").system
+
+    for field in (
+        "headnote",
+        "active_minutes",
+        "total_minutes",
+        "equipment",
+        "display_amount",
+        "prep",
+        "doneness_cue",
+        "why",
+        "uses",
+    ):
+        assert field in system
+    assert "order of first use" in system.lower()
+    assert "Step 1" not in system
+    assert not any(
+        line.strip().lower().startswith("step ") for line in system.splitlines()
+    )
 
 
 def test_load_prompt_rejects_a_prompt_without_a_version(
@@ -98,7 +120,7 @@ def test_trace_config_contains_prompt_and_request_metadata() -> None:
     assert set(config) == {"metadata"}
     assert config["metadata"] == {
         "prompt_name": "generate_recipes",
-        "prompt_version": 5,
+        "prompt_version": 6,
         "request_id": "request-123",
     }
 

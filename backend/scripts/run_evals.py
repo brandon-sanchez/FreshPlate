@@ -11,7 +11,7 @@ from typing import Any
 
 from app.ai.agents.graph import build_recipe_graph
 from app.ai.agents.meal_quality import MealChecklist
-from app.ai.agents.models import Recipe, RecipeIngredient
+from app.ai.agents.models import Recipe, RecipeIngredient, RecipeStep
 from app.ai.eval.judge import JudgeResult, judge_recipe
 from app.ai.eval.scorers import completeness_percent, ingredient_coverage_percent
 from app.ai.llm.providers import FakeProvider, GeminiProvider
@@ -25,17 +25,30 @@ def _fixture_recipe(case: dict[str, Any]) -> Recipe:
     item = FoodLine.model_validate(case["inventory"][0])
     return Recipe(
         title=case["name"].title(),
+        headnote="A deterministic offline fixture built from the first food.",
         cook_time_minutes=20,
         servings=2,
+        active_minutes=10,
+        total_minutes=20,
+        equipment=["large skillet"],
         ingredients=[
             RecipeIngredient(
                 name=item.name,
                 inventory_item_id=item.id,
                 use_amount=1,
                 unit=item.stock_unit,
+                display_amount="1",
             ),
         ],
-        steps=["Prepare the ingredients.", "Cook until tender.", "Serve warm."],
+        steps=[
+            RecipeStep(instruction="Prepare the ingredients", uses=[item.id]),
+            RecipeStep(
+                instruction="Cook\nCook over medium heat.",
+                doneness_cue="Ready when tender.",
+                minutes=10,
+            ),
+            RecipeStep(instruction="Serve warm."),
+        ],
     )
 
 

@@ -35,7 +35,9 @@ def recipe_image_prompt(recipe: Recipe) -> str:
     lines = [_RECIPE_STYLE, "", f"Dish: {_clip(recipe.title)}", "Ingredients:"]
     lines += [f"- {_ingredient_line(item)}" for item in recipe.ingredients]
     lines.append("Preparation:")
-    steps = [f"{index}. {step.strip()}" for index, step in enumerate(recipe.steps, 1)]
+    steps = [
+        f"{index}. {step.instruction}" for index, step in enumerate(recipe.steps, 1)
+    ]
     while steps and len("\n".join(lines + steps).encode()) > MAX_PROMPT_BYTES:
         steps.pop()
     return "\n".join(lines + steps)

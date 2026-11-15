@@ -266,15 +266,15 @@ class ImageService:
         """Return the cache key of a recipe snapshot.
 
         It covers only what the picture shows (title, ingredients with
-        amounts, and steps), so a feed copy and a saved copy of one recipe
-        share an image.
+        amounts, and step instructions), so a feed copy and a saved copy of
+        one recipe share an image.
         """
         content = {
             "title": recipe.title,
             "ingredients": [
                 [item.name, item.use_amount, item.unit] for item in recipe.ingredients
             ],
-            "steps": recipe.steps,
+            "steps": [step.instruction for step in recipe.steps],
         }
         return _digest("recipe", json.dumps(content, sort_keys=True))
 

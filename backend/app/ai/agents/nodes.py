@@ -15,6 +15,7 @@ from app.ai.agents.limits import DEFAULT_BATCH_CEILING, MAX_BATCH_CEILING
 from app.ai.agents.models import (
     Recipe,
     RecipeGenerationResponse,
+    RecipeIngredient,
     recipe_batch_model,
 )
 from app.ai.agents.state import (
@@ -33,7 +34,13 @@ from app.ai.rag.vector_store import (
     RetrievedRecipe,
 )
 from app.inventory.food_facts import FoodLine
-from app.inventory.units import Exact, FoodFacts, convertible_units, to_stock
+from app.inventory.units import (
+    Exact,
+    FoodFacts,
+    convertible_units,
+    normalize_unit,
+    to_stock,
+)
 
 EXPIRING_WITHIN_DAYS = 5
 MAX_QUALITY_RETRIES = 1
@@ -52,6 +59,16 @@ WATER_RULE = (
     "seasoning or fat, must come from the listed inventory."
 )
 _QUERY_TERM_SEPARATOR = re.compile(r"[^\w]+", flags=re.UNICODE)
+# Mirrors COPIED_STEP_PREFIX in mobile/lib/recipe-format.ts. A bare number
+# needs ":", "." or ")" after it, so "2 eggs" and "2-inch pieces" stay.
+_COPIED_STEP_PREFIX = re.compile(
+    r"^\s*(?:step\s*\d+\s*[:.)\-–—]?|\d+\s*[:.)])\s*", flags=re.IGNORECASE
+)
+_DECIMAL_NUMBER = re.compile(r"\d*\.\d")
+_SPOKEN_AMOUNT = re.compile(
+    r"^\s*(?P<whole>\d+)?\s*(?P<fraction>[¼½¾⅓⅔⅛]|\d+/\d+)?\s*(?P<unit>[^\d(,]*)"
+)
+_GLYPHS = {"¼": 0.25, "½": 0.5, "¾": 0.75, "⅓": 1 / 3, "⅔": 2 / 3, "⅛": 0.125}
 _USABLE_ITEMS = TypeAdapter(list[UsableItem])
 
 
@@ -249,7 +266,7 @@ def check_quality(state: Mapping[str, Any]) -> QualityResult:
         if issues:
             failures.append(f"Recipe '{recipe.title}': {'; '.join(issues)}")
         else:
-            valid_recipes.append(recipe)
+            valid_recipes.append(_tidy_generated_recipe(recipe))
 
     return {
         "valid_recipes": valid_recipes,
@@ -479,6 +496,79 @@ def _quality_issues(
     if not grounded:
         issues.append("recipe has no grounded inventory ingredients")
     return issues
+
+
+def _tidy_generated_recipe(recipe: Recipe) -> Recipe:
+    """Fix the slips a grounded recipe should not be dropped for.
+
+    The model sometimes numbers steps despite the prompt, and a step's
+    ``uses`` may name a food the recipe does not list. Ingredients
+    are put in order of first use, because the model's order drifts. A spoken
+    amount that is a decimal or disagrees with ``use_amount`` is dropped,
+    because the cook flow deducts ``use_amount`` and the app formats it
+    instead. Active time is capped at total time.
+    """
+    listed = {item.inventory_item_id for item in recipe.ingredients}
+    steps = [
+        step.model_copy(
+            update={
+                "instruction": _COPIED_STEP_PREFIX.sub("", step.instruction, count=1)
+                or step.instruction,
+                "uses": [food_id for food_id in step.uses if food_id in listed],
+            }
+        )
+        for step in recipe.steps
+    ]
+    first_use: dict[str, int] = {}
+    for index, step in enumerate(steps):
+        for food_id in step.uses:
+            first_use.setdefault(food_id, index)
+    ingredients = sorted(
+        (
+            item
+            if _spoken_amount_fits(item)
+            else item.model_copy(update={"display_amount": None})
+            for item in recipe.ingredients
+        ),
+        key=lambda item: first_use.get(item.inventory_item_id or "", len(steps)),
+    )
+    active = recipe.active_minutes
+    if active is not None and recipe.total_minutes is not None:
+        active = min(active, recipe.total_minutes)
+    return recipe.model_copy(
+        update={"steps": steps, "ingredients": ingredients, "active_minutes": active}
+    )
+
+
+def _spoken_amount_fits(item: RecipeIngredient) -> bool:
+    """Return whether ``display_amount`` can be shown in place of ``use_amount``.
+
+    It fits when it has no decimal and, if it starts with a number in the
+    ingredient's own unit (or no unit), that number is within rounding of
+    ``use_amount``. A spoken amount in another unit, such as "1 cup" for
+    200 g, is trusted.
+    """
+    spoken = item.display_amount
+    if spoken is None:
+        return True
+    if _DECIMAL_NUMBER.search(spoken):
+        return False
+    match = _SPOKEN_AMOUNT.match(spoken)
+    if match is None or item.use_amount is None:
+        return True
+    whole, fraction, unit = match.group("whole", "fraction", "unit")
+    if whole is None and fraction is None:
+        return True
+    unit = unit.strip()
+    if unit and normalize_unit(unit) != normalize_unit(item.unit):
+        return True
+    value = float(whole or 0)
+    if fraction in _GLYPHS:
+        value += _GLYPHS[fraction]
+    elif fraction:
+        numerator, denominator = fraction.split("/")
+        value += int(numerator) / int(denominator) if int(denominator) else 0
+    return abs(value - item.use_amount) <= max(0.07, 0.1 * item.use_amount)
 
 
 def _amount_text(value: float | Decimal) -> str:

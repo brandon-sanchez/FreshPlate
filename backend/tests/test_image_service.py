@@ -284,3 +284,35 @@ async def test_refunded_failure_does_not_use_up_attempts():
 async def test_generation_needs_the_switch_a_key_and_positive_caps(overrides, enabled):
     settings = Settings(_env_file=None, **{"openai_api_key": "test-key", **overrides})
     assert ImagePolicy.from_settings(settings).enabled is enabled
+
+
+async def test_a_saved_string_step_recipe_keeps_its_cached_image_key():
+    saved = recipe(
+        "Tomato Pasta",
+        ingredients=[
+            {
+                "name": "Tomatoes",
+                "inventory_item_id": "t",
+                "use_amount": 2,
+                "unit": "each",
+            }
+        ],
+        steps=["Step 1: Boil the pasta\nBoil it until al dente.", "Toss and serve."],
+    )
+    assert ImageService.recipe_key(saved) == (
+        "f01e52534e0cddf084269a4fb7c65ba78f890b3eab24ea6733a048c28979b284"
+    )
+
+
+async def test_a_step_cue_or_reason_does_not_change_the_image_key():
+    plain = recipe(steps=[{"instruction": "Boil the pasta."}])
+    explained = recipe(
+        steps=[
+            {
+                "instruction": "Boil the pasta.",
+                "doneness_cue": "Ready when al dente.",
+                "why": "Salted water seasons it.",
+            }
+        ]
+    )
+    assert ImageService.recipe_key(plain) == ImageService.recipe_key(explained)
