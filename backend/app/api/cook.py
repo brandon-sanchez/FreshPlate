@@ -1,4 +1,4 @@
-"""Authenticated atomic cook confirmation endpoint."""
+"""Cook confirmation endpoint, which deducts a finished cook from stock."""
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 
@@ -14,6 +14,37 @@ async def confirm_cook(
     _user_id: CurrentUserId,
     request: Request,
 ):
+    """Deduct a confirmed cook from the household's batches and record it.
+
+    Forwards the caller's JWT to the ``cook_recipe_v2`` Postgres function, so
+    membership checks and the cook event's user come from the caller. That
+    function's ``COMMENT ON FUNCTION`` defines the draw order, idempotency and
+    error codes.
+
+    Args:
+        payload: The cook to confirm.
+        _user_id: The authenticated caller. Postgres reads it again from the JWT.
+        request: The incoming request, whose bearer token is forwarded.
+
+    Returns:
+        ``{"data": {...}}`` with ``cook_event_id``, ``operation_id`` and one
+        deduction per line: ``inventory_item_id``, ``food_id``,
+        ``confirmed_amount``, ``committed_amount`` and ``draws``
+        (``[{lot_id, amount}]``), plus ``lines``: the request's ingredient
+        lines with ``food_id``, ``stock_base``, their share of the ``draws``
+        and ``shortfall`` added.
+
+    Raises:
+        HTTPException: 401 or 403 when Supabase rejects the caller. 409
+            ``COOK_REJECTED`` when Postgres refuses the cook, for example for
+            an unknown food, a fractional amount on a whole-units food, lines
+            that don't match the deductions, or an operation id reused with a
+            different payload. A request that races a food merge is also
+            refused, and the app may retry it. 502
+            ``COOK_REJECTED`` for any other Supabase error. 503
+            ``COOK_UNAVAILABLE`` when Supabase is not configured or can't be
+            reached.
+    """
     token = request.headers.get("authorization", "")
     key = settings.supabase_publishable_key or settings.supabase_anon_key
     if not settings.supabase_url or not key:
@@ -23,7 +54,7 @@ async def confirm_cook(
         )
     try:
         response = await request.app.state.supabase_http_client.post(
-            f"{settings.supabase_url}/rest/v1/rpc/cook_recipe",
+            f"{settings.supabase_url}/rest/v1/rpc/cook_recipe_v2",
             headers={
                 "apikey": key,
                 "Authorization": token,
@@ -37,6 +68,7 @@ async def confirm_cook(
                 "p_deductions": [
                     line.model_dump(mode="json") for line in payload.deductions
                 ],
+                "p_lines": [line.model_dump(mode="json") for line in payload.lines],
             },
             timeout=10,
         )

@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from jose import jwt
 
 from app.core import auth as auth_module
+from app.inventory.food_facts import FoodLine
 from app.main import create_app
 
 
@@ -122,3 +123,16 @@ def patch_jwks(
 @pytest.fixture
 def client() -> TestClient:
     return TestClient(create_app())
+
+
+HOUSEHOLD_ID = "00000000-0000-4000-8000-0000000000aa"
+
+
+class FakeFoodLineSource:
+    def __init__(self, lines: list[dict[str, Any]]) -> None:
+        self.lines = lines
+        self.household_ids: list[Any] = []
+
+    async def list_food_lines(self, household_id: Any) -> list[Any]:
+        self.household_ids.append(household_id)
+        return [FoodLine.model_validate(line) for line in self.lines]

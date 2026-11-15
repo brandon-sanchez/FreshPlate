@@ -38,7 +38,7 @@ flowchart LR
 	API --> OFF
 ```
 
-This split keeps the backend small. Simple reads and writes don't pass through it, so the API holds no inventory logic. The cost is two write paths into the same tables. The cook flow is the one place where that matters, and it goes through a single database function for that reason.
+This split keeps the backend small. Simple reads and writes don't pass through it. The API reads a household's foods only to generate recipes, and it never writes inventory except through the cook flow. The cost is two write paths into the same tables. The cook flow is the one place where that matters, and it goes through a single database function for that reason.
 
 The backend has these routers, registered in `backend/app/main.py`:
 
@@ -75,7 +75,7 @@ sequenceDiagram
 
 `backend/app/core/auth.py` verifies the token against the project's public signing keys (JWKS), which it caches for an hour. If a token names a key ID the cache does not have, the backend refetches the JWKS once before it rejects the token, so a key rotation does not lock users out for the length of the cache. Routes take the verified user ID through the `CurrentUserId` dependency.
 
-The cook endpoint goes one step further. It forwards the user's own JWT to Supabase when it calls the `cook_recipe` function. Postgres then sees the real user in `auth.uid()`, and row-level security applies as if the app had made the call itself.
+The cook endpoint goes one step further. It forwards the user's own JWT to Supabase when it calls the `cook_recipe_v2` function. Postgres then sees the real user in `auth.uid()`, so the membership check and the cook event's user are the caller's own.
 
 ## A four-node LangGraph pipeline turns inventory into recipes
 
@@ -93,10 +93,10 @@ flowchart LR
 
 Each node has one job:
 
-1. `analyze_inventory` drops expired, used-up, and zero-quantity items. It puts items that expire within five days first and flags them, so the prompt can favor food that is about to go bad. It uses no model.
+1. `analyze_inventory` gets one line per food, read by the API from the `food_stock` and `food_facts` views as the caller. Each line has the food's unexpired total, its batch count, its next expiry date, and its unit facts. Expired batches never count toward the total. The node drops foods with nothing left, and it lists the units the unit converter can turn into a number for each food, such as `head, clove, g` for garlic. It puts foods that expire within five days first and flags them, so the prompt can favor food that is about to go bad. It uses no model.
 2. `retrieve_recipes` turns the item names into one query, embeds it with `gemini-embedding-001` (768 dimensions), and calls the `match_recipe_embeddings` function. That function searches an HNSW cosine index over the Food.com recipes in `recipe_embeddings`.
-3. `generate_recipes` sends the usable items and up to five retrieved recipes to `gemini-3.6-flash` with the `generate_recipes_v4` prompt. Gemini returns JSON that must match a Pydantic schema. Each ingredient names the inventory item it uses and how much.
-4. `check_quality` runs in two stages. Code checks first. Every ingredient must map to a real inventory item with the same name and unit, and it can't use more than the household has. Recipes that pass then go to a Gemini judge (`assess_meals_v2`). The judge answers a short checklist for each recipe, and code turns the first failed answer into `insufficient`, `incoherent`, or `unsupported_ingredient`. Only recipes that pass every answer reach the user.
+3. `generate_recipes` sends the usable foods and up to five retrieved recipes to `gemini-3.6-flash` with the `generate_recipes_v5` prompt. Gemini returns JSON that must match a schema built for this kitchen. Each ingredient names one listed food, and its unit must be one of that food's listed units, so every amount converts when the user cooks.
+4. `check_quality` runs in two stages. Code checks first. Every ingredient must map to a listed food. The converter turns each amount into the food's stock unit, and a recipe fails only when the exact conversions for a food add up to more than the household has. Estimated and unconvertible amounts pass, because the cook flow confirms them. Recipes that pass then go to a Gemini judge (`assess_meals_v2`). The judge answers a short checklist for each recipe, and code turns the first failed answer into `insufficient`, `incoherent`, or `unsupported_ingredient`. Only recipes that pass every answer reach the user.
 
 The code check runs before the judge because it is free and exact. A recipe that asks for three eggs when the household has two is wrong, and no model call is needed to say so. The judge handles what code can't decide, such as whether "rice and ketchup" is a meal.
 
@@ -128,7 +128,8 @@ sequenceDiagram
 	participant DB as Postgres
 	participant G as Pipeline
 
-	App->>API: POST /api/recipes/sessions (inventory, answers)
+	App->>API: POST /api/recipes/sessions (household_id, answers)
+	API->>DB: Read food_stock and food_facts as the user
 	API->>G: Full pipeline, 5 recipes, retrieve 30 docs
 	G-->>API: Valid recipes
 	API->>DB: create_recipe_feed_session
@@ -156,32 +157,36 @@ A session stops after six generation runs. The app then offers to add items or c
 
 ## Cook confirmation deducts inventory in one transaction
 
-When a user finishes cooking, they confirm how much of each item they used. `POST /api/cook/confirm` passes that list to the `cook_recipe` Postgres function, which applies it in one transaction.
+When a user finishes cooking, they confirm how much of each food they used, in the food's stock base (grams, millilitres or a count). The request also carries one line per recipe ingredient matched to a food: the recipe's amount and unit, the converted amount, and the mode (`draw` when it converted, `small` for a seasoning-sized amount that is never drawn, `ask` when the user was asked). `POST /api/cook/confirm` passes both lists to the `cook_recipe_v2` Postgres function, which draws each amount from the food's batches (lots) and records the lines in one transaction.
 
 ```mermaid
 sequenceDiagram
 	participant App as Expo app
 	participant API as FastAPI
-	participant DB as cook_recipe()
+	participant DB as cook_recipe_v2()
 
-	App->>API: POST /api/cook/confirm<br/>household_id, operation_id, deductions
-	API->>DB: rpc/cook_recipe with the user's JWT
+	App->>API: POST /api/cook/confirm<br/>household_id, operation_id, deductions, lines
+	API->>DB: rpc/cook_recipe_v2 with the user's JWT
 	DB->>DB: Return the saved result if operation_id was already used
-	DB->>DB: Validate every line, lock the rows
-	DB->>DB: Subtract, mark used-up rows depleted
-	DB->>DB: Insert cook_events row
-	DB-->>API: Committed amounts
+	DB->>DB: Map each id to its live food, lock the foods in sorted order
+	DB->>DB: Draw from each food's lots in draw order
+	DB->>DB: Split each food's draws across its lines
+	DB->>DB: Insert cook_events row with the lines
+	DB-->>API: Draws per lot, committed amounts, lines
 	API-->>App: 200, or 409 if rejected
 ```
 
 The function guarantees these properties:
 
-- **All or nothing.** It checks every line before it changes any row. Amounts must be positive and finite, IDs must be unique, and every item must belong to the caller's household. One bad line rejects the whole request.
-- **Safe to retry.** The app creates an `operation_id` when the cook starts and stores it with the active cook. `cook_events` has a unique key on `(household_id, operation_id)`, so a repeated confirmation returns the first result and deducts nothing twice.
-- **Safe under concurrency.** The function locks the item rows with `SELECT ... FOR UPDATE`. If another household member used the same item first, the deduction stops at zero. The event then records both what the user said they used (`confirmed_amount`) and what was actually subtracted (`committed_amount`).
-- **No hard deletes.** An item that reaches zero gets a `depleted_at` timestamp. The function never deletes the row.
+- **Draw order.** Each amount comes from the food's unexpired lots: opened lots first, then the soonest expiry (undated lots last), then the oldest. One lot is finished before the next starts. A drawn lot is marked opened, and a lot drawn to zero is marked depleted with reason `used`. Expired lots are skipped until someone reviews them.
+- **All or nothing.** One bad line rejects the whole request. Amounts must be positive and finite, whole-unit foods (cans, eggs) take whole amounts only, each food may appear in one line only, and every ID must be a food or lot of the caller's household.
+- **Old recipes still cook.** A recipe's `inventory_item_id` holds a food id. Recipes saved before foods existed hold a lot id there, and the function draws from that lot's food. Merged foods are followed to the food they were merged into.
+- **Safe to retry.** The app creates an `operation_id` when the cook starts and stores it with the active cook. A lock on household plus operation id serializes repeats, so a repeated confirmation returns the first result and deducts nothing twice. A repeat with a different payload is rejected.
+- **Safe under concurrency.** Every function that changes a food's stock takes a per-food advisory lock, in sorted food id order, before it touches any lot. Two phones cooking the same foods wait for each other instead of deadlocking, and a batch added during a cook lands wholly before or after it. When stock runs short, the deduction stops at zero. The event then records both what the user said they used (`confirmed_amount`) and what was actually drawn (`committed_amount`, and `draws` per lot).
+- **Lines for Cook Again.** Each line in `cook_events.lines` keeps the recipe's amount and unit next to the live food, its stock base, the batches it drew from and its shortfall. A food used by several lines splits its draws across them in recipe order: each line takes its converted amount, and the last takes the rest, such as a can rounded up. Cook Again can then re-plan the recipe's own units against current stock instead of comparing bare numbers in different units. Every deduction needs a line that draws from it, and every drawing line needs a deduction.
+- **No hard deletes.** A lot that reaches zero gets `depleted_at`. The function never deletes a row.
 
-The function runs as `SECURITY INVOKER` with the user's JWT, so it gets no extra privileges. On `main`, the backend endpoint, the database function, and the app's persisted active-cook state exist. The cook screens that call them are in progress in [#27](https://github.com/brandon-sanchez/FreshPlate/issues/27) and [#30](https://github.com/brandon-sanchez/FreshPlate/issues/30).
+The function runs as `SECURITY DEFINER`, because members can't change lot quantities directly. It checks household membership first and reads only foods and lots of that household. The cook screens that call the endpoint are in progress in [#27](https://github.com/brandon-sanchez/FreshPlate/issues/27) and [#30](https://github.com/brandon-sanchez/FreshPlate/issues/30).
 
 ## Image generation has a spending cap before it has images
 
