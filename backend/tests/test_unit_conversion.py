@@ -13,6 +13,7 @@ from app.inventory.units import (
     FoodFacts,
     ProfileFacts,
     Small,
+    convertible_units,
     normalize_unit,
     table_unit,
     to_stock,
@@ -357,3 +358,55 @@ def test_to_taste_is_small_whatever_amount_the_recipe_sends(amount) -> None:
 def test_malformed_food_facts_are_rejected_when_built(build) -> None:
     with pytest.raises(ValueError):
         build()
+
+
+def test_garlic_in_heads_offers_its_count_word_and_profile_words() -> None:
+    assert convertible_units(GARLIC) == (
+        "head", "clove", "g", "kg", "oz", "lb", "tsp", "tbsp", "pinch", "dash",
+    )  # fmt: skip
+
+
+def test_a_liquid_offers_its_base_and_every_volume_unit_but_no_weights() -> None:
+    assert convertible_units(MILK) == (
+        "ml", "oz", "l", "tsp", "tbsp", "cup", "fl oz", "pinch", "dash",
+    )  # fmt: skip
+
+
+def test_a_food_with_a_density_offers_both_weights_and_volumes() -> None:
+    rice = FoodFacts(stock_base="g", profile=ProfileFacts(g_per_ml=D("0.8")))
+    assert convertible_units(rice) == (
+        "g", "kg", "oz", "lb", "ml", "l", "tsp", "tbsp", "cup", "fl oz",
+        "pinch", "dash",
+    )  # fmt: skip
+
+
+def test_a_counted_food_with_an_item_weight_offers_each_and_weights() -> None:
+    assert convertible_units(ONIONS) == (
+        "g", "each", "kg", "oz", "lb", "pinch", "dash",
+    )  # fmt: skip
+
+
+def test_a_package_of_unknown_size_offers_the_package_and_seasoning_spoons() -> (
+    None
+):
+    assert convertible_units(SALT) == ("container", "tsp", "tbsp", "pinch", "dash")
+
+
+def test_household_words_come_before_profile_words_and_size_words_are_left_out() -> (
+    None
+):
+    apple = FoodFacts(
+        stock_base="each",
+        each_label="each",
+        household_units={"Slices": D("0.125")},
+        profile=ProfileFacts(unit_grams={"each": D(182), "large": D(223)}),
+    )
+    assert convertible_units(apple) == (
+        "each", "slice", "g", "kg", "oz", "lb", "tsp", "tbsp", "pinch", "dash",
+    )  # fmt: skip
+
+
+def test_every_offered_unit_converts_without_asking() -> None:
+    for food in (GARLIC, OIL, BUTTER, MILK, ONIONS, SALT, COLA):
+        for unit in convertible_units(food):
+            assert not isinstance(to_stock(D(1), unit, food), AskAtCook), (food, unit)

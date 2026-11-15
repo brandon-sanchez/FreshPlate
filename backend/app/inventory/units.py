@@ -74,6 +74,13 @@ _SEASONING_ML = {
     "pinch": _VOLUME["tsp"] / 16,
     "dash": _VOLUME["tsp"] / 8,
 }
+_OFFERED_TABLE_UNITS = (
+    "g", "kg", "oz", "lb", "ml", "l", "tsp", "tbsp", "cup", "fl oz",
+)  # fmt: skip
+_SEASONING_SPOONS = frozenset(("tsp", "tbsp", "pinch", "dash"))
+_SIZE_ONLY_WORDS = frozenset(
+    ("extra small", "small", "medium", "large", "extra large", "jumbo", "big")
+)
 _SYNONYMS = {
     "g": ("gram",),
     "kg": ("kilogram",),
@@ -325,6 +332,46 @@ def in_stock(amount: Decimal, unit: str, stock: Measure) -> Decimal | None:
         if used.dimension == stock.dimension:
             return used.amount
     return None
+
+
+def convertible_units(food: FoodFacts) -> tuple[str, ...]:
+    """Return the recipe units that ``to_stock`` converts to a number for ``food``.
+
+    Recipe generation offers only these units, so every amount it writes
+    converts at cook time instead of being asked about. A unit is offered when
+    one of it converts exactly or approximately. A seasoning spoon (tsp, tbsp,
+    pinch, dash) is also offered when it is only ``Small``, as for salt in a
+    container of unknown size, because a seasoning-sized amount needs no
+    number.
+
+    Returns:
+        Unit words in ``normalize_unit`` form: the food's stock unit first,
+        then its household words, its profile words (size words such as
+        "large" left out), "each" for a food not counted in items, and the
+        common mass and volume units. No word appears twice.
+    """
+    stock_unit = food.each_label or food.stock_base
+    profile_words = () if food.profile is None else food.profile.unit_grams
+    candidates = dict.fromkeys(
+        (
+            stock_unit,
+            *food.household_units,
+            *(word for word in profile_words if word not in _SIZE_ONLY_WORDS),
+            *(() if food.stock_base == "each" else ("each",)),
+            *_OFFERED_TABLE_UNITS,
+            *_SEASONING_ML,
+        )
+    )
+    return tuple(unit for unit in candidates if _offers(unit, food))
+
+
+def _offers(unit: str, food: FoodFacts) -> bool:
+    conversion = to_stock(Decimal(1), unit, food)
+    if isinstance(conversion, Small):
+        return unit in _SEASONING_SPOONS or not isinstance(
+            conversion.otherwise, AskAtCook
+        )
+    return not isinstance(conversion, AskAtCook)
 
 
 def to_stock(amount: Decimal, unit: str, food: FoodFacts) -> Conversion:

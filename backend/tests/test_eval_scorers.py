@@ -36,7 +36,7 @@ async def test_scorers_and_curated_dataset_contract():
     cases = json.loads((Path(__file__).parents[1] / "app/ai/eval/dataset.json").read_text())
     assert len(cases) == 22
     assert set(CASE_COVERAGE).issubset({case["name"] for case in cases})
-    assert all(all("name" in item and "quantity" in item and "unit" in item for item in case["inventory"]) for case in cases)
+    assert all(all("name" in item and "available" in item and "stock_base" in item for item in case["inventory"]) for case in cases)
     for case in cases:
         usable = analyze_inventory({"inventory": case["inventory"]})["usable_items"]
         mapped = [RecipeIngredient(name=item["name"], inventory_item_id=item["id"], use_amount=1, unit=item["unit"]) for item in usable]

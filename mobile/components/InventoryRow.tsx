@@ -13,18 +13,24 @@ import Animated, {
 import { useTheme } from "@/hooks/useTheme";
 import { getUrgency } from "@/constants/theme";
 import UrgencyBar from "@/components/UrgencyBar";
-import { daysUntilExpiration, InventoryItem } from "@/hooks/useInventoryItems";
+import type { FoodRow } from "@/lib/foodRows";
 
 type InventoryRowProps = {
-  item: InventoryItem;
-  onPress?: (item: InventoryItem) => void;
+  /** The food to show, with its lots stacked. A single-lot row reads like one batch. */
+  row: FoodRow;
+  /** Called with `row` on tap. Without it the row is not pressable. */
+  onPress?: (row: FoodRow) => void;
   /** When true, the row pulses with the accent color once to draw the eye. */
   highlight?: boolean;
 };
 
-function InventoryRow({ item, onPress, highlight }: InventoryRowProps) {
+/**
+ * Renders one food as an inventory card: name, total amount with batch count
+ * and locations, and an urgency bar and label driven by `row.days`.
+ */
+function InventoryRow({ row, onPress, highlight }: InventoryRowProps) {
   const { colors, fonts, card } = useTheme();
-  const days = daysUntilExpiration(item.expiration_date);
+  const { days } = row;
   const urgencyLabel = days === null ? null : getUrgency(days).label;
   const labelColor =
     days === null
@@ -35,7 +41,7 @@ function InventoryRow({ item, onPress, highlight }: InventoryRowProps) {
           ? colors.warn
           : colors.textMuted;
 
-  const iconName = (item.category?.icon ?? "circle-o") as React.ComponentProps<
+  const iconName = (row.category?.icon ?? "circle-o") as React.ComponentProps<
     typeof FontAwesome
   >["name"];
 
@@ -81,7 +87,10 @@ function InventoryRow({ item, onPress, highlight }: InventoryRowProps) {
       ]}
     >
       <RectButton
-        onPress={onPress ? () => onPress(item) : undefined}
+        onPress={onPress ? () => onPress(row) : undefined}
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={accessibilitySummary(row)}
         activeOpacity={1}
         underlayColor="transparent"
         style={{
@@ -114,7 +123,7 @@ function InventoryRow({ item, onPress, highlight }: InventoryRowProps) {
               letterSpacing: -0.2,
             }}
           >
-            {item.name}
+            {row.name}
           </Text>
           <Text
             numberOfLines={1}
@@ -125,9 +134,7 @@ function InventoryRow({ item, onPress, highlight }: InventoryRowProps) {
               letterSpacing: -0.05,
             }}
           >
-            {formatQuantity(item.quantity)} {item.unit} ·{" "}
-            {capitalize(item.storage_location)}
-            {item.is_leftover ? " · Leftover" : ""}
+            {metaLine(row)}
           </Text>
           <UrgencyBar daysUntilExpiration={days} width={92} />
         </View>
@@ -148,6 +155,38 @@ function InventoryRow({ item, onPress, highlight }: InventoryRowProps) {
       </RectButton>
     </Animated.View>
   );
+}
+
+function metaLine(row: FoodRow): string {
+  const parts = [`${formatQuantity(row.total)} ${row.unit}`];
+  if (row.lots.length > 1) parts.push(`${row.lots.length} batches`);
+  parts.push(row.locations.map(capitalize).join(", "));
+  if (row.isLeftover) parts.push("Leftover");
+  const hidden = hiddenExpiredLots(row);
+  if (hidden > 0) parts.push(`${hidden} expired`);
+  return parts.join(" · ");
+}
+
+function accessibilitySummary(row: FoodRow): string {
+  const parts = [row.name, `${formatQuantity(row.total)} ${row.unit}`];
+  if (row.lots.length > 1) parts.push(`${row.lots.length} batches`);
+  parts.push(expirySummary(row.days));
+  const hidden = hiddenExpiredLots(row);
+  if (hidden > 0) parts.push(`${hidden} expired`);
+  return parts.join(", ");
+}
+
+/** Expired lots the urgency label does not already announce. */
+function hiddenExpiredLots(row: FoodRow): number {
+  return row.urgency === "expired" ? 0 : row.expiredLots;
+}
+
+function expirySummary(days: number | null): string {
+  if (days === null) return "no expiry date";
+  if (days < 0) return "expired";
+  if (days === 0) return "expires today";
+  if (days === 1) return "expires tomorrow";
+  return `expires in ${days} days`;
 }
 
 function formatQuantity(q: number): string {

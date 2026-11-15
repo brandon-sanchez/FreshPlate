@@ -12,7 +12,7 @@ import {
 } from "@/lib/recipe-feed-api";
 
 const request: RecipeFeedSessionRequest = {
-  inventory: [],
+  household_id: "household-1",
   preferences: {},
 };
 

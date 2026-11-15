@@ -19,6 +19,7 @@ import { useInventoryItems } from "@/hooks/useInventoryItems";
 import { useRecipeFeed } from "@/hooks/useRecipeFeed";
 import { useSavedRecipes } from "@/hooks/useSavedRecipes";
 import { useActiveCook } from "@/hooks/useActiveCook";
+import { useAuthStore } from "@/stores/auth";
 import {
   buildRecipeFeedSessionRequest,
   countAnsweredPreferences,
@@ -44,6 +45,7 @@ export default function RecipesScreen() {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
   const inventory = useInventoryItems();
+  const householdId = useAuthStore((s) => s.householdId);
   const feed = useRecipeFeed();
   const saved = useSavedRecipes();
   const cook = useActiveCook();
@@ -55,6 +57,7 @@ export default function RecipesScreen() {
   const items = useMemo(() => inventory.data ?? [], [inventory.data]);
   const generate = useCallback(
     (nextPreferences: RecipePreferences) => {
+      if (!householdId) return;
       Keyboard.dismiss();
       const normalizedPreferences = { ...nextPreferences };
       if (normalizedPreferences.occasion?.trim()) {
@@ -64,9 +67,9 @@ export default function RecipesScreen() {
       }
       setPreferences(normalizedPreferences);
       setFlowOpen(false);
-      feed.start(buildRecipeFeedSessionRequest(items, normalizedPreferences));
+      feed.start(buildRecipeFeedSessionRequest(householdId, normalizedPreferences));
     },
-    [feed, items],
+    [feed, householdId],
   );
 
   const toggleSave = (recipe: RecipeSuggestion, isSaved: boolean) => {

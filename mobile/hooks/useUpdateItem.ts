@@ -10,7 +10,6 @@ export type UpdateItemInput = {
   foodId: string;
   patch: {
     name?: string;
-    quantity?: number;
     expiration_date?: string | null;
     storage_location?: "fridge" | "freezer" | "pantry";
     notes?: string | null;
@@ -34,12 +33,11 @@ const UNIQUE_VIOLATION = "23505";
 
 /**
  * Returns a mutation that saves edits to one lot. A changed name goes to
- * `foods` first, then date, location, notes and quantity go to `lots` in one
+ * `foods` first, then date, location and notes go to `lots` in one
  * update. The two writes are separate requests, so a failed lot update leaves
- * a rename saved. The database lets members change a lot's date, location and
- * notes and a food's name; it rejects a quantity change, so that save fails.
- * A lot has no unit of its own: it is the food's stock unit. Invalidates
- * `['inventory']` on success.
+ * a rename saved. The database lets members change only a lot's date,
+ * location and notes and a food's name, so the patch holds nothing else.
+ * Invalidates `['inventory']` on success.
  *
  * @throws {@link FoodNameTakenError} when another food already has the name.
  */
