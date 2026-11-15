@@ -79,7 +79,9 @@ function photo(recipeId: string): ImageResult {
 /** Provides each hook test with an isolated query cache and tracks it for cleanup. */
 function wrapper({ children }: { children: React.ReactNode }) {
   const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+    // A replaced session's query would otherwise hold a five-minute
+    // garbage-collection timer that keeps Jest from exiting.
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
   });
   queryClients.add(queryClient);
   lastQueryClient = queryClient;
@@ -550,5 +552,148 @@ describe("useRecipeFeed", () => {
       expect(result.current.recipes.map((item) => item.title)).toEqual(["Soup"]),
     );
     expect(result.current.isExhausted).toBe(true);
+  });
+
+  describe("steering", () => {
+    const withFoods = (recipeId: string, foods: string[]): RecipeSuggestion => ({
+      ...recipe(recipeId, recipeId),
+      ingredients: foods.map((food) => ({
+        name: food,
+        inventory_item_id: food,
+        use_amount: 1,
+        unit: "each",
+      })),
+    });
+    const salmon = withFoods("salmon", ["salmon", "rice", "lemon", "peas"]);
+    const salmonToo = withFoods("salmon-too", ["salmon", "rice", "lemon", "garlic"]);
+    const stew = withFoods("stew", ["chickpeas", "tomatoes", "carrots", "garlic"]);
+    const stewToo = withFoods("stew-too", ["chickpeas", "tomatoes", "carrots", "oil"]);
+    const head = Array.from({ length: 9 }, (_, index) =>
+      withFoods(`head-${index}`, [`food-${index}`, `other-${index}`]),
+    );
+
+    async function startFeed() {
+      mockCreateSession.mockResolvedValueOnce(page([salmon, ...head], "10", true));
+      const hook = renderHook(() => useRecipeFeed(), { wrapper });
+      act(() => hook.result.current.start(request));
+      await waitFor(() => expect(hook.result.current.recipes).toHaveLength(10));
+      return hook;
+    }
+
+    it("asks for a batch steered toward the card right after More like this", async () => {
+      mockFetchPage.mockReturnValue(new Promise(() => undefined));
+      const { result } = await startFeed();
+      expect(mockFetchPage).not.toHaveBeenCalled();
+
+      act(() => result.current.steer("more", salmon));
+
+      await waitFor(() =>
+        expect(mockFetchPage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            cursor: "10",
+            steering: { more_like: ["salmon"], less_like: [] },
+          }),
+        ),
+      );
+      await waitFor(() => expect(result.current.isPrefetching).toBe(true));
+    });
+
+    it("steers later batches away from a Less like this card and drops alike cards", async () => {
+      mockFetchPage.mockResolvedValueOnce(page([stewToo, salmonToo], null, false));
+      const { result } = await startFeed();
+
+      act(() => result.current.steer("less", stew));
+      act(() => result.current.maybePrefetch(9));
+
+      await waitFor(() => expect(result.current.isExhausted).toBe(true));
+      expect(mockFetchPage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          steering: { more_like: [], less_like: ["stew"] },
+        }),
+      );
+      expect(result.current.recipes.map((item) => item.recipe_id)).toContain("salmon-too");
+      expect(result.current.recipes.map((item) => item.recipe_id)).not.toContain("stew-too");
+    });
+
+    it("keeps only alike cards from a batch already loading when More like this is pressed", async () => {
+      let finish: ((value: RecipeFeedResponse) => void) | undefined;
+      mockFetchPage
+        .mockImplementationOnce(
+          () => new Promise<RecipeFeedResponse>((resolve) => { finish = resolve; }),
+        )
+        .mockReturnValue(new Promise(() => undefined));
+      const { result } = await startFeed();
+      act(() => result.current.maybePrefetch(9));
+      await waitFor(() => expect(mockFetchPage).toHaveBeenCalledTimes(1));
+
+      act(() => result.current.steer("more", salmon));
+      await act(async () => finish?.(page([stewToo, salmonToo], "12", true)));
+
+      await waitFor(() => expect(mockFetchPage).toHaveBeenCalledTimes(2));
+      expect(mockFetchPage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          cursor: "12",
+          steering: { more_like: ["salmon"], less_like: [] },
+        }),
+      );
+      const ids = result.current.recipes.map((item) => item.recipe_id);
+      expect(ids).toContain("salmon-too");
+      expect(ids).not.toContain("stew-too");
+    });
+
+    it("keeps a card alike to a Less pick when a later More pick is alike too", async () => {
+      const stewThree = withFoods("stew-three", ["chickpeas", "tomatoes", "carrots", "cumin"]);
+      mockFetchPage
+        .mockResolvedValueOnce(page([stewThree], "11", true))
+        .mockReturnValue(new Promise(() => undefined));
+      const { result } = await startFeed();
+
+      act(() => result.current.steer("less", stew));
+      act(() => result.current.steer("more", stewToo));
+
+      await waitFor(() =>
+        expect(result.current.recipes.map((item) => item.recipe_id)).toContain(
+          "stew-three",
+        ),
+      );
+    });
+
+    it("asks for one batch when More like this is pressed again before it lands", async () => {
+      let finish: ((value: RecipeFeedResponse) => void) | undefined;
+      mockFetchPage
+        .mockImplementationOnce(
+          () => new Promise<RecipeFeedResponse>((resolve) => { finish = resolve; }),
+        )
+        .mockReturnValue(new Promise(() => undefined));
+      const { result } = await startFeed();
+
+      act(() => result.current.steer("more", salmon));
+      await waitFor(() => expect(mockFetchPage).toHaveBeenCalledTimes(1));
+      act(() => result.current.steer("more", salmon));
+      await act(async () => finish?.(page([salmonToo], "11", true)));
+
+      await waitFor(() =>
+        expect(result.current.recipes.map((item) => item.recipe_id)).toContain(
+          "salmon-too",
+        ),
+      );
+      expect(mockFetchPage).toHaveBeenCalledTimes(1);
+    });
+
+    it("forgets steering when a new feed starts", async () => {
+      mockFetchPage.mockResolvedValue(page([], null, false));
+      const { result } = await startFeed();
+      act(() => result.current.steer("less", stew));
+
+      mockCreateSession.mockResolvedValueOnce(page([salmon, ...head], "10", true));
+      act(() => result.current.start(request));
+      await waitFor(() => expect(result.current.recipes).toHaveLength(10));
+      act(() => result.current.maybePrefetch(9));
+
+      await waitFor(() => expect(mockFetchPage).toHaveBeenCalled());
+      expect(mockFetchPage).toHaveBeenLastCalledWith(
+        expect.objectContaining({ steering: undefined }),
+      );
+    });
   });
 });
