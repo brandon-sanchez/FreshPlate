@@ -114,6 +114,24 @@ it("renders the selected snapshot and sends its identity to the shared save acti
   expect(onClose).toHaveBeenCalledTimes(1);
 });
 
+it("shows Time, then Serves, each value above its label, and no Match", () => {
+  const screen = render(
+    <RecipeDetail
+      recipe={recipe}
+      isSaved={false}
+      isSavePending={false}
+      onToggleSave={jest.fn()}
+      onClose={jest.fn()}
+    />,
+    { wrapper },
+  );
+  const stats = screen.getByTestId("recipe-stats");
+  expect(stats).toHaveTextContent("20 minTime2Serves");
+  expect(screen.queryByText("Match")).toBeNull();
+  expect(screen.getByLabelText("Time, 20 minutes")).toBeTruthy();
+  expect(screen.getByLabelText("Serves 2")).toBeTruthy();
+});
+
 it("uses updated saved state and blocks a second toggle while saving", () => {
   const onToggleSave = jest.fn();
   const props = { recipe, onToggleSave, onClose: jest.fn(), isSaved: true };

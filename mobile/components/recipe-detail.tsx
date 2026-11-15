@@ -16,6 +16,7 @@ import { useTheme } from "@/hooks/useTheme";
 import type { RecipeSuggestion } from "@/types/recipes";
 import RecipePhoto from "@/components/recipe-photo";
 import RecipeSaveButton from "@/components/recipe-save-button";
+import RecipeStats from "@/components/recipe-stats";
 import RecipeSteps from "@/components/recipe-steps";
 
 // Height of the hero photo below the status bar, in points.
@@ -104,15 +105,7 @@ function RecipeDetailScreen({
           >
             {recipe.title}
           </Text>
-          <View style={[styles.stats, { backgroundColor: colors.surfaceAlt }]}>
-            <Stat icon="users" label="Serves" value={`${recipe.servings}`} />
-            <Stat
-              icon="clock"
-              label="Time"
-              value={`${recipe.cook_time_minutes} min`}
-            />
-            <Stat icon="zap" label="Match" value={`${recipe.match_percent}%`} />
-          </View>
+          <RecipeStats recipe={recipe} style={styles.stats} />
           <Text
             style={[
               styles.heading,
@@ -232,35 +225,6 @@ function RecipeDetailScreen({
   );
 }
 
-function Stat({
-  icon,
-  label,
-  value,
-}: {
-  icon: "clock" | "users" | "zap";
-  label: string;
-  value: string;
-}) {
-  const { colors, fonts } = useTheme();
-  return (
-    <View style={styles.stat}>
-      <Feather name={icon} size={16} color={colors.textMuted} />
-      <Text style={{ color: colors.text, fontFamily: fonts.bodyStrong }}>
-        {value}
-      </Text>
-      <Text
-        style={{
-          color: colors.textMuted,
-          fontFamily: fonts.body,
-          fontSize: 12,
-        }}
-      >
-        {label}
-      </Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   statusBackdrop: { position: "absolute", top: 0, left: 0, right: 0 },
@@ -276,8 +240,7 @@ const styles = StyleSheet.create({
   },
   content: { padding: 20 },
   title: { fontSize: 26, lineHeight: 32 },
-  stats: { flexDirection: "row", padding: 16, marginTop: 16, borderRadius: 14 },
-  stat: { flex: 1, alignItems: "center", gap: 4 },
+  stats: { marginTop: 16 },
   heading: {
     fontSize: 13,
     textTransform: "uppercase",

@@ -79,7 +79,9 @@ describe("recipe preview sheet", () => {
     const onOpen = jest.fn();
     const screen = renderSheet(onOpen);
     expect(screen.getByText("Pasta")).toBeTruthy();
-    expect(screen.getByText("2 servings · 20 min")).toBeTruthy();
+    expect(screen.getByTestId("recipe-stats")).toHaveTextContent(
+      "20 minTime2Serves",
+    );
     expect(screen.getByText("Tomato")).toBeTruthy();
     expect(screen.getByText("1")).toBeTruthy();
     expect(screen.getByTestId("recipe-step-body-0").props.children).toBe(
