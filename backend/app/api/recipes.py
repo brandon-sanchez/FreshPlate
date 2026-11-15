@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
 
 from app.ai.agents.graph import build_recipe_generation_graph, build_recipe_graph
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.models import Recipe
 from app.ai.agents.nodes import (
     GENERATION_DOCS_CEILING,
@@ -116,9 +117,9 @@ async def post_recipe_suggestions(
 ) -> RecipeSuggestionsResponse:
     """Generate one authenticated, session-scoped batch of recipe suggestions.
 
-    Reads the household's foods as the caller, then runs the recipe graph.
-    Responds 503 ``AI_UNAVAILABLE`` when the foods can't be read or
-    generation fails.
+    Reads the household's foods and kitchen basics as the caller, then runs
+    the recipe graph. Responds 503 ``AI_UNAVAILABLE`` when they can't be read
+    or generation fails.
     """
     if payload.batch_ceiling == 0:
         return RecipeSuggestionsResponse(
@@ -129,11 +130,12 @@ async def post_recipe_suggestions(
     prompt = load_prompt("generate_recipes")
 
     try:
-        lines = await _within_recipe_deadline(
-            deadline, lambda: foods.list_food_lines(payload.household_id)
+        lines, basics = await _within_recipe_deadline(
+            deadline, lambda: _read_kitchen(foods, payload.household_id)
         )
         state = _initial_recipe_state(
             lines,
+            kitchen_basics=basics,
             preferences=payload.preferences,
             exclude_titles=payload.exclude_titles,
             batch_ceiling=payload.batch_ceiling,
@@ -170,9 +172,10 @@ async def post_recipe_feed_session(
 ) -> RecipeFeedResponse:
     """Create a feed session and persist its first bounded candidate pool.
 
-    Reads the household's foods as the caller. Responds 503
-    ``RECIPE_FEED_UNAVAILABLE`` when the foods can't be read or the session
-    can't be stored, and 503 ``AI_UNAVAILABLE`` when generation fails or the
+    Reads the household's foods and kitchen basics as the caller, and stores
+    the basics on the session for later refills. Responds 503
+    ``RECIPE_FEED_UNAVAILABLE`` when they can't be read or the session can't
+    be stored, and 503 ``AI_UNAVAILABLE`` when generation fails or the
     deadline runs out.
     """
     prompt = load_prompt("generate_recipes")
@@ -180,11 +183,12 @@ async def post_recipe_feed_session(
 
     started_at = time.monotonic()
     try:
-        lines = await _within_recipe_deadline(
-            deadline, lambda: foods.list_food_lines(payload.household_id)
+        lines, basics = await _within_recipe_deadline(
+            deadline, lambda: _read_kitchen(foods, payload.household_id)
         )
         state = _initial_recipe_state(
             lines,
+            kitchen_basics=basics,
             preferences=payload.preferences,
             exclude_titles=[],
             batch_ceiling=RECIPE_FEED_INITIAL_HEAD_BATCH_CEILING,
@@ -396,6 +400,7 @@ async def _generate_claimed_recipe_refill(
         "exclude_titles": session.exclude_titles,
         "batch_ceiling": RECIPE_FEED_REFILL_BATCH_CEILING,
         "usable_items": session.usable_items,
+        "kitchen_basics": session.kitchen_basics,
         "retrieved_recipes": retrieval_window,
         "retry_count": 0,
         "metadata": {},
@@ -478,9 +483,18 @@ async def _within_recipe_deadline(
     return await asyncio.wait_for(operation(), timeout=remaining_seconds)
 
 
+async def _read_kitchen(
+    foods: FoodLineSource, household_id: UUID
+) -> tuple[list[FoodLine], list[str]]:
+    return await asyncio.gather(
+        foods.list_food_lines(household_id), foods.list_kitchen_basics(household_id)
+    )
+
+
 def _initial_recipe_state(
     lines: Sequence[FoodLine],
     *,
+    kitchen_basics: list[str],
     preferences: dict[str, Any],
     exclude_titles: list[str],
     batch_ceiling: int,
@@ -488,6 +502,7 @@ def _initial_recipe_state(
 ) -> RecipeState:
     return {
         "inventory": [line.model_dump(mode="python") for line in lines],
+        "kitchen_basics": kitchen_basics,
         "preferences": preferences,
         "exclude_titles": exclude_titles,
         "batch_ceiling": batch_ceiling,
@@ -505,6 +520,7 @@ def _session_from_initial_result(
 ) -> RecipeFeedSession:
     usable_items = result.get("usable_items", [])
     retrieved_recipes = result.get("retrieved_recipes", [])
+    basics = KitchenBasics.parse(result.get("kitchen_basics"))
     if not isinstance(usable_items, Sequence) or isinstance(usable_items, (str, bytes)):
         raise ValueError("Recipe graph returned invalid usable inventory")
     if not isinstance(retrieved_recipes, Sequence) or isinstance(
@@ -519,6 +535,7 @@ def _session_from_initial_result(
         retrieved_recipes=jsonable_encoder(list(retrieved_recipes)),
         retrieval_cursor=min(GENERATION_DOCS_CEILING, len(retrieved_recipes)),
         exclude_titles=[],
+        kitchen_basics=list(basics.names),
         candidate_count=candidate_count,
         generation_runs=1,
         has_more=bool(usable_items),
@@ -580,6 +597,7 @@ def _build_suggestions(
     ):
         raise ValueError("Recipe graph returned an invalid recipe state")
 
+    basics = KitchenBasics.parse(result.get("kitchen_basics"))
     excluded_titles = {
         _normalize_title(title) for title in exclude_titles if title.strip()
     }
@@ -592,7 +610,9 @@ def _build_suggestions(
             RecipeSuggestion(
                 **recipe.model_dump(mode="python"),
                 recipe_id=uuid4(),
-                match_percent=ingredient_coverage_percent(recipe, raw_inventory),
+                match_percent=ingredient_coverage_percent(
+                    recipe, raw_inventory, basics
+                ),
                 saves_expiring=_expiring_item_names(recipe, raw_inventory),
             )
         )

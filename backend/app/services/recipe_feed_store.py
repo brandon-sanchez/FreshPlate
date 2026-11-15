@@ -22,7 +22,11 @@ class RecipeFeedStoreError(RuntimeError):
 
 
 class RecipeFeedSession(BaseModel):
-    """The server-owned state needed to refill one feed."""
+    """The server-owned state needed to refill one feed.
+
+    ``kitchen_basics`` holds the household's basics, minus any it tracks as a
+    food, when the session started, so every refill follows the same rules.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -34,6 +38,7 @@ class RecipeFeedSession(BaseModel):
     retrieved_recipes: list[dict[str, Any]] = Field(default_factory=list)
     retrieval_cursor: int = Field(default=0, ge=0)
     exclude_titles: list[str] = Field(default_factory=list)
+    kitchen_basics: list[str] = Field(default_factory=list)
     candidate_count: int = Field(default=0, ge=0)
     generation_runs: int = Field(default=0, ge=0)
     has_more: bool = True

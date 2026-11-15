@@ -129,7 +129,7 @@ async def test_both_graphs_regenerate_rejected_meals_under_one_deadline(refill):
     assert all(call["deadline"] is result["deadline"] for call in provider.calls)
     assert "insufficient" in provider.calls[2]["prompt"]
     assert result["metadata"]["trace_key"] == "keep"
-    assert result["metadata"]["assessment_prompt_version"] == 2
+    assert result["metadata"]["assessment_prompt_version"] == 3
 
 
 @pytest.mark.asyncio
@@ -195,14 +195,33 @@ async def test_any_failed_checklist_answer_rejects_the_meal(answers, verdict):
 
 
 @pytest.mark.asyncio
-async def test_water_is_never_an_unlisted_food():
+async def test_kitchen_basics_are_never_unlisted_foods():
     recipe = Recipe.model_validate(CASES[1]["recipe"])
-    response = {"checks": [{**check(0), "unlisted_foods": [" Water "]}]}
+    response = {"checks": [{**check(0), "unlisted_foods": [" salt ", "Water"]}]}
+    provider = RecordingProvider([response])
     valid, feedback, _ = await assess_meals(
-        [recipe], {}, FakeProvider([response]), deadline=PipelineDeadline(30)
+        [recipe],
+        {"kitchen_basics": ["Salt", "Water"]},
+        provider,
+        deadline=PipelineDeadline(30),
     )
     assert valid == [recipe]
     assert feedback is None
+    assert json.loads(provider.calls[0]["prompt"])["kitchen_basics"] == [
+        "Salt",
+        "Water",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_water_is_unlisted_when_the_household_has_no_such_basic():
+    recipe = Recipe.model_validate(CASES[1]["recipe"])
+    response = {"checks": [{**check(0), "unlisted_foods": ["Water"]}]}
+    valid, feedback, _ = await assess_meals(
+        [recipe], {}, FakeProvider([response]), deadline=PipelineDeadline(30)
+    )
+    assert valid == []
+    assert "unsupported_ingredient" in feedback
 
 
 @pytest.mark.asyncio

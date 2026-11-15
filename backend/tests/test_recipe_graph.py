@@ -546,7 +546,7 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
     assert all(call["deadline"] is deadline for call in provider.calls)
     assert retriever.calls[0]["deadline"] is deadline
     assert result["metadata"]["prompt_name"] == "generate_recipes"
-    assert result["metadata"]["prompt_version"] == 5
+    assert result["metadata"]["prompt_version"] == 6
     assert result["metadata"]["request_id"] == "request-123"
 
 
@@ -682,47 +682,105 @@ async def test_generation_runs_at_minimal_thinking_with_a_capped_open_batch() ->
 
 
 @pytest.mark.asyncio
-async def test_generation_prompt_says_water_is_the_only_free_ingredient() -> None:
+async def test_generation_prompt_lets_recipes_use_the_kitchen_basics() -> None:
+    provider = RecordingProvider([{"recipes": []}])
+    await generate_recipes(
+        {"usable_items": [_usable_item()], "kitchen_basics": ["Salt", "Olive oil"]},
+        provider,
+    )
+    prompt = provider.calls[0]["prompt"]
+    assert (
+        "Kitchen basics, always on hand and never tracked:\n- Salt\n- Olive oil"
+    ) in prompt
+    assert "season the food properly" in prompt
+
+
+@pytest.mark.asyncio
+async def test_generation_prompt_without_basics_allows_nothing_untracked() -> None:
     provider = RecordingProvider([{"recipes": []}])
     await generate_recipes({"usable_items": [_usable_item()]}, provider)
     prompt = provider.calls[0]["prompt"]
-    assert "Water is always available" in prompt
-    assert "salt, pepper, oil" in prompt
+    assert "Kitchen basics, always on hand" not in prompt
+    assert "Every ingredient, including water, salt, pepper and oil" in prompt
 
 
-def test_check_quality_allows_unmapped_water_but_no_other_unmapped_staple() -> None:
+@pytest.mark.asyncio
+async def test_generation_schema_lets_a_basic_go_unmapped_by_its_exact_name() -> None:
+    provider = RecordingProvider([{"recipes": []}])
+    await generate_recipes(
+        {"usable_items": [_usable_item()], "kitchen_basics": ["Salt", "Water"]},
+        provider,
+    )
+    schema = provider.calls[0]["response_model"].model_json_schema()
+    variants = schema["$defs"]["KitchenRecipe"]["properties"]["ingredients"]["items"][
+        "anyOf"
+    ]
+    basic = [
+        variant
+        for variant in variants
+        if variant["properties"]["inventory_item_id"] == {"type": "null"}
+    ]
+    assert len(basic) == 1
+    assert basic[0]["properties"]["name"] == {
+        "type": "string",
+        "enum": ["Salt", "Water"],
+    }
+    assert basic[0]["required"] == ["name", "inventory_item_id", "use_amount", "unit"]
+
+
+def test_check_quality_accepts_unmapped_basics_but_no_other_unmapped_staple() -> None:
     tomatoes = _ingredient(
         "Tomatoes", inventory_item_id="tomatoes", use_amount=1, unit="each"
     )
-    with_water = Recipe.model_validate(
+    seasoned = Recipe.model_validate(
         _recipe(
             tomatoes,
-            _ingredient(" Water ", inventory_item_id=None, use_amount=500, unit="ml"),
+            _ingredient(" salt ", inventory_item_id=None, use_amount=1, unit="tsp"),
+            _ingredient("Water", inventory_item_id=None, use_amount=500, unit="ml"),
             title="Tomato Soup",
         )
     )
-    with_salt = Recipe.model_validate(
+    buttered = Recipe.model_validate(
         _recipe(
             tomatoes,
-            _ingredient("Salt", inventory_item_id=None, use_amount=2, unit="g"),
-            title="Salted Tomatoes",
+            _ingredient("Butter", inventory_item_id=None, use_amount=2, unit="tbsp"),
+            title="Buttered Tomatoes",
         )
     )
-    only_water = Recipe.model_validate(
+    only_basics = Recipe.model_validate(
         _recipe(
             _ingredient("Water", inventory_item_id=None, use_amount=1, unit="l"),
-            title="Hot Water",
+            _ingredient("Salt", inventory_item_id=None, use_amount=1, unit="tsp"),
+            title="Salted Water",
         )
     )
     result = check_quality(
         {
             "usable_items": [_usable_item()],
-            "generated_recipes": [with_water, with_salt, only_water],
+            "kitchen_basics": ["Salt", "Water"],
+            "generated_recipes": [seasoned, buttered, only_basics],
         }
     )
-    assert result["valid_recipes"] == [with_water]
-    assert "ingredient 'Salt' is not mapped to inventory" in result["quality_feedback"]
-    assert "Recipe 'Hot Water': recipe has no grounded" in result["quality_feedback"]
+    assert result["valid_recipes"] == [seasoned]
+    feedback = result["quality_feedback"]
+    assert "ingredient 'Butter' is not mapped to inventory" in feedback
+    assert "Recipe 'Salted Water': recipe has no grounded" in feedback
+
+
+def test_check_quality_rejects_unmapped_water_when_it_is_not_a_basic() -> None:
+    recipe = Recipe.model_validate(
+        _recipe(
+            _ingredient(
+                "Tomatoes", inventory_item_id="tomatoes", use_amount=1, unit="each"
+            ),
+            _ingredient("Water", inventory_item_id=None, use_amount=500, unit="ml"),
+        )
+    )
+    result = check_quality(
+        {"usable_items": [_usable_item()], "generated_recipes": [recipe]}
+    )
+    assert result["valid_recipes"] == []
+    assert "ingredient 'Water' is not mapped to inventory" in result["quality_feedback"]
 
 
 @pytest.mark.asyncio

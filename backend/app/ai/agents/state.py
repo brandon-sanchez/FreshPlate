@@ -43,6 +43,7 @@ class InventoryAnalysis(TypedDict):
 
     usable_items: list[UsableItem]
     query_terms: list[str]
+    kitchen_basics: list[str]
 
 
 class RetrievalResult(TypedDict):
@@ -70,9 +71,13 @@ class RecipeState(TypedDict, total=False):
     """The shared state carried through the four-node recipe graph.
 
     ``inventory`` holds one ``FoodLine`` mapping per household food.
+    ``kitchen_basics`` names the ingredients recipes may use without
+    inventory, such as salt; ``analyze_inventory`` drops any the kitchen also
+    tracks as a food.
     """
 
     inventory: list[Mapping[str, Any]]
+    kitchen_basics: list[str]
     preferences: Mapping[str, Any]
     exclude_titles: list[str]
     batch_ceiling: int

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.models import Recipe, RecipeGenerationResponse, RecipeIngredient
 from app.ai.agents.nodes import analyze_inventory
 from app.ai.eval.scorers import (
@@ -43,7 +44,7 @@ async def test_scorers_and_curated_dataset_contract():
         ingredients = [*mapped, RecipeIngredient(name="olive oil", unit="tablespoon")] if case["name"] in CASE_COVERAGE else mapped
         generated = recipe().model_copy(update={"ingredients": ingredients})
         generated = (await FakeProvider([{"recipes": [generated.model_dump()]}]).generate("eval", response_model=RecipeGenerationResponse)).recipes[0]
-        score = ingredient_coverage_percent(generated, usable)
+        score = ingredient_coverage_percent(generated, usable, KitchenBasics(()))
         assert score == (CASE_COVERAGE[case["name"]] if case["name"] in CASE_COVERAGE else 100)
         if case["name"] in CASE_COVERAGE:
             assert case["expected_coverage"][0] <= score <= case["expected_coverage"][1]
@@ -71,20 +72,23 @@ async def test_fake_provider_output_scores_through_public_seam():
     provider = FakeProvider([{"recipes": [recipe().model_dump()]}])
     response = await provider.generate("eval", response_model=RecipeGenerationResponse)
     generated = response.recipes[0]
-    assert ingredient_coverage_percent(generated, [{"id": "t", "quantity": 4}]) == 50
+    assert ingredient_coverage_percent(generated, [{"id": "t", "quantity": 4}], KitchenBasics(())) == 50
     assert mapping_validity_percent(generated, [{"id": "t", "quantity": 4}]) == 100
 
 
-def test_coverage_leaves_out_unmapped_water():
+def test_coverage_leaves_out_unmapped_kitchen_basics():
     soup = recipe().model_copy(
         update={
             "ingredients": [
                 RecipeIngredient(name="tomato", inventory_item_id="t", use_amount=2, unit="each"),
                 RecipeIngredient(name=" Water ", use_amount=500, unit="ml"),
+                RecipeIngredient(name="salt", use_amount=1, unit="tsp"),
             ]
         }
     )
-    assert ingredient_coverage_percent(soup, [{"id": "t", "quantity": 4}]) == 100
+    inventory = [{"id": "t", "quantity": 4}]
+    assert ingredient_coverage_percent(soup, inventory, KitchenBasics(("Water", "Salt"))) == 100
+    assert ingredient_coverage_percent(soup, inventory, KitchenBasics(())) == 33
 
 
 def test_mapping_compares_amounts_in_a_common_unit():

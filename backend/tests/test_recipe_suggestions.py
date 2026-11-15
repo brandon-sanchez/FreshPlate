@@ -12,6 +12,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.models import Recipe, RecipeGenerationResponse
 from app.ai.eval.scorers import ingredient_coverage_percent
 from app.ai.llm.errors import ProviderError
@@ -165,6 +166,38 @@ def test_authenticated_suggestion_returns_identity_match_and_expiry_badge(
     assert suggestion["saves_expiring"] == ["Baby Spinach"]
 
 
+def test_suggestions_may_season_with_the_households_kitchen_basics(
+    recipe_app: FastAPI,
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    patch_jwks([signing_key])
+    seasoned = _recipe()
+    seasoned["ingredients"].append(
+        {"name": "Salt", "inventory_item_id": None, "use_amount": 1, "unit": "tsp"}
+    )
+    foods = FakeFoodLineSource(_inventory(), ["Salt"])
+    _install_graph_dependencies(
+        recipe_app,
+        FakeProvider([{"recipes": [seasoned]}, {"checks": [_eligible()]}]),
+        foods=foods,
+    )
+
+    with TestClient(recipe_app) as client:
+        response = client.post(
+            "/api/recipes/suggestions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID},
+        )
+
+    assert response.status_code == 200
+    [suggestion] = response.json()["data"]["recipes"]
+    assert suggestion["ingredients"][-1]["name"] == "Salt"
+    assert suggestion["ingredients"][-1]["inventory_item_id"] is None
+    assert suggestion["match_percent"] == 100
+    assert foods.basics_household_ids == [UUID(HOUSEHOLD_ID)]
+
+
 def test_same_title_regeneration_gets_a_new_recipe_id(
     recipe_app: FastAPI,
     signing_key: SigningKey,
@@ -216,7 +249,7 @@ def test_ingredient_coverage_counts_untracked_staples_in_denominator() -> None:
         }
     )
 
-    assert ingredient_coverage_percent(recipe, _inventory()) == 67
+    assert ingredient_coverage_percent(recipe, _inventory(), KitchenBasics(())) == 67
 
 
 def test_suggestion_honors_exclusions_and_batch_ceiling(
@@ -439,14 +472,23 @@ def test_suggestion_requires_a_household(
     assert response.status_code == 422
 
 
+@pytest.mark.parametrize("failing_read", ["food_stock", "kitchen_basics"])
 def test_unreadable_foods_return_ai_unavailable(
     recipe_app: FastAPI,
     signing_key: SigningKey,
     patch_jwks,
+    failing_read: str,
 ) -> None:
     class FailingFoods:
         async def list_food_lines(self, household_id: Any) -> list[Any]:
-            raise FoodLinesError("Reading food_stock failed")
+            if failing_read == "food_stock":
+                raise FoodLinesError("Reading food_stock failed")
+            return []
+
+        async def list_kitchen_basics(self, household_id: Any) -> list[str]:
+            if failing_read == "kitchen_basics":
+                raise FoodLinesError("Reading kitchen_basics failed")
+            return []
 
     patch_jwks([signing_key])
     _install_graph_dependencies(recipe_app, FakeProvider([]))

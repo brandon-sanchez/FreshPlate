@@ -8,8 +8,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.models import Recipe
-from app.ai.agents.nodes import check_quality, is_water
+from app.ai.agents.nodes import check_quality
 from app.ai.agents.state import QualityResult
 from app.ai.llm.errors import ProviderError
 from app.ai.llm.protocol import LLMProvider
@@ -41,7 +42,8 @@ class MealCheck(BaseModel):
     unlisted_foods: list[str] = Field(
         description="Foods named in the title, steps or ingredients that are not in "
         "the kitchen items. An ingredient is listed only when it is the same food "
-        "as the kitchen item whose recipe_names include it. Water never counts."
+        "as the kitchen item whose recipe_names include it. Kitchen basics never "
+        "count."
     )
     is_full_meal: bool = Field(
         description="True if this is a dish a person would serve as their meal. "
@@ -59,9 +61,13 @@ class MealChecklist(BaseModel):
     checks: list[MealCheck]
 
 
-def meal_verdict(check: MealCheck) -> tuple[MealVerdict, str]:
-    """Return the first failed checklist answer as a verdict and reason."""
-    unlisted = [food for food in check.unlisted_foods if not is_water(food)]
+def meal_verdict(check: MealCheck, basics: KitchenBasics) -> tuple[MealVerdict, str]:
+    """Return the first failed checklist answer as a verdict and reason.
+
+    A food the judge calls unlisted is ignored when it is one of ``basics``,
+    the household's kitchen basics.
+    """
+    unlisted = [food for food in check.unlisted_foods if food not in basics]
     if unlisted:
         return "unsupported_ingredient", f"names foods not in the kitchen: {unlisted}"
     if not check.is_full_meal:
@@ -83,6 +89,7 @@ async def assess_meals(
 ) -> tuple[list[Recipe], str | None, dict[str, Any]]:
     template = prompt or load_prompt("assess_meals")
     inventory_by_id = {item["id"]: item for item in state.get("usable_items", [])}
+    basics = KitchenBasics.parse(state.get("kitchen_basics"))
     payload = {
         "candidates": [
             {
@@ -92,6 +99,7 @@ async def assess_meals(
             }
             for index, recipe in enumerate(recipes)
         ],
+        "kitchen_basics": list(basics.names),
         "preferences": state.get("preferences", {}),
     }
     if deadline.expired:
@@ -120,7 +128,7 @@ async def assess_meals(
     failures: list[str] = []
     checks_by_index = {check.candidate_index: check for check in checklist.checks}
     for index, recipe in enumerate(recipes):
-        verdict, reason = meal_verdict(checks_by_index[index])
+        verdict, reason = meal_verdict(checks_by_index[index], basics)
         if verdict == "eligible":
             eligible.append(recipe)
         else:

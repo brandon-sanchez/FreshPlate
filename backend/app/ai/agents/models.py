@@ -72,22 +72,27 @@ class RecipeGenerationResponse(BaseModel):
 
 
 def recipe_batch_model(
-    batch_ceiling: int, units_by_food: Mapping[str, Sequence[str]]
+    batch_ceiling: int,
+    units_by_food: Mapping[str, Sequence[str]],
+    kitchen_basics: Sequence[str],
 ) -> type[RecipeGenerationResponse]:
     """Return a response model whose JSON schema fits this kitchen.
 
     Gemini enforces the schema while it decodes. ``maxItems`` stops the batch
     at the ceiling instead of writing recipes the caller would discard. Each
     ingredient must name one listed food and one of that food's units, so
-    every amount the model writes converts at cook time. Pydantic enforces
-    neither rule, so ``generate_recipes`` trims an oversized batch and
-    ``check_quality`` rejects unknown foods. There is deliberately no minimum:
+    every amount the model writes converts at cook time. A kitchen basic is
+    the one ingredient with a null id, and it must use a basic's exact name.
+    Pydantic enforces neither rule, so ``generate_recipes`` trims an oversized
+    batch and ``check_quality`` rejects unknown foods. There is deliberately no minimum:
     an empty list is the honest answer for a kitchen that cannot make a meal.
 
     Args:
         batch_ceiling: The most recipes the model may return.
         units_by_food: Each usable food's id and the units it may be used in.
             Must not be empty, because an ingredient must name a food.
+        kitchen_basics: Names an ingredient may use with no inventory id.
+            Empty means every ingredient must name a food.
 
     Raises:
         ValueError: When ``units_by_food`` is empty.
@@ -107,6 +112,19 @@ def recipe_batch_model(
         }
         for food_id, units in units_by_food.items()
     ]
+    if kitchen_basics:
+        ingredient_schemas.append(
+            {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "enum": list(kitchen_basics)},
+                    "inventory_item_id": {"type": "null"},
+                    "use_amount": {"type": "number"},
+                    "unit": {"type": "string"},
+                },
+                "required": ["name", "inventory_item_id", "use_amount", "unit"],
+            }
+        )
     recipe_model = create_model(
         "KitchenRecipe",
         __base__=Recipe,

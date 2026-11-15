@@ -214,8 +214,11 @@ def _install_dependencies(
     retriever: Any,
     store: InMemoryRecipeFeedStore,
     inventory: list[dict[str, Any]] | None = None,
+    basics: list[str] | None = None,
 ) -> None:
-    foods = FakeFoodLineSource(_inventory() if inventory is None else inventory)
+    foods = FakeFoodLineSource(
+        _inventory() if inventory is None else inventory, basics
+    )
     app.dependency_overrides[get_food_line_source] = lambda: foods
     app.dependency_overrides[get_recipe_provider] = lambda: provider
     app.dependency_overrides[get_recipe_retriever] = lambda: retriever
@@ -379,6 +382,49 @@ def test_refill_returns_partial_results_without_a_second_quality_pass(
         "Recipe 9"
     ]
     assert len(provider._responses) == 1
+
+
+def test_feed_refills_season_with_the_basics_the_session_started_with(
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    patch_jwks([signing_key])
+    salted = _recipe("Salted spinach")
+    salted["ingredients"].append(
+        {"name": "Salt", "inventory_item_id": None, "use_amount": 1, "unit": "tsp"}
+    )
+    provider = FakeProvider(
+        [
+            {"recipes": [_recipe(f"Recipe {index}") for index in range(1, 6)]},
+            _assessment(5),
+            {"recipes": [salted]},
+            _assessment(1),
+        ]
+    )
+    store = InMemoryRecipeFeedStore()
+    app = create_app()
+    _install_dependencies(
+        app, provider, StubRetriever(), store, basics=["Salt", "Tomatoes"]
+    )
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        )
+        session_id = first.json()["data"]["session_id"]
+        refill = client.post(
+            f"/api/recipes/sessions/{session_id}/pages",
+            headers=_auth_headers(signing_key),
+            json={"cursor": first.json()["data"]["next_cursor"], "limit": 5},
+        )
+
+    assert store.sessions[UUID(session_id)].kitchen_basics == ["Salt"]
+    assert refill.status_code == 200
+    [recipe] = refill.json()["data"]["recipes"]
+    assert recipe["title"] == "Salted spinach"
+    assert recipe["match_percent"] == 100
 
 
 def test_empty_refill_ends_the_feed_with_honest_exhaustion(

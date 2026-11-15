@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from app.ai.agents.graph import build_recipe_graph
+from app.ai.agents.kitchen_basics import DEFAULT_KITCHEN_BASICS, KitchenBasics
 from app.ai.agents.meal_quality import MealChecklist
 from app.ai.agents.models import Recipe, RecipeIngredient
 from app.ai.eval.judge import JudgeResult, judge_recipe
@@ -19,6 +20,8 @@ from app.ai.rag.vector_store import RetrievedRecipe
 from app.inventory.food_facts import FoodLine
 
 DATASET = Path(__file__).parents[1] / "app/ai/eval/dataset.json"
+# Every household starts with these basics, so evals run with them too.
+_DEFAULT_BASICS = KitchenBasics(DEFAULT_KITCHEN_BASICS)
 
 
 def _fixture_recipe(case: dict[str, Any]) -> Recipe:
@@ -91,6 +94,7 @@ async def run(mode: str, experiment: str) -> dict[str, float | int | str]:
         result = await graph.ainvoke(
             {
                 "inventory": case["inventory"],
+                "kitchen_basics": list(DEFAULT_KITCHEN_BASICS),
                 "preferences": {"request": case["name"]},
                 "batch_ceiling": 1,
             }
@@ -104,7 +108,9 @@ async def run(mode: str, experiment: str) -> dict[str, float | int | str]:
         rows.append(
             {
                 "name": case["name"],
-                "coverage": ingredient_coverage_percent(recipe, case["inventory"]),
+                "coverage": ingredient_coverage_percent(
+                    recipe, case["inventory"], _DEFAULT_BASICS
+                ),
                 "completeness": completeness_percent(recipe),
                 "preference": judge.preference_alignment,
                 "violations": len(judge.quantity_violations),
@@ -182,7 +188,13 @@ async def _run_live(cases: list[dict[str, Any]], experiment: str) -> dict[str, A
 
     async def target(inputs: dict[str, Any]) -> dict[str, Any]:
         """Adapt graph output to LangSmith's evaluator target contract."""
-        result = await graph.ainvoke({**inputs, "batch_ceiling": 1})
+        result = await graph.ainvoke(
+            {
+                **inputs,
+                "kitchen_basics": list(DEFAULT_KITCHEN_BASICS),
+                "batch_ceiling": 1,
+            }
+        )
         recipes = result.get("valid_recipes", [])
         if not recipes:
             raise ValueError("recipe pipeline returned no valid recipes")
@@ -314,7 +326,9 @@ def build_live_evaluators(provider: Any) -> list[Any]:
         recipe = Recipe.model_validate(outputs["recipe"])
         return {
             "key": "coverage",
-            "score": ingredient_coverage_percent(recipe, outputs.get("inventory", [])),
+            "score": ingredient_coverage_percent(
+                recipe, outputs.get("inventory", []), _DEFAULT_BASICS
+            ),
         }
 
     async def judge(

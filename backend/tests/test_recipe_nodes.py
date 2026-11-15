@@ -77,6 +77,20 @@ def test_analyze_inventory_sends_one_line_per_food_with_its_units() -> None:
     assert result["query_terms"] == ["garlic", "milk"]
 
 
+def test_analyze_inventory_keeps_basics_the_kitchen_does_not_track() -> None:
+    state: dict[str, Any] = {
+        "inventory": [
+            _food("oil", "Olive  Oil", 500, stock_base="ml"),
+            _food("pepper", "Black pepper", 0, stock_base="g"),
+        ],
+        "kitchen_basics": ["Salt", "olive oil", "Black pepper", "SALT"],
+    }
+
+    result = analyze_inventory(state, today=date(2026, 8, 3))
+
+    assert result["kitchen_basics"] == ["Salt", "Black pepper"]
+
+
 @pytest.mark.parametrize(
     ("state", "match"),
     [

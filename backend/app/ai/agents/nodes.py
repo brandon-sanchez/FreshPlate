@@ -11,6 +11,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import TypeAdapter, ValidationError
 
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING, MAX_BATCH_CEILING
 from app.ai.agents.models import (
     Recipe,
@@ -45,11 +46,15 @@ RETRIEVAL_QUERY_TERM_LIMIT = 30
 # Category names come from the food_categories seed in
 # supabase/migrations/20260329180000_create_inventory_tables.sql.
 MAIN_COMPONENT_CATEGORIES = frozenset({"meat & seafood"})
-WATER = "water"
-WATER_RULE = (
-    "Water is always available: never list it as an ingredient, but steps may use "
-    "it. Every other ingredient, including salt, pepper, oil, butter and every "
-    "seasoning or fat, must come from the listed inventory."
+_BASICS_RULE = (
+    "Kitchen basics are always on hand: use them freely to cook and to season "
+    "the food properly. List each basic a recipe uses as an ingredient with its "
+    "exact listed name, a null inventory_item_id and an amount, such as 1 tsp "
+    "salt. Every other ingredient must come from the listed inventory."
+)
+_NO_BASICS_RULE = (
+    "No kitchen basics are listed. Every ingredient, including water, salt, "
+    "pepper and oil, must come from the listed inventory."
 )
 _QUERY_TERM_SEPARATOR = re.compile(r"[^\w]+", flags=re.UNICODE)
 _USABLE_ITEMS = TypeAdapter(list[UsableItem])
@@ -83,11 +88,16 @@ def analyze_inventory(
     retrieval query lists expiring foods, then main components, then the rest,
     capped at ``RETRIEVAL_QUERY_TERM_LIMIT`` names.
 
+    ``state["kitchen_basics"]`` passes through without duplicates, minus any
+    basic the kitchen also stocks as a usable food (see
+    ``KitchenBasics.without``).
+
     Raises:
-        ValueError: When the inventory is not a sequence or a line is not a
-            valid ``FoodLine``.
+        ValueError: When the inventory is not a sequence, a line is not a
+            valid ``FoodLine``, or the kitchen basics are not a list of names.
     """
     reference_date = today or date.today()
+    requested_basics = KitchenBasics.parse(state.get("kitchen_basics"))
     raw_inventory = state.get("inventory", [])
     if not isinstance(raw_inventory, Sequence) or isinstance(
         raw_inventory, (str, bytes)
@@ -146,9 +156,11 @@ def analyze_inventory(
     query_candidates.sort(key=lambda candidate: candidate[0])
     usable_items = [candidate[1] for candidate in candidates]
     query_terms = _unique_terms(candidate[1] for candidate in query_candidates)
+    basics = requested_basics.without(item["name"] for item in usable_items)
     return {
         "usable_items": usable_items,
         "query_terms": query_terms[:RETRIEVAL_QUERY_TERM_LIMIT],
+        "kitchen_basics": list(basics.names),
     }
 
 
@@ -190,8 +202,9 @@ async def generate_recipes(
     """Generate recipes while preserving provider amounts for validation.
 
     The response schema limits each ingredient to one usable food and that
-    food's units. A kitchen with no usable food makes no provider call and
-    returns an empty batch.
+    food's units, or to one of ``state["kitchen_basics"]`` by its exact name
+    with no inventory id. A kitchen with no usable food makes no provider call
+    and returns an empty batch.
     """
     template = prompt or load_prompt("generate_recipes")
     batch_ceiling = _batch_ceiling(state)
@@ -208,7 +221,9 @@ async def generate_recipes(
     response = await provider.generate(
         _generation_prompt(state, usable_items),
         response_model=recipe_batch_model(
-            batch_ceiling, {item["id"]: item["units"] for item in usable_items}
+            batch_ceiling,
+            {item["id"]: item["units"] for item in usable_items},
+            KitchenBasics.parse(state.get("kitchen_basics")).names,
         ),
         system_instruction=template.system,
         deadline=active_deadline,
@@ -224,7 +239,9 @@ async def generate_recipes(
 def check_quality(state: Mapping[str, Any]) -> QualityResult:
     """Keep only complete recipes grounded in the analyzed inventory.
 
-    An empty batch is how the generator reports a kitchen that cannot
+    An ingredient with no inventory id passes only when it names one of
+    ``state["kitchen_basics"]``. A recipe still needs at least one inventory
+    food. An empty batch is how the generator reports a kitchen that cannot
     make a meal, so it produces no quality feedback and never triggers a retry.
     """
     usable_items = _usable_items(state.get("usable_items", []))
@@ -232,6 +249,7 @@ def check_quality(state: Mapping[str, Any]) -> QualityResult:
     facts_by_id = {
         item["id"]: FoodLine.model_validate(item["food"]).facts for item in usable_items
     }
+    basics = KitchenBasics.parse(state.get("kitchen_basics"))
     generated = state.get("generated_recipes", [])
     if not isinstance(generated, Sequence) or isinstance(generated, (str, bytes)):
         raise ValueError("Recipe state generated_recipes must be a sequence")
@@ -245,7 +263,7 @@ def check_quality(state: Mapping[str, Any]) -> QualityResult:
             failures.append(f"Recipe {index} is incomplete: {_validation_message(exc)}")
             continue
 
-        issues = _quality_issues(recipe, inventory_by_id, facts_by_id)
+        issues = _quality_issues(recipe, inventory_by_id, facts_by_id, basics)
         if issues:
             failures.append(f"Recipe '{recipe.title}': {'; '.join(issues)}")
         else:
@@ -255,11 +273,6 @@ def check_quality(state: Mapping[str, Any]) -> QualityResult:
         "valid_recipes": valid_recipes,
         "quality_feedback": "\n".join(failures) if failures else None,
     }
-
-
-def is_water(name: str) -> bool:
-    """Return whether an ingredient is water, the one ingredient always on hand."""
-    return normalize_query_term(name) == WATER
 
 
 def route_after_quality(
@@ -328,6 +341,7 @@ def _generation_prompt(
 ) -> str:
     """Build the grounded user prompt for the versioned system instruction."""
     ceiling = _batch_ceiling(state)
+    basics = KitchenBasics.parse(state.get("kitchen_basics"))
     lines = [
         (
             f"Suggest up to {ceiling} distinct meals this kitchen can make. Each "
@@ -335,7 +349,8 @@ def _generation_prompt(
             "may use the full listed inventory, including the same main ingredient "
             "as another recipe. Make each one a different dish that varies in "
             "cooking method or format, not a variation of another. If the kitchen "
-            f"cannot make a real meal, return an empty list. {WATER_RULE}"
+            "cannot make a real meal, return an empty list. "
+            f"{_BASICS_RULE if basics else _NO_BASICS_RULE}"
         ),
         "",
         (
@@ -347,12 +362,12 @@ def _generation_prompt(
             "as templates."
         ),
         (
-            "Use only the listed inventory, within the listed amounts. Never "
-            "add untracked staples, shopping-list ingredients, or hidden "
-            "garnishes."
+            "Use only the listed inventory, within the listed amounts, and the "
+            "kitchen basics. Never add other untracked staples, shopping-list "
+            "ingredients, or hidden garnishes."
         ),
         (
-            "Every ingredient must map to one listed inventory_item_id. Write "
+            "Every other ingredient must map to one listed inventory_item_id. Write "
             "its use_amount in whichever of that food's listed units a cook "
             "would use, such as cloves of garlic or tablespoons of oil."
         ),
@@ -365,6 +380,9 @@ def _generation_prompt(
         "Usable inventory:",
     ]
     lines.extend(_inventory_line(item) for item in usable_items)
+    if basics:
+        lines.extend(("", "Kitchen basics, always on hand and never tracked:"))
+        lines.extend(f"- {basic}" for basic in basics.names)
 
     lines.extend(("", "Retrieved recipe inspiration:"))
     retrieved_recipes = state.get("retrieved_recipes", [])
@@ -424,12 +442,14 @@ def _quality_issues(
     recipe: Recipe,
     inventory_by_id: Mapping[str, UsableItem],
     facts_by_id: Mapping[str, FoodFacts],
+    basics: KitchenBasics,
 ) -> list[str]:
     """Return why ``recipe`` is not grounded in the usable inventory.
 
-    An ingredient must name a usable food, except unmapped water. A food's
-    ingredients fail together only when their exact conversions add up to
-    more than its available stock. ``Approximate``, ``Small`` and
+    An ingredient must name a usable food, except an unmapped kitchen basic,
+    which still needs a positive amount. A food's ingredients fail together
+    only when their exact conversions add up to more than its available
+    stock. ``Approximate``, ``Small`` and
     ``AskAtCook`` amounts never reject a recipe, because the cook flow
     confirms them.
     """
@@ -437,8 +457,6 @@ def _quality_issues(
     grounded = False
     exact_by_id: dict[str, Decimal] = {}
     for ingredient in recipe.ingredients:
-        if ingredient.inventory_item_id is None and is_water(ingredient.name):
-            continue
         amount = ingredient.use_amount
         if amount is None:
             issues.append(f"ingredient '{ingredient.name}' is missing use_amount")
@@ -446,6 +464,8 @@ def _quality_issues(
             issues.append(f"ingredient '{ingredient.name}' has an invalid use_amount")
 
         item_id = ingredient.inventory_item_id
+        if item_id is None and ingredient.name in basics:
+            continue
         if item_id is None:
             issues.append(f"ingredient '{ingredient.name}' is not mapped to inventory")
             continue
