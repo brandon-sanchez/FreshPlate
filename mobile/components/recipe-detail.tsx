@@ -8,7 +8,6 @@ import {
   useWindowDimensions,
 } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
-import FontAwesome from "@expo/vector-icons/FontAwesome";
 import Toast from "react-native-toast-message";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RecipePressable } from "@/components/recipe-motion";
@@ -16,6 +15,7 @@ import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
 import type { RecipeSuggestion } from "@/types/recipes";
 import RecipePhoto from "@/components/recipe-photo";
+import RecipeSaveButton from "@/components/recipe-save-button";
 import RecipeSteps from "@/components/recipe-steps";
 
 // Height of the hero photo below the status bar, in points.
@@ -218,30 +218,15 @@ function RecipeDetailScreen({
       >
         <Feather name="chevron-left" size={24} color="#1B1F1C" />
       </RecipePressable>
-      <RecipePressable
+      <RecipeSaveButton
+        variant="round"
+        saved={isSaved}
+        title={recipe.title}
         disabled={isSavePending}
         onPress={() => onToggleSave(recipe, isSaved)}
-        accessibilityRole="button"
-        accessibilityLabel={
-          isSaved ? "Remove recipe from saved recipes" : "Save recipe"
-        }
-        accessibilityState={{ selected: isSaved, disabled: isSavePending }}
-        style={[
-          styles.heroButton,
-          {
-            top: insets.top + 8,
-            right: 16,
-            backgroundColor: isSaved ? colors.accent : "rgba(255,255,255,0.92)",
-            opacity: isSavePending ? 0.6 : 1,
-          },
-        ]}
-      >
-        {isSaved ? (
-          <FontAwesome name="bookmark" size={19} color={colors.accentInk} />
-        ) : (
-          <Feather name="bookmark" size={19} color="#1B1F1C" />
-        )}
-      </RecipePressable>
+        testID="recipe-detail-save"
+        style={[styles.heroControl, { top: insets.top + 8, right: 16 }]}
+      />
       <Toast topOffset={insets.top + 60} />
     </View>
   );
@@ -279,6 +264,7 @@ function Stat({
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   statusBackdrop: { position: "absolute", top: 0, left: 0, right: 0 },
+  heroControl: { position: "absolute" },
   heroButton: {
     position: "absolute",
     minWidth: 44,

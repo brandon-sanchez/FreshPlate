@@ -106,7 +106,9 @@ it("renders the selected snapshot and sends its identity to the shared save acti
     "Sauté and serve.",
   );
   expect(screen.queryByText(recipe.recipe_id)).toBeNull();
-  fireEvent.press(screen.getByLabelText("Save recipe"));
+  fireEvent.press(
+    screen.getByLabelText("Save Spinach skillet to household cookbook"),
+  );
   expect(onToggleSave).toHaveBeenCalledWith(recipe, false);
   fireEvent.press(screen.getByLabelText("Close recipe details"));
   expect(onClose).toHaveBeenCalledTimes(1);
@@ -116,10 +118,10 @@ it("uses updated saved state and blocks a second toggle while saving", () => {
   const onToggleSave = jest.fn();
   const props = { recipe, onToggleSave, onClose: jest.fn(), isSaved: true };
   const screen = render(<RecipeDetail {...props} isSavePending />, { wrapper });
-  fireEvent.press(screen.getByLabelText("Remove recipe from saved recipes"));
+  fireEvent.press(screen.getByLabelText("Remove Spinach skillet from saved recipes"));
   expect(onToggleSave).not.toHaveBeenCalled();
   screen.rerender(<RecipeDetail {...props} isSavePending={false} />);
-  fireEvent.press(screen.getByLabelText("Remove recipe from saved recipes"));
+  fireEvent.press(screen.getByLabelText("Remove Spinach skillet from saved recipes"));
   expect(onToggleSave).toHaveBeenCalledWith(recipe, true);
 });
 
