@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   FlatList,
-  StyleSheet,
-  Text,
   View,
   useWindowDimensions,
   type ViewToken,
@@ -11,7 +9,7 @@ import type { ReactNode } from "react";
 import Animated, { Easing, LinearTransition } from "react-native-reanimated";
 import RecipeCard, { RecipeSkeletonCard } from "@/components/recipe-card";
 import RecipeCarousel from "@/components/recipe-carousel";
-import RecipeActionButton from "@/components/recipe-action-button";
+import RecipeFeedMessage from "@/components/recipe-feed-message";
 import RecipeIngredientsSheet from "@/components/recipe-ingredients-sheet";
 import {
   RecipeContextBar,
@@ -190,18 +188,24 @@ export default function RecipeFeed({
       compact={stackEnabled}
     />
   ) : prefetchError ? (
-    <View style={styles.ending}>
-      <Text style={[styles.message, { color: colors.textMuted }]}>
-        {recipes.length
+    <RecipeFeedMessage
+      icon="cloud-off"
+      isError
+      message={
+        recipes.length
           ? "We couldn't load more recipes right now."
-          : "We couldn't load recipes right now."}
-      </Text>
-      <RecipeActionButton
-        label="Try again"
-        onPress={onRetryMore}
-        testID="recipe-feed-more-retry"
-      />
-    </View>
+          : "We couldn't load recipes right now."
+      }
+      actions={[
+        {
+          label: "Try again",
+          onPress: onRetryMore,
+          variant: "primary",
+          testID: "recipe-feed-more-retry",
+        },
+      ]}
+      testID="recipe-feed-error"
+    />
   ) : isExhausted ? (
     <RecipeFeedTerminator
       hasRecipes={recipes.length > 0}
@@ -233,24 +237,21 @@ export default function RecipeFeed({
             items={[
               ...recipes.map((recipe, index) => ({
                 id: recipe.recipe_id,
-                isRecipe: true,
+                kind: "recipe" as const,
                 content: renderItem({ item: recipe, index }),
               })),
               ...(footer
                 ? [
                     {
                       id: "recipe-feed-tail",
-                      isRecipe: false,
+                      kind: isPrefetching
+                        ? ("loading" as const)
+                        : ("message" as const),
                       content: (
                         <View
                           style={{
                             height: cardHeight,
                             justifyContent: "center",
-                            ...(!isPrefetching && {
-                              marginHorizontal: 24,
-                              borderRadius: 24,
-                              backgroundColor: colors.surface,
-                            }),
                           }}
                         >
                           {footer}
@@ -312,60 +313,30 @@ function RecipeFeedTerminator({
   onAddItems: () => void;
   onEditAnswers: () => void;
 }) {
-  const { colors, fonts } = useTheme();
   return (
-    <View style={styles.ending}>
-      <View
-        style={{
-          height: 1,
-          width: 40,
-          backgroundColor: colors.accent,
-          marginBottom: 12,
-        }}
-      />
-      <Text
-        style={{
-          fontFamily: fonts.display,
-          fontSize: 28,
-          color: colors.text,
-          textAlign: "center",
-        }}
-      >
-        {hasRecipes ? "That's all for now" : "A little more to work with"}
-      </Text>
-      <Text
-        style={[
-          styles.message,
-          { fontFamily: fonts.body, color: colors.textMuted },
-        ]}
-      >
-        {hasRecipes
+    <RecipeFeedMessage
+      icon={hasRecipes ? "check-circle" : "shopping-bag"}
+      title={hasRecipes ? "That's all for now" : "A little more to work with"}
+      message={
+        hasRecipes
           ? "You've explored this set of recipe ideas. Add ingredients or edit your answers for a fresh set."
-          : "Your inventory can't support a coherent recipe yet. Add an ingredient or change your answers."}
-      </Text>
-      <RecipeActionButton
-        label="Add items"
-        onPress={onAddItems}
-        testID="recipe-feed-add-items"
-        style={{ alignSelf: "stretch" }}
-      />
-      <RecipeActionButton
-        label="Edit answers"
-        variant="secondary"
-        onPress={onEditAnswers}
-        testID="recipe-feed-edit-answers"
-        style={{ alignSelf: "stretch" }}
-      />
-    </View>
+          : "Your inventory can't support a coherent recipe yet. Add an ingredient or change your answers."
+      }
+      actions={[
+        {
+          label: "Add items",
+          onPress: onAddItems,
+          variant: "primary",
+          testID: "recipe-feed-add-items",
+        },
+        {
+          label: "Edit answers",
+          onPress: onEditAnswers,
+          variant: "secondary",
+          testID: "recipe-feed-edit-answers",
+        },
+      ]}
+      testID="recipe-feed-end"
+    />
   );
 }
-
-const styles = StyleSheet.create({
-  ending: {
-    marginHorizontal: 32,
-    paddingVertical: 32,
-    alignItems: "center",
-    gap: 16,
-  },
-  message: { fontSize: 14, lineHeight: 22, textAlign: "center" },
-});

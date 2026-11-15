@@ -342,8 +342,8 @@ describe("RecipeFeed", () => {
     expect(getByTestId("recipe-ingredients-list")).toBeTruthy();
   });
 
-  it("keeps a background refill issue secondary to visible cards", () => {
-    const { getByText } = render(
+  it("shows a refill issue on the feed background as an alert, not a card", () => {
+    const { getByRole, getByTestId } = render(
       <RecipeFeed
         {...defaultProps}
         recipes={[baseRecipe]}
@@ -351,7 +351,13 @@ describe("RecipeFeed", () => {
       />,
     );
 
-    expect(getByText("We couldn't load more recipes right now.")).toBeTruthy();
+    expect(getByRole("alert")).toHaveProp(
+      "accessibilityLabel",
+      "We couldn't load more recipes right now.",
+    );
+    expect(getByTestId("recipe-feed-error")).not.toHaveStyle({
+      backgroundColor: expect.anything(),
+    });
   });
 
   it("dismisses a card after the slide-up animation", () => {
