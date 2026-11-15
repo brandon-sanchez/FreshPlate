@@ -22,6 +22,7 @@ export function isRecipeStep(value: unknown): value is RecipeStep | string {
   return (
     typeof step.instruction === "string" &&
     step.instruction.trim().length > 0 &&
+    optionalText(step.phase) &&
     optionalText(step.doneness_cue) &&
     optionalText(step.why) &&
     optionalWholeNumber(step.minutes) &&
