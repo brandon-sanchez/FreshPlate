@@ -244,6 +244,26 @@ describe("RecipeFeed", () => {
     expect(getByTestId("recipe-ingredients-list")).toBeTruthy();
   });
 
+  it("shrinks the stacked card to fit a viewport shortened by the cooking banner", () => {
+    const { getByTestId } = render(
+      <RecipeFeed {...defaultProps} recipes={[baseRecipe]} />,
+    );
+    const layout = (height: number) =>
+      fireEvent(getByTestId("recipe-feed-viewport"), "layout", {
+        nativeEvent: { layout: { x: 0, y: 0, width: 390, height } },
+      });
+    const slotHeight = () =>
+      ReactNative.StyleSheet.flatten(
+        getByTestId("recipe-carousel-slot-0").props.style,
+      ).height;
+
+    layout(650);
+    expect(slotHeight()).toBe(420);
+    layout(490);
+    expect(getByTestId("recipe-carousel")).toBeTruthy();
+    expect(slotHeight()).toBe(406);
+  });
+
   it("keeps a background refill issue secondary to visible cards", () => {
     const { getByText } = render(
       <RecipeFeed
