@@ -76,7 +76,7 @@ it("shows the recipe photo in the hero", async () => {
     { wrapper },
   );
   expect(
-    await screen.findByLabelText("Generated photo of Spinach skillet"),
+    await screen.findByLabelText("Photo of Spinach skillet"),
   ).toBeTruthy();
   expect(mockFetchRecipeImage.mock.calls[0][0]).toBe(recipe.recipe_id);
 });

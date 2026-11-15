@@ -52,30 +52,13 @@ function renderPhoto(
 
 beforeEach(() => mockFetchRecipeImage.mockReset());
 
-it("shows the photo with a description and a Generated badge", async () => {
+it("shows the photo with a description", async () => {
   mockFetchRecipeImage.mockResolvedValue(ready);
   renderPhoto();
-  const photo = await screen.findByLabelText(
-    "Generated photo of Spinach skillet",
-  );
+  const photo = await screen.findByLabelText("Photo of Spinach skillet");
   expect(photo.props.source).toEqual([
     expect.objectContaining({ uri: ready.url, cacheKey: "recipe:abc" }),
   ]);
-  expect(
-    screen.getByText("Generated", { includeHiddenElements: true }),
-  ).toBeTruthy();
-});
-
-it("shows only the badge icon on a thumbnail", async () => {
-  mockFetchRecipeImage.mockResolvedValue(ready);
-  renderPhoto({ variant: "thumbnail" });
-  await screen.findByLabelText("Generated photo of Spinach skillet");
-  expect(
-    screen.getByTestId("recipe-photo-badge", { includeHiddenElements: true }),
-  ).toBeTruthy();
-  expect(
-    screen.queryByText("Generated", { includeHiddenElements: true }),
-  ).toBeNull();
 });
 
 it.each(["disabled", "budget_exhausted", "failed"] as const)(
@@ -88,10 +71,7 @@ it.each(["disabled", "budget_exhausted", "failed"] as const)(
         includeHiddenElements: true,
       }),
     ).toBeTruthy();
-    expect(screen.queryByLabelText(/Generated photo/)).toBeNull();
-    expect(
-      screen.queryByText("Generated", { includeHiddenElements: true }),
-    ).toBeNull();
+    expect(screen.queryByLabelText(/Photo of/)).toBeNull();
   },
 );
 
@@ -101,7 +81,7 @@ it("shows the loading placeholder while the photo is generated", async () => {
   expect(
     screen.getByTestId("recipe-photo-loading", { includeHiddenElements: true }),
   ).toBeTruthy();
-  expect(screen.queryByLabelText(/Generated photo/)).toBeNull();
+  expect(screen.queryByLabelText(/Photo of/)).toBeNull();
 });
 
 it("shows the placeholder when the request fails", async () => {
@@ -125,18 +105,18 @@ it("re-signs once when the image cannot load, then keeps the placeholder", async
   mockFetchRecipeImage.mockResolvedValueOnce(ready).mockResolvedValue(resigned);
   renderPhoto();
   fireEvent(
-    await screen.findByLabelText("Generated photo of Spinach skillet"),
+    await screen.findByLabelText("Photo of Spinach skillet"),
     "error",
     { nativeEvent: { error: "403" } },
   );
   const retried = await screen.findByLabelText(
-    "Generated photo of Spinach skillet",
+    "Photo of Spinach skillet",
   );
   expect(retried.props.source).toEqual([
     expect.objectContaining({ uri: resigned.url }),
   ]);
   fireEvent(retried, "error", { nativeEvent: { error: "404" } });
-  expect(screen.queryByLabelText(/Generated photo/)).toBeNull();
+  expect(screen.queryByLabelText(/Photo of/)).toBeNull();
   expect(
     screen.getByTestId("recipe-photo-placeholder", {
       includeHiddenElements: true,
@@ -157,15 +137,4 @@ it("waits to request the photo until enabled", async () => {
     }),
   ).toBeTruthy();
   view.unmount();
-});
-
-it("keeps an always-on badge over the placeholder", async () => {
-  mockFetchRecipeImage.mockResolvedValue(unavailable("budget_exhausted"));
-  renderPhoto({ variant: "card" });
-  await screen.findByTestId("recipe-photo-placeholder", {
-    includeHiddenElements: true,
-  });
-  expect(
-    screen.getByText("Generated", { includeHiddenElements: true }),
-  ).toBeTruthy();
 });

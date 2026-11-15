@@ -169,12 +169,11 @@ describe("RecipeFeed", () => {
     expect(getByText("Spinach Pasta")).toBeTruthy();
     expect(queryByText("That's all for now")).toBeNull();
   });
-  it("renders the generated card contract", () => {
+  it("renders the card contract", () => {
     const { getByText } = render(
       <RecipeFeed {...defaultProps} recipes={[baseRecipe]} />,
     );
 
-    expect(getByText("Generated", { includeHiddenElements: true })).toBeTruthy();
     expect(getByText("Spinach Pasta")).toBeTruthy();
     expect(getByText("24 min")).toBeTruthy();
     expect(getByText("92% match")).toBeTruthy();
@@ -197,10 +196,10 @@ describe("RecipeFeed", () => {
       nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 650 } },
     });
     expect(
-      await screen.findAllByLabelText("Generated photo of Spinach Pasta"),
+      await screen.findAllByLabelText("Photo of Spinach Pasta"),
     ).toHaveLength(1);
     fireEvent.press(screen.getByTestId("recipe-card-ingredients-recipe-1"));
-    expect(screen.getAllByLabelText("Generated photo of Spinach Pasta")).toHaveLength(2);
+    expect(screen.getAllByLabelText("Photo of Spinach Pasta")).toHaveLength(2);
     expect(mockFetchRecipeImage).toHaveBeenCalledTimes(1);
   });
 

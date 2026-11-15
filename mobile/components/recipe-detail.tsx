@@ -95,18 +95,6 @@ function RecipeDetailScreen({
           style={{ height: heroHeight }}
         />
         <View style={styles.content}>
-          <View style={styles.generated}>
-            <Feather name="zap" size={14} color={colors.accent} />
-            <Text
-              style={{
-                color: colors.textMuted,
-                fontFamily: fonts.body,
-                fontSize: 12,
-              }}
-            >
-              Generated
-            </Text>
-          </View>
           <Text
             selectable
             style={[
@@ -301,8 +289,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.92)",
   },
   content: { padding: 20 },
-  generated: { flexDirection: "row", gap: 6, alignItems: "center" },
-  title: { fontSize: 26, lineHeight: 32, marginTop: 8 },
+  title: { fontSize: 26, lineHeight: 32 },
   stats: { flexDirection: "row", padding: 16, marginTop: 16, borderRadius: 14 },
   stat: { flex: 1, alignItems: "center", gap: 4 },
   heading: {

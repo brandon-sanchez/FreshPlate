@@ -68,9 +68,9 @@ describe("recipe preview sheet", () => {
   it("shows the recipe photo above the ingredients", async () => {
     mockFetchRecipeImage.mockResolvedValue(readyPhoto);
     const screen = renderSheet();
-    expect(await screen.findByLabelText("Generated photo of Pasta")).toBeTruthy();
+    expect(await screen.findByLabelText("Photo of Pasta")).toBeTruthy();
     const tree = JSON.stringify(screen.toJSON());
-    expect(tree.indexOf("Generated photo of Pasta")).toBeLessThan(
+    expect(tree.indexOf("Photo of Pasta")).toBeLessThan(
       tree.indexOf('"Tomato"'),
     );
   });

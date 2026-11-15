@@ -2,34 +2,24 @@ import { useEffect, useRef, useState } from "react";
 import {
   Animated,
   StyleSheet,
-  Text,
   View,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
 import { Image } from "expo-image";
-import Feather from "@expo/vector-icons/Feather";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
-import { colors } from "@/constants/theme";
 import { useRecipeImage } from "@/hooks/useRecipeImage";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
 
-// Over a photo the badge needs a dark scrim in both themes, so it uses the
-// dark theme's `bg` at 60% opacity rather than the active theme.
-const BADGE_SCRIM = `${colors.dark.bg}99`;
-const BADGE_INK = colors.dark.text;
-
 type RecipePhotoVariant = "thumbnail" | "card" | "sheet" | "hero";
 
-const VARIANTS: Record<
-  RecipePhotoVariant,
-  { iconSize: number; badgeOnPlaceholder: boolean; badgeLabel: boolean }
-> = {
-  thumbnail: { iconSize: 28, badgeOnPlaceholder: false, badgeLabel: false },
-  card: { iconSize: 34, badgeOnPlaceholder: true, badgeLabel: true },
-  sheet: { iconSize: 48, badgeOnPlaceholder: false, badgeLabel: true },
-  hero: { iconSize: 68, badgeOnPlaceholder: false, badgeLabel: true },
+// Placeholder icon size per variant, in points.
+const ICON_SIZES: Record<RecipePhotoVariant, number> = {
+  thumbnail: 28,
+  card: 34,
+  sheet: 48,
+  hero: 68,
 };
 
 type RecipePhotoProps = {
@@ -38,12 +28,9 @@ type RecipePhotoProps = {
   /** Recipe title, used in the photo's accessibility description. */
   title: string;
   /**
-   * Where the photo appears, which sets its placeholder icon size and its
-   * AI badge. `card` (feed card) shows the "Generated" badge over the photo
-   * and the placeholder alike, since it also marks the generated recipe.
-   * `sheet` (preview sheet) and `hero` (full detail) show it only on a
-   * loaded photo. `thumbnail` (saved list) shows the sparkle alone on a
-   * loaded photo.
+   * Where the photo appears, which sets its placeholder icon size:
+   * `thumbnail` (saved list), `card` (feed card), `sheet` (preview sheet)
+   * or `hero` (full detail).
    */
   variant: RecipePhotoVariant;
   /**
@@ -71,8 +58,8 @@ export default function RecipePhoto({
   enabled = true,
   style,
 }: RecipePhotoProps) {
-  const { iconSize, badgeOnPlaceholder, badgeLabel } = VARIANTS[variant];
-  const { colors: themeColors, fonts } = useTheme();
+  const iconSize = ICON_SIZES[variant];
+  const { colors: themeColors } = useTheme();
   const reducedMotion = useReducedMotion();
   const image = useRecipeImage(recipeId, { enabled });
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
@@ -81,9 +68,8 @@ export default function RecipePhoto({
     result?.status === "ready" && result.url && result.url !== failedUrl
       ? { url: result.url, key: result.image_key }
       : null;
-  const showPhoto = photo !== null;
   const loading =
-    !showPhoto && enabled && (image.isLoading || result?.status === "pending");
+    !photo && enabled && (image.isLoading || result?.status === "pending");
 
   return (
     <View
@@ -104,7 +90,7 @@ export default function RecipePhoto({
           }}
           accessible
           accessibilityRole="image"
-          accessibilityLabel={`Generated photo of ${title}`}
+          accessibilityLabel={`Photo of ${title}`}
           style={StyleSheet.absoluteFill}
         />
       ) : (
@@ -114,35 +100,6 @@ export default function RecipePhoto({
           iconSize={iconSize}
           color={themeColors.accent}
         />
-      )}
-      {(showPhoto || badgeOnPlaceholder) && (
-        <View
-          testID="recipe-photo-badge"
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-          style={[
-            styles.badge,
-            !badgeLabel && styles.iconBadge,
-            showPhoto && { backgroundColor: BADGE_SCRIM },
-          ]}
-        >
-          <Feather
-            name="zap"
-            size={13}
-            color={showPhoto ? BADGE_INK : themeColors.accent}
-          />
-          {badgeLabel && (
-            <Text
-              style={{
-                color: showPhoto ? BADGE_INK : themeColors.accent,
-                fontFamily: fonts.bodyStrong,
-                fontSize: 12,
-              }}
-            >
-              Generated
-            </Text>
-          )}
-        </View>
       )}
     </View>
   );
@@ -202,24 +159,6 @@ const styles = StyleSheet.create({
   placeholder: {
     ...StyleSheet.absoluteFillObject,
     alignItems: "center",
-    justifyContent: "center",
-  },
-  badge: {
-    position: "absolute",
-    left: 12,
-    bottom: 12,
-    minHeight: 26,
-    paddingHorizontal: 10,
-    borderRadius: 13,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-  },
-  iconBadge: {
-    left: 8,
-    bottom: 8,
-    width: 26,
-    paddingHorizontal: 0,
     justifyContent: "center",
   },
 });
