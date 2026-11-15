@@ -257,7 +257,7 @@ async def test_no_photo_starts_when_the_deadline_leaves_no_time_for_one():
 
     assert photos.titles == []
     photo = result["recipe_photos"][ImageService.recipe_key(dish)]
-    assert photo.status == "unavailable" and photo.reason == "failed"
+    assert photo.status == "unavailable" and photo.reason == "late"
 
 
 async def test_titles_the_feed_already_showed_get_no_photo():

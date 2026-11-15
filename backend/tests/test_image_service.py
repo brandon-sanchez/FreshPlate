@@ -353,7 +353,7 @@ async def test_a_caller_deadline_shorter_than_the_policy_bounds_the_attempt():
         recipe(), USER, generate=True, deadline=PipelineDeadline(2.05)
     )
     assert asyncio.get_running_loop().time() - started < 0.5
-    assert result.status == "unavailable" and result.reason == "failed"
+    assert result.status == "unavailable" and result.reason == "late"
     assert store.spent == 60
 
 
@@ -362,5 +362,5 @@ async def test_a_deadline_too_short_to_store_a_photo_refunds_the_claim():
     result = await service(store, provider).recipe_image(
         recipe(), USER, generate=True, deadline=PipelineDeadline(1)
     )
-    assert result.status == "unavailable" and result.reason == "failed"
+    assert result.status == "unavailable" and result.reason == "late"
     assert provider.prompts == [] and store.spent == 0

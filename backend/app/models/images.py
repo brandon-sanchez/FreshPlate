@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-UnavailableReason = Literal["disabled", "budget_exhausted", "failed"]
+UnavailableReason = Literal["disabled", "budget_exhausted", "failed", "late"]
 
 
 class ImageResult(BaseModel):
@@ -29,10 +29,11 @@ class ImageResult(BaseModel):
         reason: Why the image is unavailable. `disabled`: generation is off
             or unconfigured, or the recipe can only be served from cache.
             `budget_exhausted`: the global or the caller's monthly cap is
-            reached. `failed`: the last attempt failed, or the request had
-            too little time left to make one. A later request may retry
-            after the cooldown, up to the attempt limit, but a prompt over
-            the provider limit always fails. Set only when unavailable.
+            reached. `failed`: the last attempt failed. A later request may
+            retry after the cooldown, up to the attempt limit, but a prompt
+            over the provider limit always fails. `late`: the request ran
+            out of time before the image was ready, so a later request may
+            get it. Set only when unavailable.
     """
 
     status: Literal["ready", "pending", "unavailable"]

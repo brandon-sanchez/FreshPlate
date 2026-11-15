@@ -1,9 +1,15 @@
 /**
  * Why a generated image is not shown. `disabled`: generation is off, or the
  * recipe can only be served from cache. `budget_exhausted`: the monthly
- * spending cap is reached. `failed`: the last attempt failed.
+ * spending cap is reached. `failed`: the last attempt failed. `late`: the
+ * feed request ran out of time before the photo was ready, so a later
+ * request may get it.
  */
-export type ImageUnavailableReason = "disabled" | "budget_exhausted" | "failed";
+export type ImageUnavailableReason =
+  | "disabled"
+  | "budget_exhausted"
+  | "failed"
+  | "late";
 
 /** What the backend's image endpoints return for one generated image. */
 export type ImageResult = {

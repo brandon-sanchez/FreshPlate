@@ -50,9 +50,9 @@ async def add_recipe_photos(
     drops them. Photos run concurrently and must be stored early enough that
     the caller can still make two feed store calls before `deadline`: a
     refill finalizes its batch and then reads the page back. A recipe whose
-    photo fails, is over budget, or would not finish in time gets an
-    `unavailable` placeholder result. The batch itself never fails here, and
-    every generation ends inside the request.
+    photo fails or is over budget gets an `unavailable` placeholder result,
+    and one that would not finish in time gets reason `late`. The batch
+    itself never fails here, and every generation ends inside the request.
 
     Args:
         state: Graph state whose `valid_recipes` are photographed.
@@ -74,7 +74,7 @@ async def add_recipe_photos(
     if photo_deadline.remaining_seconds < _MIN_PHOTO_SECONDS:
         return {
             "recipe_photos": {
-                key: ImageResult.unavailable(key, "failed") for key in recipes
+                key: ImageResult.unavailable(key, "late") for key in recipes
             }
         }
     results = await asyncio.gather(
@@ -100,7 +100,7 @@ async def _photo(
             timeout=deadline.remaining_seconds,
         )
     except TimeoutError:
-        return ImageResult.unavailable(key, "failed")
+        return ImageResult.unavailable(key, "late")
 
 
 def _title_key(title: str) -> str:

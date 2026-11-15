@@ -279,8 +279,10 @@ class ImageService:
             deadline: When a generation this call starts must be finished,
                 stored and signed. The provider gets whatever is left of it
                 when the call starts, less time to store the result, and
-                never more than the policy's timeout. A request that must
-                not leave work running after its response passes its own
+                never more than the policy's timeout. An attempt the
+                deadline cuts short, or leaves no time to start, returns
+                `unavailable` with reason `late`. A request that must not
+                leave work running after its response passes its own
                 deadline. None allows the policy's timeout.
 
         Returns:
@@ -389,9 +391,10 @@ class ImageService:
             # Sized after the claim, so ledger latency comes out of the
             # provider's share rather than running past the deadline.
             timeout = min(timeout, deadline.remaining_seconds - _FINISH_SECONDS)
+        cut_by_deadline = timeout < self._policy.timeout_seconds
         if timeout <= 0:
             await self._release_best_effort(claim, refund=True)
-            return ImageResult.unavailable(key, "failed")
+            return ImageResult.unavailable(key, "late")
         try:
             image = await asyncio.wait_for(
                 self._provider.generate(prompt, kind=kind),
@@ -409,6 +412,8 @@ class ImageService:
                 type(exc).__name__,
                 refund,
             )
+            if isinstance(exc, TimeoutError) and cut_by_deadline:
+                return ImageResult.unavailable(key, "late")
             return ImageResult.unavailable(key, "failed")
         if webp is None:
             await self._release_best_effort(claim, refund=True)
