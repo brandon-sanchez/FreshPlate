@@ -33,8 +33,10 @@ export type RecipeFeedSessionRequest = {
   preferences: RecipePreferences;
 };
 
+/** One ingredient line of a generated recipe. */
 export type RecipeIngredient = {
   name: string;
+  /** The household food the line uses, or `null` for a kitchen basic such as salt. */
   inventory_item_id: string | null;
   use_amount: number;
   unit: string;

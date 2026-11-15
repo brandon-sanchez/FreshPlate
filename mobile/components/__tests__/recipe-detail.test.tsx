@@ -22,7 +22,7 @@ const recipe: RecipeSuggestion = {
       use_amount: 100,
       unit: "g",
     },
-    { name: "Garlic", inventory_item_id: null, use_amount: 2, unit: "cloves" },
+    { name: "Salt", inventory_item_id: null, use_amount: 1, unit: "tsp" },
   ],
   steps: ["Prep the greens\nRinse the spinach.", "Sauté and serve."],
   saves_expiring: ["Spinach"],
@@ -67,6 +67,25 @@ it("renders the selected snapshot and sends its identity to the shared save acti
   expect(onToggleSave).toHaveBeenCalledWith(recipe, false);
   fireEvent.press(screen.getByLabelText("Close recipe details"));
   expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+it("marks an ingredient with no food as a kitchen basic", () => {
+  const screen = render(
+    <RecipeDetail
+      recipe={recipe}
+      isSaved={false}
+      isSavePending={false}
+      onToggleSave={jest.fn()}
+      onClose={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(screen.getByTestId("recipe-detail-ingredient-1")).toHaveTextContent(
+    "•1 tsp Salt · kitchen basic",
+  );
+  expect(screen.getByTestId("recipe-detail-ingredient-0")).toHaveTextContent(
+    "•100 g Spinach",
+  );
 });
 
 it("uses updated saved state and blocks a second toggle while saving", () => {

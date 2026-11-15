@@ -15,6 +15,7 @@ import Toast from "react-native-toast-message";
 import { useAuthStore, firstNameFromMetadata } from "@/stores/auth";
 import { useTheme } from "@/hooks/useTheme";
 import { firstNameFromProfile, useProfile } from "@/hooks/useProfile";
+import KitchenBasicsEditor from "@/components/kitchen-basics-editor";
 
 const DIETARY_TAGS = [
   "Vegetarian",
@@ -253,6 +254,13 @@ export default function ProfileScreen() {
         >
           These won&apos;t be saved until preferences ship — placeholder for now.
         </Text>
+      </Section>
+
+      <Section
+        title="Kitchen basics"
+        subtitle="Recipes can always use these. Cooking never deducts them."
+      >
+        <KitchenBasicsEditor />
       </Section>
 
       <Section title="Household">

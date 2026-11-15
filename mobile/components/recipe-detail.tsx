@@ -15,6 +15,7 @@ import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
 import type { RecipeSuggestion } from "@/types/recipes";
 import RecipeSteps from "@/components/recipe-steps";
+import { isKitchenBasic } from "@/lib/recipes";
 
 type RecipeDetailProps = {
   recipe: RecipeSuggestion | null;
@@ -175,6 +176,11 @@ export default function RecipeDetail({
                               {Number(item.use_amount.toFixed(2))} {item.unit}
                             </Text>{" "}
                             {item.name}
+                            {isKitchenBasic(item) ? (
+                              <Text style={{ color: colors.textSubtle }}>
+                                {" · kitchen basic"}
+                              </Text>
+                            ) : null}
                           </Text>
                         </View>
                       );

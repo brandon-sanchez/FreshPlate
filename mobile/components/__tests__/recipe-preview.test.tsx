@@ -17,6 +17,7 @@ const recipe = {
   saves_expiring: [],
   ingredients: [
     { name: "Tomato", inventory_item_id: "t1", use_amount: 2, unit: "each" },
+    { name: "Olive oil", inventory_item_id: null, use_amount: 1, unit: "tbsp" },
   ],
   steps: ["Boil pasta", "Add tomato"],
 };
@@ -49,6 +50,12 @@ describe("recipe preview sheet", () => {
     );
     fireEvent.press(screen.getByLabelText("View full recipe"));
     expect(onOpen).toHaveBeenCalledWith(recipe);
+  });
+
+  it("marks an ingredient with no food as a kitchen basic", () => {
+    const screen = renderSheet();
+    expect(screen.getByText("Olive oil")).toBeTruthy();
+    expect(screen.getAllByText("Kitchen basic")).toHaveLength(1);
   });
 
   it("closes without changing the payload", () => {

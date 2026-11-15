@@ -8,6 +8,7 @@ import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
 import type { RecipeSuggestion } from "@/types/recipes";
 import RecipeSteps from "@/components/recipe-steps";
+import { isKitchenBasic } from "@/lib/recipes";
 
 export default function RecipeIngredientsSheet({
   recipe,
@@ -188,6 +189,17 @@ export default function RecipeIngredientsSheet({
                   >
                     {ingredient.name}
                   </Text>
+                  {isKitchenBasic(ingredient) ? (
+                    <Text
+                      style={{
+                        fontFamily: fonts.body,
+                        color: colors.textSubtle,
+                        fontSize: 12,
+                      }}
+                    >
+                      Kitchen basic
+                    </Text>
+                  ) : null}
                 </View>
                 <Text
                   selectable
