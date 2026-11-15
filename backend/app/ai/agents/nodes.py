@@ -206,9 +206,9 @@ async def generate_recipes(
 ) -> GenerationResult:
     """Generate recipes while preserving provider amounts for validation.
 
-    The response schema limits each ingredient to one usable food and that
-    food's units. A kitchen with no usable food makes no provider call and
-    returns an empty batch.
+    The response schema limits each ingredient's unit to the usable foods'
+    units. A kitchen with no usable food makes no provider call and returns
+    an empty batch.
     """
     template = prompt or load_prompt("generate_recipes")
     batch_ceiling = _batch_ceiling(state)

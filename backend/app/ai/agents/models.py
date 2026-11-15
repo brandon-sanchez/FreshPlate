@@ -216,13 +216,12 @@ def recipe_batch_model(
     """Return a response model whose JSON schema fits this kitchen.
 
     Gemini enforces the schema while it decodes. ``maxItems`` stops the batch
-    at the ceiling instead of writing recipes the caller would discard. Each
-    ingredient must name one listed food and one of that food's units, so
-    every amount the model writes converts at cook time. Pydantic enforces none of these
-    rules, so ``generate_recipes`` trims an oversized batch and
-    ``check_quality`` rejects unknown foods. There is deliberately no
-    minimum: an empty list is the honest answer for a kitchen that cannot
-    make a meal.
+    at the ceiling instead of writing recipes the caller would discard, and
+    an ingredient's unit must be one of the kitchen's units. Pydantic enforces
+    neither rule, and the schema does not list the food ids, so
+    ``generate_recipes`` trims an oversized batch and ``check_quality``
+    rejects unknown foods. There is deliberately no minimum: an empty list is
+    the honest answer for a kitchen that cannot make a meal.
 
     Args:
         batch_ceiling: The most recipes the model may return.
@@ -250,6 +249,11 @@ def recipe_batch_model(
     )
 
 
+# The largest unit enum a live Gemini call accepted next to the rest of the
+# recipe schema. A longer list is sent as a plain string instead.
+_MAX_UNIT_ENUM_VALUES = 30
+
+
 def _object(properties: dict[str, Any], *optional: str) -> dict[str, Any]:
     return {
         "type": "object",
@@ -262,31 +266,44 @@ def _recipe_schema(units_by_food: Mapping[str, Sequence[str]]) -> dict[str, Any]
     """Return the JSON schema of one generated recipe.
 
     Every field is required except a step's ``minutes``, because the model
-    fills a required field more reliably than an optional one. Inside steps,
-    ``uses`` has no enum of food ids and ``minutes`` has no bound, because
-    Gemini rejects a schema whose constraints have too many states, and
-    enums and bounds add states. Validation and ``check_quality`` enforce
-    both instead. Text that may be absent, such as ``prep``, ``why`` and a
-    step's ``phase``, is a plain string the model leaves empty, and
-    validation reads it as None. ``steps`` has no ``maxItems``, because the
-    dish decides how many steps it needs. ``cook_time_minutes`` is
-    left out, because validation copies it from ``total_minutes``.
+    fills a required field more reliably than an optional one. The schema
+    holds one ingredient shape whatever the number of foods. Gemini answers
+    ``400 INVALID_ARGUMENT`` when the schema lists the food ids, whether as
+    one enum or as an ``anyOf`` with a variant for each food, so
+    ``inventory_item_id`` is a plain string and ``check_quality`` rejects an
+    id the kitchen does not have. ``unit`` is limited to the units of all the
+    foods together. A unit that belongs to a different food is left to the
+    cook flow, which asks for the amount. A step's ``uses`` is a list of
+    plain strings for the same reason as the id, and ``check_quality`` keeps
+    only the ids the recipe lists. Text that may be absent,
+    such as ``prep``, ``why`` and a step's ``phase``, is a plain string the
+    model leaves empty, and validation reads it as None. ``steps`` has no
+    ``maxItems``, because the dish decides how many steps it needs.
+    ``cook_time_minutes`` is left out, because validation copies it from
+    ``total_minutes``.
     """
     text = {"type": "string"}
     positive_whole = {"type": "integer", "minimum": 1}
-    ingredients = [
-        _object(
-            {
-                "name": text,
-                "inventory_item_id": {"type": "string", "enum": [food_id]},
-                "use_amount": {"type": "number"},
-                "unit": {"type": "string", "enum": list(units)},
-                "display_amount": text,
-                "prep": text,
-            }
+    kitchen_units = list(
+        dict.fromkeys(
+            unit for food_units in units_by_food.values() for unit in food_units
         )
-        for food_id, units in units_by_food.items()
-    ]
+    )
+    unit = (
+        {**text, "enum": kitchen_units}
+        if 0 < len(kitchen_units) <= _MAX_UNIT_ENUM_VALUES
+        else text
+    )
+    ingredient = _object(
+        {
+            "name": text,
+            "inventory_item_id": text,
+            "use_amount": {"type": "number"},
+            "unit": unit,
+            "display_amount": text,
+            "prep": text,
+        }
+    )
     step = _object(
         {
             "phase": text,
@@ -309,7 +326,7 @@ def _recipe_schema(units_by_food: Mapping[str, Sequence[str]]) -> dict[str, Any]
             "ingredients": {
                 "type": "array",
                 "minItems": 1,
-                "items": {"anyOf": ingredients},
+                "items": ingredient,
             },
             "steps": {"type": "array", "minItems": 1, "items": step},
         }

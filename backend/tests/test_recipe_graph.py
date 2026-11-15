@@ -249,7 +249,7 @@ async def test_generation_lists_one_line_per_food_with_its_units() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generation_schema_limits_each_ingredient_to_its_foods_units() -> None:
+async def test_generation_schema_limits_units_to_the_kitchens_units() -> None:
     provider = RecordingProvider([{"recipes": []}])
     garlic = _usable_item(
         "garlic",
@@ -265,29 +265,20 @@ async def test_generation_schema_limits_each_ingredient_to_its_foods_units() -> 
 
     schema = provider.calls[0]["response_model"].model_json_schema()
     recipe_schema = schema["properties"]["recipes"]["items"]
-    variants = recipe_schema["properties"]["ingredients"]["items"]["anyOf"]
-    allowed = {
-        variant["properties"]["inventory_item_id"]["enum"][0]: variant["properties"][
-            "unit"
-        ]["enum"]
-        for variant in variants
+    ingredient = recipe_schema["properties"]["ingredients"]["items"]
+    assert ingredient["properties"]["inventory_item_id"] == {"type": "string"}
+    assert ingredient["properties"]["unit"] == {
+        "type": "string",
+        "enum": ["each", "tsp", "tbsp", "pinch", "dash", "head", "clove"],
     }
-    assert allowed == {
-        "tomatoes": ["each", "tsp", "tbsp", "pinch", "dash"],
-        "garlic": [
-            "head",
-            "clove",
-            "tsp",
-            "tbsp",
-            "pinch",
-            "dash",
-        ],  # fmt: skip
-    }
-    assert all(
-        variant["required"]
-        == ["name", "inventory_item_id", "use_amount", "unit", "display_amount", "prep"]
-        for variant in variants
-    )
+    assert ingredient["required"] == [
+        "name",
+        "inventory_item_id",
+        "use_amount",
+        "unit",
+        "display_amount",
+        "prep",
+    ]
 
 
 @pytest.mark.asyncio

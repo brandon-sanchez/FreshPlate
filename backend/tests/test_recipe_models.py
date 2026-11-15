@@ -103,3 +103,44 @@ def test_a_step_reads_its_phase_and_treats_a_blank_phase_as_none() -> None:
     ]
 
     assert [step.phase for step in steps] == ["Rice", None, None, None]
+
+
+def _schema_keywords(node: Any, keyword: str) -> list[Any]:
+    if isinstance(node, dict):
+        found = [node[keyword]] if keyword in node else []
+        return found + [
+            hit for value in node.values() for hit in _schema_keywords(value, keyword)
+        ]
+    if isinstance(node, list):
+        return [hit for value in node for hit in _schema_keywords(value, keyword)]
+    return []
+
+
+def _kitchen(food_count: int) -> dict[str, list[str]]:
+    unit_sets = [["g", "kg", "oz", "lb"], ["ml", "l", "cup", "fl oz"], ["each"]]
+    return {
+        f"00000000-0000-4000-8000-{index:012d}": unit_sets[index % len(unit_sets)]
+        for index in range(food_count)
+    }
+
+
+def test_generation_schema_does_not_grow_with_the_number_of_foods() -> None:
+    """Gemini answers 400 INVALID_ARGUMENT once the schema lists the food ids."""
+    small = recipe_batch_model(5, _kitchen(37)).model_json_schema()
+    large = recipe_batch_model(5, _kitchen(300)).model_json_schema()
+
+    assert small == large
+    assert _schema_keywords(large, "anyOf") == []
+    assert _schema_keywords(large, "enum") == [
+        ["g", "kg", "oz", "lb", "ml", "l", "cup", "fl oz", "each"]
+    ]
+
+
+def test_generation_schema_drops_the_unit_enum_past_the_size_gemini_accepted() -> None:
+    def unit_enums(unit_count: int) -> list[Any]:
+        units = [f"unit{index}" for index in range(unit_count)]
+        schema = recipe_batch_model(5, {"food": units}).model_json_schema()
+        return _schema_keywords(schema, "enum")
+
+    assert [len(enum) for enum in unit_enums(30)] == [30]
+    assert unit_enums(31) == []
