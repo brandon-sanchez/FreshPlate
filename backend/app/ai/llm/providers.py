@@ -206,6 +206,8 @@ class GeminiProvider:
 
         Failed calls are logged too, with zero tokens, because a timeout that
         used up the deadline is the slowest call a request can make.
+        ``cached_tokens`` is the part of ``prompt_tokens`` Gemini read from its
+        implicit prompt cache.
         """
         usage = getattr(response, "usage_metadata", None)
         call = {
@@ -214,6 +216,7 @@ class GeminiProvider:
             "response_model": response_model.__name__,
             "outcome": outcome,
             "prompt_tokens": _token_count(usage, "prompt_token_count"),
+            "cached_tokens": _token_count(usage, "cached_content_token_count"),
             "output_tokens": _token_count(usage, "candidates_token_count"),
             "thinking_tokens": _token_count(usage, "thoughts_token_count"),
             "latency_ms": round((time.monotonic() - started) * 1000),
