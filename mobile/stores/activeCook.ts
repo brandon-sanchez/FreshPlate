@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { randomUUID } from "expo-crypto";
 import { create } from "zustand";
+import { hasReadableCookbookFields, isRecipeStep } from "@/lib/recipe-shape";
 import type { RecipeSuggestion } from "@/types/recipes";
 import { useAuthStore } from "@/stores/auth";
 
@@ -63,7 +64,8 @@ function isRecipe(value: unknown): value is RecipeSuggestion {
     ) &&
     Array.isArray(value.steps) &&
     value.steps.length > 0 &&
-    value.steps.every(text) &&
+    value.steps.every(isRecipeStep) &&
+    hasReadableCookbookFields(value) &&
     Array.isArray(value.saves_expiring) &&
     value.saves_expiring.every(text)
   );
@@ -84,7 +86,12 @@ function copyRecipe(recipe: RecipeSuggestion): RecipeSuggestion {
   return {
     ...recipe,
     ingredients: recipe.ingredients.map((item) => ({ ...item })),
-    steps: [...recipe.steps],
+    steps: recipe.steps.map((step) =>
+      typeof step === "string"
+        ? step
+        : { ...step, uses: step.uses && [...step.uses] },
+    ),
+    equipment: recipe.equipment && [...recipe.equipment],
     saves_expiring: [...recipe.saves_expiring],
   };
 }

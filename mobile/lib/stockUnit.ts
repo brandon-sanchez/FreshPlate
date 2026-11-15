@@ -33,6 +33,12 @@ const VOLUME = new Map([
   ["gal", 3785.411784],
 ]);
 
+/** Every mass and volume unit key, such as "g", "tbsp" and "cup". */
+export const MEASURED_UNITS: ReadonlySet<string> = new Set([
+  ...MASS.keys(),
+  ...VOLUME.keys(),
+]);
+
 const SYNONYMS: Record<string, readonly string[]> = {
   g: ["gram"],
   kg: ["kilogram"],

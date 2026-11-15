@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/stores/auth";
+import { hasReadableCookbookFields, isRecipeStep } from "@/lib/recipe-shape";
 import type { RecipeSuggestion } from "@/types/recipes";
 
 export type SavedRecipe = {
@@ -34,7 +35,7 @@ function isRecipeSuggestion(value: unknown): value is RecipeSuggestion {
     return typeof ingredient.name === "string" &&
       (ingredient.inventory_item_id === null || typeof ingredient.inventory_item_id === "string") &&
       Number.isFinite(ingredient.use_amount) && typeof ingredient.unit === "string";
-  }) && recipe.steps.every((step) => typeof step === "string") &&
+  }) && recipe.steps.every(isRecipeStep) && hasReadableCookbookFields(recipe) &&
     recipe.saves_expiring.every((item) => typeof item === "string");
 }
 

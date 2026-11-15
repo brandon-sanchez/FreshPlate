@@ -15,6 +15,7 @@ import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
 import type { RecipeSuggestion } from "@/types/recipes";
 import RecipeSteps from "@/components/recipe-steps";
+import { formatIngredientAmount } from "@/lib/recipe-format";
 
 type RecipeDetailProps = {
   recipe: RecipeSuggestion | null;
@@ -172,7 +173,7 @@ export default function RecipeDetail({
                             }}
                           >
                             <Text style={{ fontFamily: fonts.bodyStrong }}>
-                              {Number(item.use_amount.toFixed(2))} {item.unit}
+                              {formatIngredientAmount(item)}
                             </Text>{" "}
                             {item.name}
                           </Text>

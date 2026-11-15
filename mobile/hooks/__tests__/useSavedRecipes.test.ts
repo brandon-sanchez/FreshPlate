@@ -57,6 +57,15 @@ describe("useSavedRecipes", () => {
     expect(result.current.data?.[0].recipe).toEqual(recipe);
   });
 
+  it("lists recipes saved in both the string-step and structured-step shapes", async () => {
+    const structured = { ...recipe, recipe_id: "22222222-2222-4222-8222-222222222222", headnote: "Quick.", steps: [{ instruction: "Boil.", doneness_cue: "Ready when al dente.", minutes: 10, why: null, uses: ["pasta"] }] };
+    const legacy = { ...recipe, steps: ["Boil."] };
+    mockOrder.mockResolvedValue({ data: [legacy, structured].map((saved, index) => ({ id: `s${index}`, household_id: "household-a", recipe_id: saved.recipe_id, recipe: saved, saved_by: "user-a", created_at: "now" })), error: null });
+    const { result } = renderHook(() => useSavedRecipes(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.map((row) => row.recipe)).toEqual([legacy, structured]);
+  });
+
   it("surfaces list errors and does not query without a household", async () => {
     mockOrder.mockResolvedValue({ data: null, error: new Error("RLS denied") });
     const { result } = renderHook(() => useSavedRecipes(), { wrapper });

@@ -8,6 +8,7 @@ import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
 import type { RecipeSuggestion } from "@/types/recipes";
 import RecipeSteps from "@/components/recipe-steps";
+import { formatIngredientAmount } from "@/lib/recipe-format";
 
 export default function RecipeIngredientsSheet({
   recipe,
@@ -197,7 +198,7 @@ export default function RecipeIngredientsSheet({
                     fontSize: 14,
                   }}
                 >
-                  {Number(ingredient.use_amount.toFixed(2))} {ingredient.unit}
+                  {formatIngredientAmount(ingredient)}
                 </Text>
               </View>
             ))}
