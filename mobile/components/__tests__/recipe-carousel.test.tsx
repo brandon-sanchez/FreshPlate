@@ -1,6 +1,6 @@
 import React from "react";
 import { Pressable, Text } from "react-native";
-import { act, fireEvent, render } from "@testing-library/react-native";
+import { act, fireEvent, render, within } from "@testing-library/react-native";
 import { State } from "react-native-gesture-handler";
 import {
   fireGestureHandler,
@@ -198,4 +198,30 @@ describe("RecipeCarousel", () => {
       expect(onActiveIndexChange).toHaveBeenLastCalledWith(2);
     },
   );
+
+  it("plays a sweep exit on the leaving slot only, dimming included", () => {
+    const items = recipes.slice(0, 3).map((item, index) =>
+      index === 1 ? { ...item, exitDelayMs: 0 } : item,
+    );
+    const screen = render(<RecipeCarousel {...props} items={items} />);
+
+    const [leaving] = screen.getAllByTestId("recipe-sweep-leaving", {
+      includeHiddenElements: true,
+    });
+    const slot = screen.getByTestId("recipe-carousel-slot-1", {
+      includeHiddenElements: true,
+    });
+    expect(
+      within(slot).getAllByTestId("recipe-sweep-leaving", {
+        includeHiddenElements: true,
+      }),
+    ).toEqual([leaving]);
+    expect(within(leaving).getByText("2", { includeHiddenElements: true })).toBeTruthy();
+    expect(
+      within(screen.getByTestId("recipe-carousel-slot-0")).queryAllByTestId(
+        "recipe-sweep-leaving",
+        { includeHiddenElements: true },
+      ),
+    ).toHaveLength(0);
+  });
 });

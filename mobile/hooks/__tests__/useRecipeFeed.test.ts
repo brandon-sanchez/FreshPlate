@@ -547,7 +547,7 @@ describe("useRecipeFeed", () => {
     act(() => result.current.start(request));
     await waitFor(() => expect(result.current.recipes).toHaveLength(2));
 
-    act(() => result.current.dismiss("recipe-1"));
+    act(() => result.current.dismiss(["recipe-1"]));
     await waitFor(() =>
       expect(result.current.recipes.map((item) => item.title)).toEqual(["Soup"]),
     );

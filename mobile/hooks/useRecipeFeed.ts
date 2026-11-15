@@ -364,9 +364,10 @@ export function useRecipeFeed() {
     [],
   );
 
-  const dismiss = useCallback((recipeId: string) => {
-    if (dismissedIdsRef.current.has(recipeId)) return;
-    dismissedIdsRef.current.add(recipeId);
+  const dismiss = useCallback((recipeIds: readonly string[]) => {
+    const fresh = recipeIds.filter((id) => !dismissedIdsRef.current.has(id));
+    if (fresh.length === 0) return;
+    for (const id of fresh) dismissedIdsRef.current.add(id);
     setDismissedVersion((value) => value + 1);
   }, []);
 

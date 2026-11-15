@@ -8,7 +8,8 @@ The Recipes tab generates recipe ideas grounded in what's in the household's kit
 - `feed-context` generates with typed context ("Occasion or recipe context").
 - `feed-questions` goes through "Ask me questions first" (meal, cuisine vibe, diet goals, anything else) and then generates.
 - `feed-carousel` moves between cards with swipes or "Next recipe" and "Previous recipe", and refills ("Finding more recipes").
-- `feed-less-like-this` removes a card with "Less like this". "More like this" has no effect until #25.
+- `feed-less-like-this` removes the card with "Less like this", along with the alike cards below it. Later batches avoid that style.
+- `feed-more-like-this` keeps the alike cards below a card with "More like this", removes the rest below it, and loads a batch steered toward it under a "Finding a few more ideas" card. It costs one paid generation, photos included.
 - `feed-preview` opens the ingredients preview from a card.
 - `feed-detail` opens the full recipe ("View full recipe") with steps.
 - `feed-empty` shows "Add some items to your inventory first" when the kitchen is empty.
@@ -33,6 +34,7 @@ Preconditions:
 - **API proof.** `grep -E 'POST /api/recipes/sessions' <api log>` (the log found in the preconditions) shows `POST /api/recipes/sessions` (and `/sessions/<id>/pages` on refill) with `200`.
 - **Grounding.** Every ingredient on the card's preview is in the inventory (compare with `db.py inventory_items "household_id=eq.<id>&select=name"`). Pantry staples are the only exception.
 - **Carousel.** Swipe up on the card (start mid-screen) or tap "Next recipe". The next card centers. `shot.sh feed-next`.
+- **Steer.** On a card, tap "More like this": the cards below that aren't alike slide out, the alike ones close up under it, and the "Finding a few more ideas" card holds the tail until the steered batch lands. `api.log` shows a `/sessions/<id>/pages` request. Tap "Less like this" on another card: it and the alike cards below slide out, and the list closes the gap. Record each with `record.sh`. Don't repeat More: each press is a paid generation.
 - **Preview and detail.** Tap anywhere on the card outside its buttons (VoiceOver reads it as "<title>. N minutes, serves M"), then "View full recipe". Steps render with timing and doneness cues. `shot.sh feed-detail`. Close with "Close recipe details".
 - **Home entry.** From Home, tap "Use what's expiring". The Recipes tab opens and generates with that context. Prove it with a second `POST /api/recipes/sessions` line only if this entry point is the one under test.
 

@@ -26,7 +26,7 @@ type RecipeCardProps = {
   cardHeight: number;
   /** Card width in points: the screen width less the feed's side padding. */
   cardWidth: number;
-  /** Skips the entry and dismiss animations. */
+  /** Skips the entry animation. */
   reducedMotion: boolean;
   /** Stacks the feedback buttons for large text sizes. */
   largeText: boolean;
@@ -36,8 +36,8 @@ type RecipeCardProps = {
   revealed: boolean;
   /** Ids whose entry already played, shared across the feed's cards. */
   animatedIds: Set<string>;
-  /** Called after the dismiss animation for "Less like this". */
-  onDismiss: (recipeId: string) => void;
+  /** Called by "Less like this". */
+  onLessLikeThis: (recipe: RecipeSuggestion) => void;
   /** Opens the preview sheet; called when the card is tapped. */
   onPreview: (recipe: RecipeSuggestion) => void;
   /** Called by "More like this". */
@@ -53,8 +53,8 @@ type RecipeCardProps = {
 /**
  * Renders one recipe in the feed: photo with the save toggle, title, Time and
  * Serves, the ingredient teaser, and the "Less like this" and "More like this"
- * buttons. Tapping anywhere else on the card opens the preview. "Less like
- * this" fades the card out, then calls `onDismiss`.
+ * buttons. Tapping anywhere else on the card opens the preview. The feed
+ * plays the card's exit when a button sweeps it away.
  */
 const RecipeCard = memo(function RecipeCard({
   recipe,
@@ -67,7 +67,7 @@ const RecipeCard = memo(function RecipeCard({
   compact,
   revealed,
   animatedIds,
-  onDismiss,
+  onLessLikeThis,
   onPreview,
   onMoreLikeThis,
   saved,
@@ -75,8 +75,6 @@ const RecipeCard = memo(function RecipeCard({
   isSavePending,
 }: RecipeCardProps) {
   const { colors, fonts } = useTheme();
-  const [isDismissing, setIsDismissing] = useState(false);
-  const dismissalStarted = useRef(false);
   const startsAtRest = useRef(
     reducedMotion || animatedIds.has(recipe.recipe_id),
   ).current;
@@ -86,8 +84,6 @@ const RecipeCard = memo(function RecipeCard({
   const entryY = useRef(
     new NativeAnimated.Value(startsAtRest ? 0 : 24),
   ).current;
-  const opacity = useRef(new NativeAnimated.Value(1)).current;
-  const dismissY = useRef(new NativeAnimated.Value(0)).current;
   useEffect(() => {
     if (reducedMotion) {
       entryOpacity.setValue(1);
@@ -127,38 +123,6 @@ const RecipeCard = memo(function RecipeCard({
     reducedMotion,
     revealed,
   ]);
-  useEffect(
-    () => () => {
-      opacity.stopAnimation();
-      dismissY.stopAnimation();
-    },
-    [dismissY, opacity],
-  );
-  const dismiss = () => {
-    if (dismissalStarted.current) return;
-    dismissalStarted.current = true;
-    setIsDismissing(true);
-    if (reducedMotion) {
-      onDismiss(recipe.recipe_id);
-      return;
-    }
-    NativeAnimated.parallel([
-      NativeAnimated.timing(dismissY, {
-        toValue: -48,
-        duration: 260,
-        useNativeDriver: true,
-      }),
-      NativeAnimated.timing(opacity, {
-        toValue: 0,
-        duration: 260,
-        useNativeDriver: true,
-      }),
-    ]).start(({ finished }) => {
-      if (finished) {
-        onDismiss(recipe.recipe_id);
-      }
-    });
-  };
   return (
     <View style={{ height: stride, paddingHorizontal: 24 }}>
       <View>
@@ -166,112 +130,106 @@ const RecipeCard = memo(function RecipeCard({
           testID={"recipe-card-" + recipe.recipe_id}
           style={{ opacity: entryOpacity, transform: [{ translateY: entryY }] }}
         >
-          <NativeAnimated.View
-            style={{ opacity, transform: [{ translateY: dismissY }] }}
+          {/* Pressable is an accessibility element by default, which would
+              merge the save and feedback buttons into one target. The
+              summary view below is the card's screen reader element. */}
+          <RecipePressable
+            accessible={false}
+            onPress={() => onPreview(recipe)}
+            unstable_pressDelay={CARD_PRESS_DELAY_MS}
+            testID={"recipe-card-open-" + recipe.recipe_id}
+            style={[
+              styles.card,
+              {
+                width: cardWidth,
+                height: cardHeight,
+                backgroundColor: colors.surface,
+              },
+            ]}
           >
-            {/* Pressable is an accessibility element by default, which would
-                merge the save and feedback buttons into one target. The
-                summary view below is the card's screen reader element. */}
-            <RecipePressable
-              accessible={false}
-              onPress={() => onPreview(recipe)}
-              unstable_pressDelay={CARD_PRESS_DELAY_MS}
-              testID={"recipe-card-open-" + recipe.recipe_id}
-              style={[
-                styles.card,
-                {
-                  width: cardWidth,
-                  height: cardHeight,
-                  backgroundColor: colors.surface,
-                },
-              ]}
+            <View
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel={cardSummaryLabel(recipe)}
+              accessibilityHint="Opens the recipe preview"
+              onAccessibilityTap={() => onPreview(recipe)}
+              accessibilityActions={ANDROID_ACTIVATE}
+              onAccessibilityAction={() => onPreview(recipe)}
+              testID={"recipe-card-preview-" + recipe.recipe_id}
+              style={styles.summary}
             >
               <View
-                accessible
-                accessibilityRole="button"
-                accessibilityLabel={cardSummaryLabel(recipe)}
-                accessibilityHint="Opens the recipe preview"
-                onAccessibilityTap={() => onPreview(recipe)}
-                accessibilityActions={ANDROID_ACTIVATE}
-                onAccessibilityAction={() => onPreview(recipe)}
-                testID={"recipe-card-preview-" + recipe.recipe_id}
-                style={styles.summary}
-              >
-                <View
-                  style={[
-                    styles.artwork,
-                    compact && styles.compactArtwork,
-                    { backgroundColor: colors.accentSoft },
-                  ]}
-                >
-                  <RecipePhoto
-                    recipeId={recipe.recipe_id}
-                    title={recipe.title}
-                    variant="card"
-                    enabled={photoEnabled}
-                    style={StyleSheet.absoluteFill}
-                  />
-                </View>
-                <View
-                  style={[
-                    styles.summaryText,
-                    compact && styles.compactSummaryText,
-                  ]}
-                >
-                  <Text
-                    numberOfLines={compact ? 2 : 3}
-                    style={[
-                      compact ? styles.compactTitle : styles.title,
-                      { fontFamily: fonts.display, color: colors.text },
-                    ]}
-                  >
-                    {recipe.title}
-                  </Text>
-                  <RecipeStats recipe={recipe} dense grouped />
-                  <RecipeCardTeaser recipe={recipe} />
-                </View>
-              </View>
-              {/* A disabled Pressable doesn't claim the touch, which would
-                  then reach the card and open the preview. These wrappers
-                  keep every touch on the buttons' own area. */}
-              <View
-                onStartShouldSetResponder={claimTouch}
-                style={styles.saveButton}
-              >
-                <RecipeSaveButton
-                  variant="pill"
-                  saved={saved}
-                  title={recipe.title}
-                  disabled={isSavePending}
-                  onPress={() => onToggleSave(recipe, saved)}
-                  testID={"recipe-card-save-" + recipe.recipe_id}
-                />
-              </View>
-              <View
-                onStartShouldSetResponder={claimTouch}
                 style={[
-                  styles.feedback,
-                  compact && styles.compactFeedback,
-                  largeText && styles.feedbackStacked,
+                  styles.artwork,
+                  compact && styles.compactArtwork,
+                  { backgroundColor: colors.accentSoft },
                 ]}
               >
-                <RecipeFeedbackButton
-                  tone="less"
-                  onPress={dismiss}
-                  disabled={isDismissing}
+                <RecipePhoto
+                  recipeId={recipe.recipe_id}
                   title={recipe.title}
-                  testID={"recipe-card-less-like-this-" + recipe.recipe_id}
-                />
-                <RecipeFeedbackButton
-                  tone="more"
-                  onPress={() => onMoreLikeThis(recipe)}
-                  disabled={isDismissing}
-                  title={recipe.title}
-                  testID={"recipe-card-more-like-this-" + recipe.recipe_id}
+                  variant="card"
+                  enabled={photoEnabled}
+                  style={StyleSheet.absoluteFill}
                 />
               </View>
-            </RecipePressable>
-          </NativeAnimated.View>
+              <View
+                style={[
+                  styles.summaryText,
+                  compact && styles.compactSummaryText,
+                ]}
+              >
+                <Text
+                  numberOfLines={compact ? 2 : 3}
+                  style={[
+                    compact ? styles.compactTitle : styles.title,
+                    { fontFamily: fonts.display, color: colors.text },
+                  ]}
+                >
+                  {recipe.title}
+                </Text>
+                <RecipeStats recipe={recipe} dense grouped />
+                <RecipeCardTeaser recipe={recipe} />
+              </View>
+            </View>
+            {/* A disabled Pressable doesn't claim the touch, which would
+                then reach the card and open the preview. These wrappers
+                keep every touch on the buttons' own area. */}
+            <View
+              onStartShouldSetResponder={claimTouch}
+              style={styles.saveButton}
+            >
+              <RecipeSaveButton
+                variant="pill"
+                saved={saved}
+                title={recipe.title}
+                disabled={isSavePending}
+                onPress={() => onToggleSave(recipe, saved)}
+                testID={"recipe-card-save-" + recipe.recipe_id}
+              />
+            </View>
+            <View
+              onStartShouldSetResponder={claimTouch}
+              style={[
+                styles.feedback,
+                compact && styles.compactFeedback,
+                largeText && styles.feedbackStacked,
+              ]}
+            >
+              <RecipeFeedbackButton
+                tone="less"
+                onPress={() => onLessLikeThis(recipe)}
+                title={recipe.title}
+                testID={"recipe-card-less-like-this-" + recipe.recipe_id}
+              />
+              <RecipeFeedbackButton
+                tone="more"
+                onPress={() => onMoreLikeThis(recipe)}
+                title={recipe.title}
+                testID={"recipe-card-more-like-this-" + recipe.recipe_id}
+              />
+            </View>
+          </RecipePressable>
         </NativeAnimated.View>
       </View>
     </View>
@@ -372,13 +330,11 @@ const FEEDBACK_BORDER_ALPHA = "59";
 function RecipeFeedbackButton({
   tone,
   onPress,
-  disabled,
   title,
   testID,
 }: {
   tone: "less" | "more";
   onPress: () => void;
-  disabled: boolean;
   title: string;
   testID: string;
 }) {
@@ -388,17 +344,14 @@ function RecipeFeedbackButton({
   return (
     <RecipePressable
       onPress={onPress}
-      disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={`${label}: ${title}`}
-      accessibilityState={{ disabled }}
       testID={testID}
       style={[
         styles.feedbackButton,
         {
           backgroundColor: ink + FEEDBACK_TINT_ALPHA,
           borderColor: ink + FEEDBACK_BORDER_ALPHA,
-          opacity: disabled ? 0.45 : 1,
         },
       ]}
     >
