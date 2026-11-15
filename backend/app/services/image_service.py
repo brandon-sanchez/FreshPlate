@@ -15,7 +15,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from typing import Literal, Protocol
@@ -26,7 +25,11 @@ from pydantic import BaseModel
 
 from app.ai.agents.models import Recipe
 from app.ai.images.openai import MAX_PROMPT_BYTES
-from app.ai.images.prompts import ingredient_image_prompt, recipe_image_prompt
+from app.ai.images.prompts import (
+    ingredient_image_prompt,
+    recipe_image_prompt,
+    recipe_photo_subject,
+)
 from app.ai.llm.errors import ProviderError
 from app.core.config import Settings
 
@@ -34,7 +37,6 @@ logger = logging.getLogger("freshplate.images")
 
 _UPLOAD_GRACE_SECONDS = 60
 _WEBP_QUALITY = 82
-_NON_WORD = re.compile(r"[\W_]+")
 
 ImageKind = Literal["recipe", "ingredient"]
 ClaimOutcome = Literal["ready", "claimed", "in_progress", "failed", "budget_exhausted"]
@@ -267,22 +269,17 @@ class ImageService:
     def recipe_key(recipe: Recipe) -> str:
         """Return the cache key of a recipe's photo.
 
-        The key is the dish title plus the set of ingredient names, each
-        normalized: case-folded, with punctuation and runs of whitespace
-        collapsed to single spaces. Ingredient order, duplicates, amounts,
-        units, steps, servings and cook time are left out, because a photo of
-        the plated dish does not show them. Adding, removing or swapping an
+        The key is the dish title plus the set of ingredient names, as
+        `recipe_photo_subject` normalizes them. Ingredient order, duplicates,
+        amounts, units, steps, servings and cook time are left out, because
+        the photo prompt leaves them out too. Adding, removing or swapping an
         ingredient, or renaming the dish, gives a new key. Names are used
         rather than food ids, which belong to one household, so households
         that get the same dish share its photo. The photo shows only food,
         so sharing it reveals nothing about a household.
         """
-        content = {
-            "title": _normalized(recipe.title),
-            "ingredients": sorted(
-                {_normalized(item.name) for item in recipe.ingredients}
-            ),
-        }
+        title, ingredients = recipe_photo_subject(recipe)
+        content = {"title": title, "ingredients": ingredients}
         return _digest("recipe", json.dumps(content, sort_keys=True))
 
     @staticmethod
@@ -445,10 +442,6 @@ class ImageService:
             )
         except ImageStoreError:
             logger.warning("image release failed asset=%s", claim.asset_id)
-
-
-def _normalized(text: str) -> str:
-    return " ".join(_NON_WORD.sub(" ", text.casefold()).split())
 
 
 def _digest(kind: str, identity: str) -> str:
