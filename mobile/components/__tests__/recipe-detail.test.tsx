@@ -2,12 +2,26 @@ import React from "react";
 import { Dimensions } from "react-native";
 import { act, fireEvent, render } from "@testing-library/react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import RecipeDetail from "@/components/recipe-detail";
 import type { RecipeSuggestion } from "@/types/recipes";
 
 jest.mock("@expo/vector-icons/Feather", () => () => null);
 jest.mock("@expo/vector-icons/FontAwesome", () => () => null);
 jest.mock("@/hooks/useReducedMotion", () => ({ useReducedMotion: () => true }));
+const mockFetchRecipeImage = jest.fn();
+jest.mock("@/lib/supabase", () => ({ supabase: {} }));
+jest.mock("@/lib/image-api", () => ({
+  fetchRecipeImage: (...args: unknown[]) => mockFetchRecipeImage(...args),
+}));
+
+const readyPhoto = {
+  status: "ready",
+  image_key: "recipe:photo",
+  url: "https://storage.test/photo.webp?token=1",
+  expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+  reason: null,
+};
 
 const recipe: RecipeSuggestion = {
   recipe_id: "10000000-0000-4000-8000-000000000001",
@@ -27,7 +41,11 @@ const recipe: RecipeSuggestion = {
   steps: ["Prep the greens\nRinse the spinach.", "Sauté and serve."],
   saves_expiring: ["Spinach"],
 };
+const client = new QueryClient({
+  defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+});
 const wrapper = ({ children }: { children: React.ReactNode }) => (
+  <QueryClientProvider client={client}>
   <SafeAreaProvider
     initialMetrics={{
       frame: { x: 0, y: 0, width: 390, height: 844 },
@@ -36,7 +54,32 @@ const wrapper = ({ children }: { children: React.ReactNode }) => (
   >
     {children}
   </SafeAreaProvider>
+  </QueryClientProvider>
 );
+
+beforeEach(() => {
+  client.clear();
+  mockFetchRecipeImage.mockReset();
+  mockFetchRecipeImage.mockReturnValue(new Promise(() => {}));
+});
+
+it("shows the recipe photo in the hero", async () => {
+  mockFetchRecipeImage.mockResolvedValue(readyPhoto);
+  const screen = render(
+    <RecipeDetail
+      recipe={recipe}
+      isSaved={false}
+      isSavePending={false}
+      onToggleSave={jest.fn()}
+      onClose={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(
+    await screen.findByLabelText("Generated photo of Spinach skillet"),
+  ).toBeTruthy();
+  expect(mockFetchRecipeImage.mock.calls[0][0]).toBe(recipe.recipe_id);
+});
 
 it("renders the selected snapshot and sends its identity to the shared save action", () => {
   const onToggleSave = jest.fn();
