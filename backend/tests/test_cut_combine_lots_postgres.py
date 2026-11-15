@@ -33,7 +33,7 @@ def database():
         FOODS_MIGRATIONS
         + (
             "20261108140000_add_lot_outcomes.sql",
-            "20261110120000_add_cut_and_combine_lots.sql",
+            "20261114150000_add_cut_and_combine_lots.sql",
         )
     )
 
