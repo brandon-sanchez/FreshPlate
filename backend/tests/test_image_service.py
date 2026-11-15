@@ -60,13 +60,58 @@ async def test_same_recipe_snapshot_reuses_the_image_without_charging():
     assert len(provider.prompts) == 1 and store.spent == 60
 
 
-async def test_changed_recipe_content_gets_its_own_image():
-    images = service()
-    first = await images.recipe_image(recipe(), USER, generate=True)
-    second = await images.recipe_image(
-        recipe(steps=["Bake it instead."]), USER, generate=True
+def _ingredients(*names: str, amount: float = 1) -> list[dict]:
+    return [{"name": name, "use_amount": amount, "unit": "each"} for name in names]
+
+
+_BASE = {"title": "Tomato pasta", "ingredients": _ingredients("spaghetti", "tomato")}
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        {"title": "  tomato PASTA! "},
+        {"title": "Tomato-pasta"},
+        {"ingredients": _ingredients("Tomato", "Spaghetti")},
+        {"ingredients": _ingredients("spaghetti", "tomato", amount=7)},
+        {"ingredients": _ingredients("spaghetti", "tomato", "tomato")},
+        {"steps": ["Bake it instead.", "Serve."]},
+        {"servings": 6, "cook_time_minutes": 45},
+    ],
+)
+async def test_recipe_key_ignores_order_amounts_steps_and_title_formatting(variant):
+    assert ImageService.recipe_key(
+        recipe(**{**_BASE, **variant})
+    ) == ImageService.recipe_key(recipe(**_BASE))
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        {"ingredients": _ingredients("spaghetti", "tomato", "basil")},
+        {"ingredients": _ingredients("spaghetti", "zucchini")},
+        {"ingredients": _ingredients("spaghetti")},
+        {"title": "Tomato soup"},
+    ],
+)
+async def test_recipe_key_changes_with_the_ingredient_set_or_the_title(variant):
+    assert ImageService.recipe_key(
+        recipe(**{**_BASE, **variant})
+    ) != ImageService.recipe_key(recipe(**_BASE))
+
+
+async def test_recipes_from_different_households_share_a_photo():
+    store, provider = FakeStore(), FakeProvider()
+    images = service(store, provider)
+    line = {"name": "tomato", "use_amount": 2, "unit": "each"}
+    mine = recipe(ingredients=[{**line, "inventory_item_id": "food-a"}])
+    theirs = recipe(
+        ingredients=[{**line, "name": "Tomato", "inventory_item_id": "food-b"}]
     )
-    assert first.image_key != second.image_key
+    first = await images.recipe_image(mine, USER, generate=True)
+    second = await images.recipe_image(theirs, OTHER, generate=True)
+    assert second.status == "ready" and second.image_key == first.image_key
+    assert len(provider.prompts) == 1
 
 
 async def test_ingredient_images_are_shared_by_profile_across_households():
