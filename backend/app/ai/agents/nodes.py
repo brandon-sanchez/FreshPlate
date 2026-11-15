@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
@@ -11,6 +13,11 @@ from typing import Any, Literal, Protocol
 
 from pydantic import TypeAdapter, ValidationError
 
+from app.ai.agents.diversity import (
+    MAIN_COMPONENT_CATEGORIES,
+    drop_near_duplicate_titles,
+    recipe_directions,
+)
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING, MAX_BATCH_CEILING
 from app.ai.agents.models import (
     Recipe,
@@ -25,7 +32,9 @@ from app.ai.agents.state import (
     RetrievalResult,
     UsableItem,
 )
+from app.ai.llm.errors import ProviderError
 from app.ai.llm.protocol import LLMProvider
+from app.ai.llm.providers import GEMINI_MIN_DEADLINE_SECONDS
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.prompts.loader import PromptTemplate, load_prompt
 from app.ai.rag.vector_store import (
@@ -42,16 +51,19 @@ from app.inventory.units import (
     to_stock,
 )
 
+logger = logging.getLogger("freshplate.ai.recipes")
+
 EXPIRING_WITHIN_DAYS = 5
 MAX_QUALITY_RETRIES = 1
 QUALITY_RETRY_MIN_BUDGET_SECONDS = 20.0
 GENERATION_DOCS_CEILING = 5
+_GROUNDING_CHECK_SECONDS = 1.0
+# Generation calls stop this long before the pipeline deadline so the meal
+# review can start: Gemini rejects a request deadline under its minimum.
+MEAL_REVIEW_RESERVE_SECONDS = GEMINI_MIN_DEADLINE_SECONDS + _GROUNDING_CHECK_SECONDS
 # Embedding every pantry item name blurs the retrieval query, so only the
 # highest-priority names are embedded.
 RETRIEVAL_QUERY_TERM_LIMIT = 30
-# Category names come from the food_categories seed in
-# supabase/migrations/20260329180000_create_inventory_tables.sql.
-MAIN_COMPONENT_CATEGORIES = frozenset({"meat & seafood"})
 WATER = "water"
 WATER_RULE = (
     "Water is always available: never list it as an ingredient, but steps may use "
@@ -204,11 +216,26 @@ async def generate_recipes(
     prompt: PromptTemplate | None = None,
     deadline: PipelineDeadline | None = None,
 ) -> GenerationResult:
-    """Generate recipes while preserving provider amounts for validation.
+    """Generate a batch with one concurrent provider call per recipe.
 
-    The response schema limits each ingredient's unit to the usable foods'
-    units. A kitchen with no usable food makes no provider call and returns
-    an empty batch.
+    Every call gets the same system instruction, schema and kitchen prompt,
+    so the provider can cache that shared prefix, followed by its own
+    direction from ``recipe_directions`` so the calls don't all write the
+    same dish. The directions shift with the number of shown titles, so a
+    feed refill doesn't repeat the first page's directions.
+
+    Calls stop ``MEAL_REVIEW_RESERVE_SECONDS`` before the pipeline deadline
+    when that still leaves them Gemini's minimum call time, so the meal
+    review can still run. A call that fails or is still running then drops
+    only its own recipe. A call
+    that returns no recipe is the model saying the kitchen can't make a
+    meal for its direction. A kitchen with no usable food or a batch
+    ceiling of zero makes no call.
+
+    Raises:
+        ProviderError: When at least one call fails and none returns a
+            recipe, so a provider outage never reads as an empty kitchen.
+        ValueError: When the state is malformed.
     """
     template = prompt or load_prompt("generate_recipes")
     batch_ceiling = _batch_ceiling(state)
@@ -219,30 +246,107 @@ async def generate_recipes(
         # so the counter must stay truthful: capping it here would let a
         # limit above the default retry forever.
         retry_count = retry_count + 1
-    if not usable_items:
+    if not usable_items or batch_ceiling == 0:
         return {"generated_recipes": [], "retry_count": retry_count}
-    active_deadline = deadline or _state_deadline(state)
-    response = await provider.generate(
-        _generation_prompt(state, usable_items),
-        response_model=recipe_batch_model(
-            batch_ceiling, {item["id"]: item["units"] for item in usable_items}
+
+    shared_prompt = _generation_prompt(state, usable_items)
+    response_model = recipe_batch_model(
+        1, {item["id"]: item["units"] for item in usable_items}
+    )
+    calls_deadline = _generation_deadline(deadline or _state_deadline(state))
+    outcomes = await asyncio.gather(
+        *(
+            _generate_one(
+                provider,
+                f"{shared_prompt}\n\n{direction}",
+                response_model=response_model,
+                template=template,
+                deadline=calls_deadline,
+            )
+            for direction in recipe_directions(
+                usable_items,
+                batch_ceiling,
+                offset=_shown_title_count(state),
+            )
         ),
+        return_exceptions=True,
+    )
+
+    recipes: list[Recipe] = []
+    failures: list[BaseException] = []
+    for index, outcome in enumerate(outcomes):
+        if isinstance(outcome, ProviderError):
+            logger.warning(
+                "Recipe generation call %s/%s dropped: %r",
+                index + 1,
+                len(outcomes),
+                outcome,
+            )
+            failures.append(outcome)
+        elif isinstance(outcome, BaseException):
+            raise outcome
+        else:
+            recipes.extend(outcome)
+    if failures and not recipes:
+        # An empty batch tells the feed the kitchen can't make a meal, so
+        # only calls that all answered may say so.
+        raise ProviderError(
+            "No recipe generation call returned a recipe", cause=failures[0]
+        ) from failures[0]
+    return {"generated_recipes": recipes, "retry_count": retry_count}
+
+
+async def _generate_one(
+    provider: LLMProvider,
+    prompt: str,
+    *,
+    response_model: type[RecipeGenerationResponse],
+    template: PromptTemplate,
+    deadline: PipelineDeadline | None,
+) -> list[Recipe]:
+    """Return the recipe one generation call writes, or an empty list."""
+    response = await provider.generate(
+        prompt,
+        response_model=response_model,
         system_instruction=template.system,
-        deadline=active_deadline,
+        deadline=deadline,
         thinking=template.thinking,
     )
-    validated_response = RecipeGenerationResponse.model_validate(response)
-    return {
-        "generated_recipes": validated_response.recipes[:batch_ceiling],
-        "retry_count": retry_count,
-    }
+    return RecipeGenerationResponse.model_validate(response).recipes[:1]
+
+
+def _shown_title_count(state: Mapping[str, Any]) -> int:
+    """Return how many titles the feed has shown, which grows every refill."""
+    titles = state.get("exclude_titles", [])
+    if isinstance(titles, Sequence) and not isinstance(titles, (str, bytes)):
+        return len(titles)
+    return 0
+
+
+def _generation_deadline(
+    deadline: PipelineDeadline | None,
+) -> PipelineDeadline | None:
+    """Return the deadline generation calls share.
+
+    The reserve applies only when it leaves the calls Gemini's minimum, so a
+    late retry still makes real calls instead of all being refused.
+    """
+    if deadline is None or (
+        deadline.remaining_seconds
+        < MEAL_REVIEW_RESERVE_SECONDS + GEMINI_MIN_DEADLINE_SECONDS
+    ):
+        return deadline
+    return deadline.ending_before(MEAL_REVIEW_RESERVE_SECONDS)
 
 
 def check_quality(state: Mapping[str, Any]) -> QualityResult:
     """Keep only complete recipes grounded in the analyzed inventory.
 
-    An empty batch is how the generator reports a kitchen that cannot
-    make a meal, so it produces no quality feedback and never triggers a retry.
+    Of the grounded recipes, one whose title repeats an earlier one's dish
+    is dropped without feedback, because the calls that wrote them could
+    not see each other. An empty batch is how the generator reports a
+    kitchen that cannot make a meal, so it produces no quality feedback and
+    never triggers a retry.
     """
     usable_items = _usable_items(state.get("usable_items", []))
     inventory_by_id = {item["id"]: item for item in usable_items}
@@ -269,7 +373,7 @@ def check_quality(state: Mapping[str, Any]) -> QualityResult:
             valid_recipes.append(_tidy_generated_recipe(recipe))
 
     return {
-        "valid_recipes": valid_recipes,
+        "valid_recipes": drop_near_duplicate_titles(valid_recipes),
         "quality_feedback": "\n".join(failures) if failures else None,
     }
 
@@ -343,22 +447,21 @@ def _generation_prompt(
     state: Mapping[str, Any],
     usable_items: Sequence[UsableItem],
 ) -> str:
-    """Build the grounded user prompt for the versioned system instruction."""
-    ceiling = _batch_ceiling(state)
+    """Build the user prompt every call in a batch shares.
+
+    Nothing in it differs between the calls of one batch, so the provider
+    can cache it with the system instruction. Each call's direction goes
+    after it.
+    """
     lines = [
         (
-            f"Suggest up to {ceiling} distinct meals this kitchen can make. Each "
-            "recipe is a separate option the cook chooses between, so every recipe "
-            "may use the full listed inventory, including the same main ingredient "
-            "as another recipe. Make each one a different dish that varies in "
-            "cooking method or format, not a variation of another. If the kitchen "
-            f"cannot make a real meal, return an empty list. {WATER_RULE}"
+            "Suggest one meal this kitchen can make. It is one of several "
+            "options the cook chooses between, so it may use the full listed "
+            "inventory, including the same main ingredient as another option. "
+            "If the kitchen cannot make a real meal, return an empty list. "
+            f"{WATER_RULE}"
         ),
         "",
-        (
-            "Create up to the requested number of recipe suggestions from the "
-            "usable inventory."
-        ),
         (
             "Retrieved recipes are inspiration, not templates. Do not copy them "
             "as templates."
@@ -372,11 +475,6 @@ def _generation_prompt(
             "Every ingredient must map to one listed inventory_item_id. Write "
             "its use_amount in whichever of that food's listed units a cook "
             "would use, such as cloves of garlic or tablespoons of oil."
-        ),
-        (
-            "Use the full batch ceiling when distinct grounded recipes are "
-            "possible. Return fewer only when no additional grounded recipe "
-            "can be made from this inventory."
         ),
         "",
         "Usable inventory:",
@@ -416,7 +514,6 @@ def _generation_prompt(
         lines.extend(("", "Do not repeat these shown titles:"))
         lines.append(", ".join(str(title) for title in exclude_titles) or "None")
 
-    lines.extend(("", f"Maximum number of recipes: {ceiling}"))
     feedback = state.get("quality_feedback")
     if feedback:
         lines.extend(("", "Quality feedback from the previous attempt:", str(feedback)))

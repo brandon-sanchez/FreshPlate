@@ -31,6 +31,19 @@ def test_pipeline_deadline_uses_the_configured_budget(
     assert deadline.remaining_seconds == 12.5
 
 
+def test_an_earlier_deadline_ends_before_and_runs_on_the_same_clock() -> None:
+    clock = FakeClock()
+    deadline = PipelineDeadline(25.0, clock=clock)
+
+    earlier = deadline.ending_before(11.0)
+    clock.value += 4.0
+
+    assert earlier.remaining_seconds == 10.0
+    assert deadline.remaining_seconds == 21.0
+    with pytest.raises(ValueError):
+        deadline.ending_before(21.0)
+
+
 @pytest.mark.asyncio
 async def test_retry_policy_retries_transient_failures_with_shared_deadline() -> None:
     clock = FakeClock()

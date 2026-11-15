@@ -63,6 +63,15 @@ class PipelineDeadline:
         )
         return cls(configured_budget, clock=clock)
 
+    def ending_before(self, seconds: float) -> "PipelineDeadline":
+        """Return a deadline on the same clock that ends ``seconds`` earlier.
+
+        Raises:
+            ValueError: When ``seconds`` or less remain, so the earlier
+                deadline has already passed.
+        """
+        return PipelineDeadline(self.remaining_seconds - seconds, clock=self._clock)
+
     @property
     def expired(self) -> bool:
         """Return whether no time remains for another operation."""

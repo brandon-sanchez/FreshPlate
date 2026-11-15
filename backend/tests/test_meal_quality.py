@@ -9,7 +9,7 @@ import pytest
 from app.ai.agents.graph import build_recipe_generation_graph, build_recipe_graph
 from app.ai.agents.meal_quality import MealChecklist, assess_meals, review_recipes
 from app.ai.agents.models import Recipe, RecipeGenerationResponse
-from app.ai.agents.nodes import analyze_inventory
+from app.ai.agents.nodes import MEAL_REVIEW_RESERVE_SECONDS, analyze_inventory
 from app.ai.llm.errors import ProviderError
 from app.ai.llm.providers import FakeProvider
 from app.ai.llm.retry import PipelineDeadline
@@ -113,7 +113,11 @@ async def test_both_graphs_regenerate_rejected_meals_under_one_deadline(refill):
         {"recipes": [token]}, assessment("insufficient"),
         {"recipes": [substantial]}, assessment("eligible"),
     ])
-    state = {"inventory": inventory(), "metadata": {"trace_key": "keep"}}
+    state = {
+        "inventory": inventory(),
+        "metadata": {"trace_key": "keep"},
+        "batch_ceiling": 1,
+    }
     if refill:
         state.update(analyze_inventory(state))
         graph = build_recipe_generation_graph(provider)
@@ -128,7 +132,13 @@ async def test_both_graphs_regenerate_rejected_meals_under_one_deadline(refill):
         RecipeGenerationResponse, MealChecklist,
         RecipeGenerationResponse, MealChecklist,
     ]
-    assert all(call["deadline"] is result["deadline"] for call in provider.calls)
+    review_calls = provider.calls[1::2]
+    assert all(call["deadline"] is result["deadline"] for call in review_calls)
+    review_end = result["deadline"].remaining_seconds - MEAL_REVIEW_RESERVE_SECONDS
+    assert all(
+        abs(call["deadline"].remaining_seconds - review_end) < 0.5
+        for call in provider.calls[::2]
+    )
     assert "insufficient" in provider.calls[2]["prompt"]
     assert result["metadata"]["trace_key"] == "keep"
     assert result["metadata"]["assessment_prompt_version"] == 2
@@ -142,7 +152,7 @@ async def test_semantically_rejected_meals_exhaust_existing_retry_and_return_emp
         {"recipes": [recipe]}, assessment("incoherent"),
     ])
     result = await build_recipe_graph(provider, EmptyRetriever()).ainvoke(
-        {"inventory": inventory()}
+        {"inventory": inventory(), "batch_ceiling": 1}
     )
     assert result["valid_recipes"] == []
     assert result["retry_count"] == 1
