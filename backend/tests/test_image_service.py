@@ -9,6 +9,7 @@ import pytest
 from PIL import Image
 
 from app.ai.llm.errors import ProviderError
+from app.ai.llm.retry import PipelineDeadline
 from app.core.config import Settings
 from app.services.image_service import FoodIdentity, ImagePolicy, ImageService
 from tests.image_fakes import POLICY, FakeProvider, FakeStore, png, recipe
@@ -329,3 +330,25 @@ async def test_refunded_failure_does_not_use_up_attempts():
 async def test_generation_needs_the_switch_a_key_and_positive_caps(overrides, enabled):
     settings = Settings(_env_file=None, **{"openai_api_key": "test-key", **overrides})
     assert ImagePolicy.from_settings(settings).enabled is enabled
+
+
+async def test_a_caller_deadline_shorter_than_the_policy_bounds_the_attempt():
+    store = FakeStore()
+    images = service(store, FakeProvider(delay=1))
+    started = asyncio.get_running_loop().time()
+    # Two seconds are kept for storing the photo, leaving the provider 0.05.
+    result = await images.recipe_image(
+        recipe(), USER, generate=True, deadline=PipelineDeadline(2.05)
+    )
+    assert asyncio.get_running_loop().time() - started < 0.5
+    assert result.status == "unavailable" and result.reason == "failed"
+    assert store.spent == 60
+
+
+async def test_a_deadline_too_short_to_store_a_photo_refunds_the_claim():
+    store, provider = FakeStore(), FakeProvider()
+    result = await service(store, provider).recipe_image(
+        recipe(), USER, generate=True, deadline=PipelineDeadline(1)
+    )
+    assert result.status == "unavailable" and result.reason == "failed"
+    assert provider.prompts == [] and store.spent == 0

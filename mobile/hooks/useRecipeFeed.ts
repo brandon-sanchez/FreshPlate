@@ -3,6 +3,7 @@ import {
   useMutation,
   useQueryClient,
   type InfiniteData,
+  type QueryClient,
 } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -23,6 +24,30 @@ export const RECIPE_FEED_MAX_RUNS = 6;
 export { RECIPE_FEED_REQUEST_TIMEOUT_MS };
 
 export type RecipeFeedStatus = "idle" | "loading" | "ready" | "error";
+
+/** A feed response whose photos have moved to the recipe image cache. */
+type RecipeFeedPage = {
+  data: Omit<RecipeFeedResponse["data"], "recipes"> & {
+    recipes: RecipeSuggestion[];
+  };
+};
+
+/**
+ * Seeds each card's photo under `['recipe-image', recipe_id]`, the key
+ * `useRecipeImage` reads, so a card shows its photo without another request.
+ * The photo is left off the returned recipes, because saved recipes and cook
+ * events store the recipe as a snapshot and a signed URL must not go with it.
+ */
+function unpackPhotos(
+  queryClient: QueryClient,
+  response: RecipeFeedResponse,
+): RecipeFeedPage {
+  const recipes = response.data.recipes.map(({ image, ...recipe }) => {
+    if (image) queryClient.setQueryData(["recipe-image", recipe.recipe_id], image);
+    return recipe;
+  });
+  return { data: { ...response.data, recipes } };
+}
 
 type StartMutationInput = {
   request: RecipeFeedSessionRequest;
@@ -48,6 +73,16 @@ function uniqueRecipes(recipes: RecipeSuggestion[]): RecipeSuggestion[] {
   });
 }
 
+/**
+ * Runs one recipe feed session: creates it, pages through its cards and
+ * keeps an unseen reserve loaded ahead of the user.
+ *
+ * Calls `POST /api/recipes/sessions` and
+ * `POST /api/recipes/sessions/{id}/pages`, caching pages under
+ * `['recipe-feed', sessionId]`. Each card's photo is seeded under
+ * `['recipe-image', recipe_id]`, so cards show photos without a request of
+ * their own. Starting a new session cancels and removes the previous one.
+ */
 export function useRecipeFeed() {
   const queryClient = useQueryClient();
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -69,15 +104,16 @@ export function useRecipeFeed() {
   const dismissedIdsRef = useRef(new Set<string>());
   const activeStartControllerRef = useRef<AbortController | null>(null);
 
-  const createMutation = useMutation<RecipeFeedResponse, Error, StartMutationInput>({
-    mutationFn: ({ request, signal }) => createRecipeFeedSession(request, signal),
+  const createMutation = useMutation<RecipeFeedPage, Error, StartMutationInput>({
+    mutationFn: async ({ request, signal }) =>
+      unpackPhotos(queryClient, await createRecipeFeedSession(request, signal)),
     retry: false,
   });
 
   const feedQuery = useInfiniteQuery<
-    RecipeFeedResponse,
+    RecipeFeedPage,
     Error,
-    InfiniteData<RecipeFeedResponse, string>,
+    InfiniteData<RecipeFeedPage, string>,
     [string, string | null],
     string
   >({
@@ -91,7 +127,7 @@ export function useRecipeFeed() {
       if (sessionIdRef.current === sessionId) {
         pageLatencyMsRef.current = Math.max(1_000, Date.now() - started);
       }
-      return page;
+      return unpackPhotos(queryClient, page);
     },
     getNextPageParam: (lastPage) => lastPage?.data.next_cursor ?? undefined,
     staleTime: Infinity,

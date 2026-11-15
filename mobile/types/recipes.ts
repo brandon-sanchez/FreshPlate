@@ -1,3 +1,5 @@
+import type { ImageResult } from "@/types/images";
+
 export const RECIPE_PREFERENCE_KEYS = [
   "meal",
   "time",
@@ -57,10 +59,21 @@ export type RecipeSuggestionsResponse = {
   };
 };
 
+/** A recipe as the feed endpoints serve it, with its photo. */
+export type RecipeFeedCard = RecipeSuggestion & {
+  /**
+   * The recipe's photo or placeholder result, generated with the batch.
+   * `null` when a page read from the stored pool found no stored photo; the
+   * photo is then requested from `POST /api/images/recipes/{recipe_id}`.
+   */
+  image: ImageResult | null;
+};
+
+/** Body of a feed session or page response. */
 export type RecipeFeedResponse = {
   data: {
     session_id: string;
-    recipes: RecipeSuggestion[];
+    recipes: RecipeFeedCard[];
     next_cursor: string | null;
     has_more: boolean;
     ready_count: number;

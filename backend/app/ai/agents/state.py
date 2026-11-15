@@ -13,6 +13,7 @@ from typing_extensions import TypedDict
 from app.ai.agents.models import Recipe
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.rag.vector_store import RetrievedRecipe
+from app.models.images import ImageResult
 
 
 class UsableItem(TypedDict):
@@ -66,10 +67,19 @@ class QualityResult(TypedDict):
     metadata: NotRequired[dict[str, Any]]
 
 
+class PhotoResult(TypedDict):
+    """State update returned by the photo step."""
+
+    recipe_photos: dict[str, ImageResult]
+
+
 class RecipeState(TypedDict, total=False):
-    """The shared state carried through the four-node recipe graph.
+    """The shared state carried through the recipe graph.
 
     ``inventory`` holds one ``FoodLine`` mapping per household food.
+    ``recipe_photos`` maps each valid recipe's photo cache key
+    (``ImageService.recipe_key``) to its photo. Only graphs built with a
+    photo source set it.
     """
 
     inventory: list[Mapping[str, Any]]
@@ -86,3 +96,4 @@ class RecipeState(TypedDict, total=False):
     errors: list[str]
     metadata: dict[str, Any]
     deadline: PipelineDeadline
+    recipe_photos: dict[str, ImageResult]

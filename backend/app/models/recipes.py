@@ -18,6 +18,7 @@ from pydantic import (
 
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING, MAX_BATCH_CEILING
 from app.ai.agents.models import Recipe
+from app.models.images import ImageResult
 
 
 class RecipeSuggestionRequest(BaseModel):
@@ -85,11 +86,24 @@ class RecipeFeedPageRequest(BaseModel):
     limit: StrictInt = Field(default=5, ge=1, le=5)
 
 
+class RecipeFeedCard(RecipeSuggestion):
+    """A feed recipe as served, with its photo.
+
+    Attributes:
+        image: The recipe's photo, or its placeholder result. None only on a
+            page served from a stored pool without a stored photo. The app
+            then requests the photo from `POST /api/images/recipes/{id}`.
+            The signed URL is never stored with the recipe.
+    """
+
+    image: ImageResult | None
+
+
 class RecipeFeedData(BaseModel):
     """One stable page from a server-owned recipe feed session."""
 
     session_id: UUID
-    recipes: list[RecipeSuggestion]
+    recipes: list[RecipeFeedCard]
     next_cursor: str | None = None
     has_more: bool
     ready_count: int = Field(default=0, ge=0)

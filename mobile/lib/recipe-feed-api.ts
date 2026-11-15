@@ -5,7 +5,13 @@ import type {
 } from "@/types/recipes";
 
 export const RECIPE_FEED_PAGE_SIZE = 5;
-export const RECIPE_FEED_REQUEST_TIMEOUT_MS = 35_000;
+/**
+ * How long the app waits for a feed response. It is above the backend's
+ * 48 s session and 43 s page budgets, which include generating each batch's
+ * photos, so the app receives the server's own answer instead of aborting
+ * first.
+ */
+export const RECIPE_FEED_REQUEST_TIMEOUT_MS = 50_000;
 
 type RecipeFeedPageRequest = {
   sessionId: string;
