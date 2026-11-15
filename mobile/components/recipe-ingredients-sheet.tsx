@@ -158,7 +158,7 @@ export default function RecipeIngredientsSheet({
                   fontSize: 13,
                 }}
               >
-                {recipe?.cook_time_minutes} min · {recipe?.servings} servings
+                {recipe?.servings} servings · {recipe?.cook_time_minutes} min
               </Text>
             </View>
             {recipe?.ingredients.map((ingredient, index) => (

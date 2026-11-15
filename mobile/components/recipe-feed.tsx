@@ -511,6 +511,18 @@ const RecipeCard = memo(function RecipeCard({
                 {recipe.title}
               </Text>
               <View style={styles.facts}>
+                <Text
+                  style={{
+                    color: colors.textMuted,
+                    fontFamily: fonts.body,
+                    fontSize: 13,
+                  }}
+                >
+                  {recipe.servings} servings
+                </Text>
+                <Text style={{ color: colors.textSubtle, fontSize: 13 }}>
+                  ·
+                </Text>
                 <Feather name="clock" size={14} color={colors.textMuted} />
                 <Text
                   style={{
@@ -520,18 +532,6 @@ const RecipeCard = memo(function RecipeCard({
                   }}
                 >
                   {recipe.cook_time_minutes} min
-                </Text>
-                <Text style={{ color: colors.textSubtle, fontSize: 13 }}>
-                  ·
-                </Text>
-                <Text
-                  style={{
-                    color: colors.textMuted,
-                    fontFamily: fonts.body,
-                    fontSize: 13,
-                  }}
-                >
-                  {recipe.servings} servings
                 </Text>
               </View>
               <View style={{ gap: 5, flex: 1 }}>

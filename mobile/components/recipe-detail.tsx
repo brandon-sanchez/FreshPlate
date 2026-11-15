@@ -105,12 +105,12 @@ function RecipeDetailScreen({
             {recipe.title}
           </Text>
           <View style={[styles.stats, { backgroundColor: colors.surfaceAlt }]}>
+            <Stat icon="users" label="Serves" value={`${recipe.servings}`} />
             <Stat
               icon="clock"
               label="Time"
               value={`${recipe.cook_time_minutes} min`}
             />
-            <Stat icon="users" label="Serves" value={`${recipe.servings}`} />
             <Stat icon="zap" label="Match" value={`${recipe.match_percent}%`} />
           </View>
           <Text

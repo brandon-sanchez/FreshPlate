@@ -170,12 +170,16 @@ describe("RecipeFeed", () => {
     expect(queryByText("That's all for now")).toBeNull();
   });
   it("renders the card contract", () => {
-    const { getByText } = render(
+    const { getAllByText, getByText } = render(
       <RecipeFeed {...defaultProps} recipes={[baseRecipe]} />,
     );
 
     expect(getByText("Spinach Pasta")).toBeTruthy();
-    expect(getByText("24 min")).toBeTruthy();
+    expect(
+      getAllByText(/^(2 servings|24 min)$/).map((node) =>
+        [node.props.children].flat().join(""),
+      ),
+    ).toEqual(["2 servings", "24 min"]);
     expect(getByText("Uses up Baby Spinach")).toBeTruthy();
   });
 
