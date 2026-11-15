@@ -39,14 +39,26 @@ async def test_first_request_generates_stores_webp_and_returns_a_signed_url():
     assert [kind for kind, _ in provider.prompts] == ["recipe"]
 
 
-async def test_recipe_prompt_lists_only_the_recipe_content():
+async def test_recipe_prompt_names_only_the_dish_and_its_ingredients():
     provider = FakeProvider()
     await service(provider=provider).recipe_image(recipe(), USER, generate=True)
     [(_, prompt)] = provider.prompts
-    assert "Tomato pasta" in prompt
-    assert "200 g spaghetti" in prompt and "3 each tomato" in prompt
-    assert "1. Boil the pasta." in prompt
+    assert "Dish: tomato pasta" in prompt
+    assert "- spaghetti\n- tomato" in prompt
+    assert "200" not in prompt and "Boil the pasta" not in prompt
     assert "Do not add sides, garnishes" in prompt
+
+
+async def test_recipes_sharing_a_photo_key_get_the_same_prompt():
+    first, second = FakeProvider(), FakeProvider()
+    await service(provider=first).recipe_image(recipe(), USER, generate=True)
+    reworded = recipe(
+        "  Tomato-PASTA ",
+        ingredients=_ingredients("Tomato", "spaghetti", amount=9),
+        steps=["Bake it instead."],
+    )
+    await service(provider=second).recipe_image(reworded, OTHER, generate=True)
+    assert first.prompts == second.prompts
 
 
 async def test_same_recipe_snapshot_reuses_the_image_without_charging():
