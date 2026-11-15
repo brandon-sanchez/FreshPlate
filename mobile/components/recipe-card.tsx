@@ -1,13 +1,61 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { Animated as NativeAnimated, StyleSheet, Text, View } from "react-native";
+import {
+  Animated as NativeAnimated,
+  PixelRatio,
+  Platform,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import Feather from "@expo/vector-icons/Feather";
-import FontAwesome from "@expo/vector-icons/FontAwesome";
-import RecipeActionButton from "@/components/recipe-action-button";
 import RecipePhoto from "@/components/recipe-photo";
+import RecipeSaveButton from "@/components/recipe-save-button";
+import RecipeStats, { recipeStatsLabel } from "@/components/recipe-stats";
 import { RecipeActivity, RecipePressable } from "@/components/recipe-motion";
 import { useTheme } from "@/hooks/useTheme";
 import type { RecipeSuggestion } from "@/types/recipes";
 
+type RecipeCardProps = {
+  /** The recipe the card shows. */
+  recipe: RecipeSuggestion;
+  /** Lets the photo request run; a first request may start a paid generation. */
+  photoEnabled: boolean;
+  /** Height of the card's row in the list, in points, including the gap. */
+  stride: number;
+  /** Card height in points; the feed picks it from the screen and text size. */
+  cardHeight: number;
+  /** Card width in points: the screen width less the feed's side padding. */
+  cardWidth: number;
+  /** Skips the entry and dismiss animations. */
+  reducedMotion: boolean;
+  /** Stacks the feedback buttons for large text sizes. */
+  largeText: boolean;
+  /** Uses the shorter photo and tighter spacing of the carousel card. */
+  compact: boolean;
+  /** Starts the entry animation the first time it turns true. */
+  revealed: boolean;
+  /** Ids whose entry already played, shared across the feed's cards. */
+  animatedIds: Set<string>;
+  /** Called after the dismiss animation for "Less like this". */
+  onDismiss: (recipeId: string) => void;
+  /** Opens the preview sheet; called when the card is tapped. */
+  onPreview: (recipe: RecipeSuggestion) => void;
+  /** Called by "More like this". */
+  onMoreLikeThis: (recipe: RecipeSuggestion) => void;
+  /** Whether the recipe is in the household cookbook. */
+  saved: boolean;
+  /** Called by the bookmark with the recipe's current saved state. */
+  onToggleSave: (recipe: RecipeSuggestion, saved: boolean) => void;
+  /** Blocks the bookmark while a save or unsave is in flight. */
+  isSavePending: boolean;
+};
+
+/**
+ * Renders one recipe in the feed: photo with the save toggle, title, Time and
+ * Serves, the ingredient teaser, and the "Less like this" and "More like this"
+ * buttons. Tapping anywhere else on the card opens the preview. "Less like
+ * this" fades the card out, then calls `onDismiss`.
+ */
 const RecipeCard = memo(function RecipeCard({
   recipe,
   photoEnabled,
@@ -20,27 +68,12 @@ const RecipeCard = memo(function RecipeCard({
   revealed,
   animatedIds,
   onDismiss,
-  onIngredients,
+  onPreview,
+  onMoreLikeThis,
   saved,
   onToggleSave,
   isSavePending,
-}: {
-  recipe: RecipeSuggestion;
-  photoEnabled: boolean;
-  stride: number;
-  cardHeight: number;
-  cardWidth: number;
-  reducedMotion: boolean;
-  largeText: boolean;
-  compact: boolean;
-  revealed: boolean;
-  animatedIds: Set<string>;
-  onDismiss: (recipeId: string) => void;
-  onIngredients: (recipe: RecipeSuggestion) => void;
-  saved: boolean;
-  onToggleSave: (recipe: RecipeSuggestion, saved: boolean) => void;
-  isSavePending: boolean;
-}) {
+}: RecipeCardProps) {
   const { colors, fonts } = useTheme();
   const [isDismissing, setIsDismissing] = useState(false);
   const dismissalStarted = useRef(false);
@@ -134,211 +167,110 @@ const RecipeCard = memo(function RecipeCard({
           style={{ opacity: entryOpacity, transform: [{ translateY: entryY }] }}
         >
           <NativeAnimated.View
-            style={[
-              styles.card,
-              {
-                width: cardWidth,
-                height: cardHeight,
-                backgroundColor: colors.surface,
-                opacity,
-                transform: [{ translateY: dismissY }],
-              },
-            ]}
+            style={{ opacity, transform: [{ translateY: dismissY }] }}
           >
-            <View
+            {/* Pressable is an accessibility element by default, which would
+                merge the save and feedback buttons into one target. The
+                summary view below is the card's screen reader element. */}
+            <RecipePressable
+              accessible={false}
+              onPress={() => onPreview(recipe)}
+              unstable_pressDelay={CARD_PRESS_DELAY_MS}
+              testID={"recipe-card-open-" + recipe.recipe_id}
               style={[
-                styles.artwork,
-                compact && { height: 104 },
-                { backgroundColor: colors.accentSoft },
+                styles.card,
+                {
+                  width: cardWidth,
+                  height: cardHeight,
+                  backgroundColor: colors.surface,
+                },
               ]}
             >
-              <RecipePressable
+              <View
+                accessible
                 accessibilityRole="button"
-                accessibilityLabel={`Preview ${recipe.title}`}
-                testID={`recipe-card-preview-${recipe.recipe_id}`}
-                onPress={() => onIngredients(recipe)}
-                style={StyleSheet.absoluteFill}
+                accessibilityLabel={cardSummaryLabel(recipe)}
+                accessibilityHint="Opens the recipe preview"
+                onAccessibilityTap={() => onPreview(recipe)}
+                accessibilityActions={ANDROID_ACTIVATE}
+                onAccessibilityAction={() => onPreview(recipe)}
+                testID={"recipe-card-preview-" + recipe.recipe_id}
+                style={styles.summary}
               >
-                <RecipePhoto
-                  recipeId={recipe.recipe_id}
-                  title={recipe.title}
-                  variant="card"
-                  enabled={photoEnabled}
-                  style={StyleSheet.absoluteFill}
-                />
-              </RecipePressable>
-              <RecipePressable
-                onPress={() => onToggleSave(recipe, saved)}
-                disabled={isSavePending}
-                accessibilityRole="button"
-                accessibilityLabel={
-                  saved
-                    ? "Remove " + recipe.title + " from saved recipes"
-                    : "Save " + recipe.title + " to household cookbook"
-                }
-                testID={"recipe-card-save-" + recipe.recipe_id}
-                style={[styles.saveButton, { backgroundColor: colors.surface }]}
-              >
-                {saved ? (
-                  <FontAwesome
-                    name="bookmark"
-                    size={19}
-                    color={colors.accent}
+                <View
+                  style={[
+                    styles.artwork,
+                    compact && styles.compactArtwork,
+                    { backgroundColor: colors.accentSoft },
+                  ]}
+                >
+                  <RecipePhoto
+                    recipeId={recipe.recipe_id}
+                    title={recipe.title}
+                    variant="card"
+                    enabled={photoEnabled}
+                    style={StyleSheet.absoluteFill}
                   />
-                ) : (
-                  <Feather name="bookmark" size={19} color={colors.textMuted} />
-                )}
-                <Text
-                  style={{
-                    color: saved ? colors.accent : colors.textMuted,
-                    fontFamily: fonts.bodyStrong,
-                    fontSize: 12,
-                  }}
+                </View>
+                <View
+                  style={[
+                    styles.summaryText,
+                    compact && styles.compactSummaryText,
+                  ]}
                 >
-                  {saved ? "Saved" : "Save"}
-                </Text>
-              </RecipePressable>
-            </View>
-            <View
-              style={[styles.cardContent, compact && { padding: 16, gap: 8 }]}
-            >
-              <Text
-                selectable
-                numberOfLines={3}
-                onPress={() => onIngredients(recipe)}
-                accessibilityRole="link"
-                style={{
-                  fontFamily: fonts.display,
-                  fontSize: compact ? 22 : 24,
-                  lineHeight: compact ? 26 : 28,
-                  letterSpacing: -0.5,
-                  color: colors.text,
-                }}
-              >
-                {recipe.title}
-              </Text>
-              <View style={styles.facts}>
-                <Text
-                  style={{
-                    color: colors.textMuted,
-                    fontFamily: fonts.body,
-                    fontSize: 13,
-                  }}
-                >
-                  {recipe.servings} servings
-                </Text>
-                <Text style={{ color: colors.textSubtle, fontSize: 13 }}>
-                  ·
-                </Text>
-                <Feather name="clock" size={14} color={colors.textMuted} />
-                <Text
-                  style={{
-                    color: colors.textMuted,
-                    fontFamily: fonts.body,
-                    fontSize: 13,
-                  }}
-                >
-                  {recipe.cook_time_minutes} min
-                </Text>
-              </View>
-              <View style={{ gap: 5, flex: 1 }}>
-                <Text
-                  style={{
-                    color: colors.textMuted,
-                    fontFamily: fonts.bodyStrong,
-                    fontSize: 12,
-                  }}
-                >
-                  Ingredients
-                </Text>
-                <Text
-                  selectable
-                  numberOfLines={2}
-                  style={{
-                    color: colors.text,
-                    fontFamily: fonts.body,
-                    fontSize: 14,
-                    lineHeight: 21,
-                  }}
-                >
-                  {recipe.ingredients
-                    .map((ingredient) => ingredient.name)
-                    .join(" · ")}
-                </Text>
-                {recipe.saves_expiring.length > 0 && (
                   <Text
-                    numberOfLines={1}
-                    style={{
-                      color: colors.warn,
-                      fontFamily: fonts.body,
-                      fontSize: 12,
-                      marginTop: 3,
-                    }}
+                    numberOfLines={compact ? 2 : 3}
+                    style={[
+                      compact ? styles.compactTitle : styles.title,
+                      { fontFamily: fonts.display, color: colors.text },
+                    ]}
                   >
-                    Uses up {recipe.saves_expiring.join(", ")}
+                    {recipe.title}
                   </Text>
-                )}
+                  <RecipeStats recipe={recipe} dense grouped />
+                  <RecipeCardTeaser recipe={recipe} />
+                </View>
+              </View>
+              {/* A disabled Pressable doesn't claim the touch, which would
+                  then reach the card and open the preview. These wrappers
+                  keep every touch on the buttons' own area. */}
+              <View
+                onStartShouldSetResponder={claimTouch}
+                style={styles.saveButton}
+              >
+                <RecipeSaveButton
+                  variant="pill"
+                  saved={saved}
+                  title={recipe.title}
+                  disabled={isSavePending}
+                  onPress={() => onToggleSave(recipe, saved)}
+                  testID={"recipe-card-save-" + recipe.recipe_id}
+                />
               </View>
               <View
+                onStartShouldSetResponder={claimTouch}
                 style={[
-                  styles.actions,
-                  { borderColor: colors.border },
-                  largeText && {
-                    flexDirection: "column",
-                    alignItems: "stretch",
-                    gap: 4,
-                  },
+                  styles.feedback,
+                  compact && styles.compactFeedback,
+                  largeText && styles.feedbackStacked,
                 ]}
               >
-                <RecipeActionButton
-                  label="Not this"
-                  variant="secondary"
+                <RecipeFeedbackButton
+                  tone="less"
                   onPress={dismiss}
                   disabled={isDismissing}
-                  testID={"recipe-card-not-this-" + recipe.recipe_id}
-                  accessibilityLabel={"Not this: " + recipe.title}
-                  style={{
-                    minHeight: 48,
-                    paddingHorizontal: 24,
-                    flex: largeText ? undefined : 1,
-                  }}
+                  title={recipe.title}
+                  testID={"recipe-card-less-like-this-" + recipe.recipe_id}
                 />
-                <RecipePressable
-                  onPress={() => onIngredients(recipe)}
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    "View all " +
-                    recipe.ingredients.length +
-                    " ingredients for " +
-                    recipe.title
-                  }
-                  testID={"recipe-card-ingredients-" + recipe.recipe_id}
-                  style={{
-                    minHeight: 48,
-                    paddingHorizontal: 6,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 6,
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: colors.text,
-                      fontFamily: fonts.bodyStrong,
-                      fontSize: 12,
-                    }}
-                  >
-                    Ingredients
-                  </Text>
-                  <Feather
-                    name="arrow-up-right"
-                    size={17}
-                    color={colors.accent}
-                  />
-                </RecipePressable>
+                <RecipeFeedbackButton
+                  tone="more"
+                  onPress={() => onMoreLikeThis(recipe)}
+                  disabled={isDismissing}
+                  title={recipe.title}
+                  testID={"recipe-card-more-like-this-" + recipe.recipe_id}
+                />
               </View>
-            </View>
+            </RecipePressable>
           </NativeAnimated.View>
         </NativeAnimated.View>
       </View>
@@ -346,13 +278,157 @@ const RecipeCard = memo(function RecipeCard({
   );
 });
 
+const claimTouch = () => true;
+
+// Holds off the card's press-in shrink long enough for a swipe to start, so
+// the card doesn't shrink at the beginning of every scroll.
+const CARD_PRESS_DELAY_MS = 90;
+
+// iOS reaches the summary through `onAccessibilityTap`; Android needs the
+// standard activate action. On iOS that action would also show up as an
+// extra "activate" entry in the VoiceOver actions rotor.
+const ANDROID_ACTIVATE =
+  Platform.OS === "android" ? [{ name: "activate" as const }] : undefined;
+
+/** Builds what a screen reader says for the card's summary. */
+function cardSummaryLabel(recipe: RecipeSuggestion) {
+  const parts = [recipe.title, recipeStatsLabel(recipe)];
+  if (recipe.saves_expiring.length > 0) {
+    parts.push(`Uses up ${recipe.saves_expiring.join(", ")}`);
+  }
+  return parts.join(". ");
+}
+
+const TEASER_LINE_HEIGHT = 21;
+const USES_UP_LINE_HEIGHT = 16;
+const TEASER_GAP = 4;
+const MAX_INGREDIENT_LINES = 3;
+
+/**
+ * Fills the card's leftover height with whole lines: the "Uses up" line
+ * first, because it names food that is about to expire, then up to three lines
+ * of ingredient names. A line that doesn't fit is left out instead of being
+ * cut in half. The preview sheet always lists every ingredient.
+ */
+function RecipeCardTeaser({ recipe }: { recipe: RecipeSuggestion }) {
+  const { colors, fonts } = useTheme();
+  const [height, setHeight] = useState(0);
+  const scale = PixelRatio.getFontScale();
+  const usesUpHeight = USES_UP_LINE_HEIGHT * scale;
+  const showUsesUp = recipe.saves_expiring.length > 0 && height >= usesUpHeight;
+  const ingredientLines = Math.min(
+    MAX_INGREDIENT_LINES,
+    Math.floor(
+      (height - (showUsesUp ? usesUpHeight + TEASER_GAP : 0)) /
+        (TEASER_LINE_HEIGHT * scale),
+    ),
+  );
+  return (
+    <View
+      testID={"recipe-card-teaser-" + recipe.recipe_id}
+      style={styles.teaser}
+      onLayout={(event) => setHeight(event.nativeEvent.layout.height)}
+    >
+      {ingredientLines > 0 && (
+        <Text
+          numberOfLines={ingredientLines}
+          style={{
+            color: colors.text,
+            fontFamily: fonts.body,
+            fontSize: 14,
+            lineHeight: TEASER_LINE_HEIGHT,
+          }}
+        >
+          <Text
+            style={{ color: colors.textMuted, fontFamily: fonts.bodyStrong }}
+          >
+            Ingredients{"  "}
+          </Text>
+          {recipe.ingredients.map((ingredient) => ingredient.name).join(" · ")}
+        </Text>
+      )}
+      {showUsesUp && (
+        <Text
+          numberOfLines={1}
+          style={{
+            color: colors.warn,
+            fontFamily: fonts.body,
+            fontSize: 12,
+            lineHeight: USES_UP_LINE_HEIGHT,
+          }}
+        >
+          Uses up {recipe.saves_expiring.join(", ")}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+// `FEEDBACK_TINT_ALPHA` keeps the `crit` and `accent` labels at 4.5:1
+// contrast or better (WCAG AA) on the tint in both color schemes.
+const FEEDBACK_TINT_ALPHA = "14";
+const FEEDBACK_BORDER_ALPHA = "59";
+
+function RecipeFeedbackButton({
+  tone,
+  onPress,
+  disabled,
+  title,
+  testID,
+}: {
+  tone: "less" | "more";
+  onPress: () => void;
+  disabled: boolean;
+  title: string;
+  testID: string;
+}) {
+  const { colors, fonts } = useTheme();
+  const ink = tone === "less" ? colors.crit : colors.accent;
+  const label = tone === "less" ? "Less like this" : "More like this";
+  return (
+    <RecipePressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}: ${title}`}
+      accessibilityState={{ disabled }}
+      testID={testID}
+      style={[
+        styles.feedbackButton,
+        {
+          backgroundColor: ink + FEEDBACK_TINT_ALPHA,
+          borderColor: ink + FEEDBACK_BORDER_ALPHA,
+          opacity: disabled ? 0.45 : 1,
+        },
+      ]}
+    >
+      <Feather
+        name={tone === "less" ? "thumbs-down" : "thumbs-up"}
+        size={15}
+        color={ink}
+      />
+      <Text style={{ color: ink, fontFamily: fonts.bodyStrong, fontSize: 14 }}>
+        {label}
+      </Text>
+    </RecipePressable>
+  );
+}
+
+/**
+ * Renders the card-shaped placeholder that holds the feed's tail while more
+ * recipes load, with the same photo height and padding as a recipe card. Its
+ * lines pulse unless Reduce Motion is on.
+ */
 export function RecipeSkeletonCard({
   cardHeight,
   reducedMotion,
   compact,
 }: {
+  /** Matches the recipe cards' height, in points. */
   cardHeight: number;
+  /** Holds the lines at a fixed opacity instead of pulsing. */
   reducedMotion: boolean;
+  /** Uses the carousel card's shorter photo and tighter padding. */
   compact: boolean;
 }) {
   const { colors, fonts } = useTheme();
@@ -398,7 +474,7 @@ export function RecipeSkeletonCard({
         <View
           style={[
             styles.artwork,
-            compact && { height: 104 },
+            compact && styles.compactArtwork,
             { backgroundColor: colors.surfaceAlt },
           ]}
         >
@@ -420,8 +496,8 @@ export function RecipeSkeletonCard({
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
           style={[
-            styles.cardContent,
-            compact && { padding: 16, gap: 8 },
+            styles.skeletonContent,
+            compact && styles.compactSkeletonContent,
             { opacity },
           ]}
         >
@@ -463,32 +539,35 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     boxShadow: "0 4px 24px rgba(27,31,28,0.07)",
   },
+  summary: { flex: 1 },
   artwork: { height: 164 },
-  cardContent: { flex: 1, padding: 20, gap: 12 },
-  facts: {
+  compactArtwork: { height: 136 },
+  summaryText: { flex: 1, paddingHorizontal: 18, paddingTop: 16, gap: 12 },
+  compactSummaryText: { paddingHorizontal: 16, paddingTop: 14, gap: 10 },
+  title: { fontSize: 24, lineHeight: 28, letterSpacing: -0.5 },
+  compactTitle: { fontSize: 22, lineHeight: 26, letterSpacing: -0.4 },
+  teaser: { flex: 1, gap: TEASER_GAP, overflow: "hidden" },
+  skeletonContent: { flex: 1, padding: 18, gap: 12 },
+  compactSkeletonContent: { padding: 16, gap: 10 },
+  feedback: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    flexWrap: "wrap",
-  },
-  actions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 16,
-    borderTopWidth: StyleSheet.hairlineWidth,
+    gap: 10,
+    paddingHorizontal: 18,
     paddingTop: 12,
+    paddingBottom: 18,
   },
-  saveButton: {
-    position: "absolute",
-    right: 14,
-    top: 14,
+  compactFeedback: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 16 },
+  feedbackStacked: { flexDirection: "column" },
+  feedbackButton: {
+    flex: 1,
     minHeight: 44,
     paddingHorizontal: 10,
     borderRadius: 22,
+    borderWidth: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
-    backgroundColor: "rgba(255,255,255,0.82)",
-    zIndex: 2,
+    justifyContent: "center",
+    gap: 6,
   },
+  saveButton: { position: "absolute", right: 14, top: 14, zIndex: 2 },
 });

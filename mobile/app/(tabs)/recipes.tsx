@@ -73,6 +73,9 @@ export default function RecipesScreen() {
     [feed, householdId],
   );
 
+  // TODO(#25): steer the next feed pages toward this recipe.
+  const onMoreLikeThis = useCallback((_recipe: RecipeSuggestion) => {}, []);
+
   const toggleSave = (recipe: RecipeSuggestion, isSaved: boolean) => {
     void saved.toggle({ recipe, saved: isSaved }).catch(() => {
       Toast.show({
@@ -245,6 +248,7 @@ export default function RecipesScreen() {
         bottomInset={tabBarHeight + 28}
         onAsk={() => setFlowOpen(true)}
         onDismiss={feed.dismiss}
+        onMoreLikeThis={onMoreLikeThis}
         onNearEnd={feed.maybePrefetch}
         onRetryMore={feed.retryPrefetch}
         onAddItems={() => router.push("/(tabs)/inventory")}

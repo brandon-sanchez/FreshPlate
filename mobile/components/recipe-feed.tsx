@@ -32,6 +32,8 @@ type RecipeFeedProps = {
   bottomInset: number;
   onAsk: () => void;
   onDismiss: (recipeId: string) => void;
+  /** Called by a card's "More like this" button with that card's recipe. */
+  onMoreLikeThis: (recipe: RecipeSuggestion) => void;
   onNearEnd: (lastVisibleIndex: number) => void;
   onRetryMore: () => void;
   onAddItems: () => void;
@@ -58,6 +60,7 @@ export default function RecipeFeed({
   bottomInset,
   onAsk,
   onDismiss,
+  onMoreLikeThis,
   onNearEnd,
   onRetryMore,
   onAddItems,
@@ -85,8 +88,9 @@ export default function RecipeFeed({
   const stride = cardHeight + 20;
   const listRef = useRef<FlatList<RecipeSuggestion>>(null);
   const [revealedIds, setRevealedIds] = useState(new Set<string>());
-  const [ingredientRecipe, setIngredientRecipe] =
-    useState<RecipeSuggestion | null>(null);
+  const [previewRecipe, setPreviewRecipe] = useState<RecipeSuggestion | null>(
+    null,
+  );
   const animatedIds = useRef(new Set<string>()).current;
   const recipesRef = useRef(recipes);
   const lastVisibleIndexRef = useRef(-1);
@@ -156,7 +160,8 @@ export default function RecipeFeed({
         revealed={stackEnabled || revealedIds.has(item.recipe_id)}
         animatedIds={animatedIds}
         onDismiss={dismissRecipe}
-        onIngredients={setIngredientRecipe}
+        onPreview={setPreviewRecipe}
+        onMoreLikeThis={onMoreLikeThis}
         saved={savedIds.has(item.recipe_id)}
         onToggleSave={onToggleSave}
         isSavePending={isSavePending}
@@ -172,6 +177,7 @@ export default function RecipeFeed({
       revealedIds,
       stride,
       width,
+      onMoreLikeThis,
       onToggleSave,
       savedIds,
       isSavePending,
@@ -289,8 +295,8 @@ export default function RecipeFeed({
         )}
       </View>
       <RecipeIngredientsSheet
-        recipe={ingredientRecipe}
-        onClose={() => setIngredientRecipe(null)}
+        recipe={previewRecipe}
+        onClose={() => setPreviewRecipe(null)}
         onOpenDetail={onOpenDetail}
       />
     </View>

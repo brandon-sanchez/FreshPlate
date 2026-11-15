@@ -82,6 +82,7 @@ const defaultProps = {
   bottomInset: 24,
   onAsk: jest.fn(),
   onDismiss: jest.fn(),
+  onMoreLikeThis: jest.fn(),
   onNearEnd: jest.fn(),
   onRetryMore: jest.fn(),
   onAddItems: jest.fn(),
@@ -116,9 +117,9 @@ describe("RecipeFeed", () => {
     fireEvent.press(screen.getByTestId("recipe-card-save-recipe-1"));
     expect(onToggleSave).toHaveBeenCalledWith(baseRecipe, false);
     expect(screen.queryByLabelText("View full recipe")).toBeNull();
-    fireEvent(screen.getByTestId("recipe-card-preview-recipe-1"), "touchEnd");
+    fireEvent(screen.getByTestId("recipe-card-open-recipe-1"), "touchEnd");
     expect(screen.queryByLabelText("View full recipe")).toBeNull();
-    fireEvent.press(screen.getByTestId("recipe-card-preview-recipe-1"));
+    fireEvent.press(screen.getByTestId("recipe-card-open-recipe-1"));
     expect(screen.getByLabelText("View full recipe")).toBeTruthy();
   });
 
@@ -158,7 +159,7 @@ describe("RecipeFeed", () => {
         recipes={[baseRecipe]}
       />,
     );
-    fireEvent.press(getByTestId("recipe-card-not-this-recipe-1"));
+    fireEvent.press(getByTestId("recipe-card-less-like-this-recipe-1"));
     expect(onDismiss).toHaveBeenCalledWith("recipe-1");
   });
   it("shows an honest loading tail while existing recipes stay scrollable", () => {
@@ -170,17 +171,93 @@ describe("RecipeFeed", () => {
     expect(queryByText("That's all for now")).toBeNull();
   });
   it("renders the card contract", () => {
-    const { getAllByText, getByText } = render(
+    const { getByTestId, getByText, getByLabelText } = render(
       <RecipeFeed {...defaultProps} recipes={[baseRecipe]} />,
     );
 
     expect(getByText("Spinach Pasta")).toBeTruthy();
-    expect(
-      getAllByText(/^(2 servings|24 min)$/).map((node) =>
-        [node.props.children].flat().join(""),
-      ),
-    ).toEqual(["2 servings", "24 min"]);
+    expect(getByTestId("recipe-stats")).toHaveTextContent(
+      "24 minTime2Serves",
+    );
+    expect(getByLabelText("Less like this: Spinach Pasta")).toBeTruthy();
+    expect(getByLabelText("More like this: Spinach Pasta")).toBeTruthy();
+    fireEvent(getByTestId("recipe-card-teaser-recipe-1"), "layout", {
+      nativeEvent: { layout: { x: 0, y: 0, width: 300, height: 80 } },
+    });
     expect(getByText("Uses up Baby Spinach")).toBeTruthy();
+  });
+
+  it("announces the card as one control that opens the preview", () => {
+    const screen = render(
+      <RecipeFeed {...defaultProps} recipes={[baseRecipe]} />,
+    );
+    const summary = screen.getByTestId("recipe-card-preview-recipe-1");
+    expect(summary.props.accessibilityRole).toBe("button");
+    expect(summary.props.accessibilityLabel).toBe(
+      "Spinach Pasta. 24 minutes, serves 2. Uses up Baby Spinach",
+    );
+    expect(summary.props.accessibilityHint).toBe("Opens the recipe preview");
+    fireEvent(summary, "accessibilityTap");
+    expect(screen.getByLabelText("View full recipe")).toBeTruthy();
+  });
+
+  it("claims touches around the card's buttons so a disabled tap never opens the preview", () => {
+    const screen = render(
+      <RecipeFeed {...defaultProps} recipes={[baseRecipe]} isSavePending />,
+    );
+    const nearestResponder = (testID: string) => {
+      let node = screen.getByTestId(testID).parent;
+      while (
+        node &&
+        (node.props.testID === testID || !node.props.onStartShouldSetResponder)
+      ) {
+        node = node.parent;
+      }
+      return node;
+    };
+    for (const testID of [
+      "recipe-card-save-recipe-1",
+      "recipe-card-less-like-this-recipe-1",
+    ]) {
+      const claimer = nearestResponder(testID);
+      expect(claimer?.props.testID).not.toBe("recipe-card-open-recipe-1");
+      expect(claimer?.props.onStartShouldSetResponder()).toBe(true);
+    }
+  });
+
+  it("sends More like this to its handler without opening or removing the card", () => {
+    mockReducedMotion.mockReturnValue(true);
+    const onMoreLikeThis = jest.fn();
+    const onDismiss = jest.fn();
+    const screen = render(
+      <RecipeFeed
+        {...defaultProps}
+        onMoreLikeThis={onMoreLikeThis}
+        onDismiss={onDismiss}
+        recipes={[baseRecipe]}
+      />,
+    );
+    fireEvent.press(screen.getByTestId("recipe-card-more-like-this-recipe-1"));
+    expect(onMoreLikeThis).toHaveBeenCalledWith(baseRecipe);
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("View full recipe")).toBeNull();
+  });
+
+  it("keeps only the teaser lines that fit, with the Uses up line first", () => {
+    const screen = render(
+      <RecipeFeed {...defaultProps} recipes={[baseRecipe]} />,
+    );
+    const layout = (height: number) =>
+      fireEvent(screen.getByTestId("recipe-card-teaser-recipe-1"), "layout", {
+        nativeEvent: { layout: { x: 0, y: 0, width: 300, height } },
+      });
+    layout(20);
+    expect(screen.getByText("Uses up Baby Spinach")).toBeTruthy();
+    expect(screen.queryByText(/Spinach · Pasta/)).toBeNull();
+    layout(45);
+    expect(screen.getByText(/Spinach · Pasta/).props.numberOfLines).toBe(1);
+    layout(10);
+    expect(screen.queryByText("Uses up Baby Spinach")).toBeNull();
   });
 
   it("shows the recipe photo on the card and reuses it in the preview", async () => {
@@ -201,7 +278,7 @@ describe("RecipeFeed", () => {
     expect(
       await screen.findAllByLabelText("Photo of Spinach Pasta"),
     ).toHaveLength(1);
-    fireEvent.press(screen.getByTestId("recipe-card-ingredients-recipe-1"));
+    fireEvent.press(screen.getByTestId("recipe-card-open-recipe-1"));
     expect(screen.getAllByLabelText("Photo of Spinach Pasta")).toHaveLength(2);
     expect(mockFetchRecipeImage).toHaveBeenCalledTimes(1);
   });
@@ -261,7 +338,7 @@ describe("RecipeFeed", () => {
     expect(getByTestId("recipe-feed-list").props.decelerationRate).toBe(
       "normal",
     );
-    fireEvent.press(getByTestId("recipe-card-ingredients-recipe-1"));
+    fireEvent.press(getByTestId("recipe-card-open-recipe-1"));
     expect(getByTestId("recipe-ingredients-list")).toBeTruthy();
   });
 
@@ -287,7 +364,7 @@ describe("RecipeFeed", () => {
       />,
     );
 
-    fireEvent.press(getByTestId("recipe-card-not-this-recipe-1"));
+    fireEvent.press(getByTestId("recipe-card-less-like-this-recipe-1"));
     act(() => jest.advanceTimersByTime(260));
 
     expect(onDismiss).toHaveBeenCalledWith("recipe-1");
@@ -297,8 +374,11 @@ describe("RecipeFeed", () => {
     const { getByTestId, getByText, queryByTestId } = render(
       <RecipeFeed {...defaultProps} recipes={[baseRecipe]} />,
     );
-    expect(getByText("Spinach · Pasta")).toBeTruthy();
-    fireEvent.press(getByTestId("recipe-card-ingredients-recipe-1"));
+    fireEvent(getByTestId("recipe-card-teaser-recipe-1"), "layout", {
+      nativeEvent: { layout: { x: 0, y: 0, width: 300, height: 80 } },
+    });
+    expect(getByText(/Spinach · Pasta/)).toBeTruthy();
+    fireEvent.press(getByTestId("recipe-card-open-recipe-1"));
     expect(getByText("100 g")).toBeTruthy();
     expect(getByText("200 g")).toBeTruthy();
     fireEvent.press(getByTestId("recipe-ingredients-close"));
