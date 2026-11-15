@@ -19,7 +19,7 @@ from app.ai.agents.nodes import (
     RecipeRetrieverPort,
 )
 from app.ai.agents.photos import RecipePhotoSource
-from app.ai.agents.state import RecipeState
+from app.ai.agents.state import RecipeState, RecipeSteering
 from app.ai.eval.scorers import ingredient_coverage_percent
 from app.ai.llm.errors import AI_UNAVAILABLE, ProviderError
 from app.ai.llm.protocol import LLMProvider
@@ -62,6 +62,7 @@ from app.services.recipe_feed_store import (
     RecipeFeedStoreError,
     SupabaseRecipeFeedStore,
 )
+from app.services.recipe_steering import resolve_steering
 
 router = APIRouter(prefix="/api/recipes", tags=["recipes"])
 logger = logging.getLogger("freshplate.recipes")
@@ -316,6 +317,10 @@ async def post_recipe_feed_page(
             ),
         )
         if len(recipes) < payload.limit and session.has_more:
+            steering = await _within_recipe_deadline(
+                deadline,
+                lambda: resolve_steering(store, _user_id, session, payload.steering),
+            )
             session, added, photos = await _refill_recipe_feed_session(
                 session,
                 _user_id,
@@ -323,6 +328,7 @@ async def post_recipe_feed_page(
                 provider,
                 RequesterRecipePhotos(images, _user_id),
                 deadline,
+                steering,
             )
             if added:
                 recipes = await _within_recipe_deadline(
@@ -370,11 +376,13 @@ async def _refill_recipe_feed_session(
     provider: LLMProvider,
     photo_source: RecipePhotoSource,
     deadline: PipelineDeadline,
+    steering: RecipeSteering,
 ) -> _RefillOutcome:
     """Generate one tail batch using the session's cached retrieval context.
 
     A batch another request generated comes back with no photos, and its
-    cards are served with their stored photos.
+    cards are served with their stored photos. That batch was generated
+    without this request's ``steering``.
     """
     original_count = session.candidate_count
     claim_id = uuid4()
@@ -408,6 +416,7 @@ async def _refill_recipe_feed_session(
             photo_source,
             deadline,
             claim_id,
+            steering,
         )
     except Exception:
         # Cleanup is conditional on the claim, so a lost finalize response cannot
@@ -433,6 +442,7 @@ async def _generate_claimed_recipe_refill(
     photo_source: RecipePhotoSource,
     deadline: PipelineDeadline,
     claim_id: UUID,
+    steering: RecipeSteering,
 ) -> _RefillOutcome:
     """Generate and finalize the batch owned by one database reservation."""
     prompt = load_prompt("generate_recipes")
@@ -448,6 +458,7 @@ async def _generate_claimed_recipe_refill(
         "retry_count": 0,
         "metadata": {},
         "deadline": deadline,
+        "steering": steering,
     }
     result = await _invoke_recipe_graph(
         build_recipe_generation_graph(

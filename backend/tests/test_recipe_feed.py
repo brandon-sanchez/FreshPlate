@@ -1037,3 +1037,129 @@ def test_stored_pages_reuse_cached_photos_and_never_generate(
         "ready",
     ]
     assert len(image_provider.prompts) == 2
+
+
+def _steering_session(
+    signing_key: SigningKey, refill: list[dict[str, Any]]
+) -> tuple[PromptRecordingProvider, FastAPI]:
+    titles = ["Spinach Frittata", "Spinach Soup", "Tomato Salad"]
+    provider = PromptRecordingProvider(
+        [
+            {"recipes": [_recipe(title) for title in titles]},
+            _assessment(3),
+            {"recipes": refill},
+            _assessment(len(refill)),
+        ]
+    )
+    app = create_app()
+    _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
+    return provider, app
+
+
+def _refill_prompt(provider: PromptRecordingProvider) -> str:
+    return [
+        prompt for prompt in provider.prompts if prompt.startswith("Suggest up to")
+    ][-1]
+
+
+def test_steered_refill_asks_for_more_and_fewer_recipes_like_the_chosen_cards(
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    patch_jwks([signing_key])
+    provider, app = _steering_session(signing_key, [_recipe("Spinach Pie")])
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        )
+        data = first.json()["data"]
+        ids = {card["title"]: card["recipe_id"] for card in data["recipes"]}
+        page = client.post(
+            f"/api/recipes/sessions/{data['session_id']}/pages",
+            headers=_auth_headers(signing_key),
+            json={
+                "cursor": "3",
+                "limit": 5,
+                "steering": {
+                    "more_like": [ids["Spinach Frittata"]],
+                    "less_like": [
+                        ids["Tomato Salad"],
+                        "00000000-0000-4000-8000-000000000000",
+                    ],
+                },
+            },
+        )
+
+    assert page.status_code == 200
+    assert [card["title"] for card in page.json()["data"]["recipes"]] == [
+        "Spinach Pie"
+    ]
+    steering = (
+        _refill_prompt(provider)
+        .split("Steering from the cook")[1]
+        .split("Maximum number of recipes")[0]
+    )
+    more, _, less = steering.partition("fewer recipes like these")
+    assert "- Spinach Frittata (uses Baby Spinach)" in more
+    assert "- Tomato Salad (uses Baby Spinach)" in less
+    assert "Spinach Soup" not in steering
+    assert "share at least two foods" in steering
+
+
+def test_unsteered_refill_prompt_has_no_steering(
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    patch_jwks([signing_key])
+    provider, app = _steering_session(signing_key, [_recipe("Spinach Pie")])
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        )
+        client.post(
+            f"/api/recipes/sessions/{first.json()['data']['session_id']}/pages",
+            headers=_auth_headers(signing_key),
+            json={"cursor": "3", "limit": 5},
+        )
+
+    assert "recipes like these" not in _refill_prompt(provider)
+
+
+def _uuid(n: int) -> str:
+    return f"00000000-0000-4000-8000-{n:012d}"
+
+
+@pytest.mark.parametrize(
+    "steering",
+    [
+        {"more_like": [_uuid(n) for n in range(4)]},
+        {"less_like": [_uuid(n) for n in range(11)]},
+        {"more_like": [], "less_like": [], "extra": []},
+        {"more_like": ["not-a-uuid"]},
+    ],
+)
+def test_page_request_rejects_malformed_steering(
+    signing_key: SigningKey,
+    patch_jwks,
+    steering: dict[str, Any],
+) -> None:
+    patch_jwks([signing_key])
+    app = create_app()
+    _install_dependencies(
+        app, FakeProvider([]), StubRetriever(), InMemoryRecipeFeedStore()
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/recipes/sessions/00000000-0000-4000-8000-000000000000/pages",
+            headers=_auth_headers(signing_key),
+            json={"cursor": "0", "limit": 5, "steering": steering},
+        )
+
+    assert response.status_code == 422

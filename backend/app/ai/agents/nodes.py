@@ -21,7 +21,9 @@ from app.ai.agents.state import (
     GenerationResult,
     InventoryAnalysis,
     QualityResult,
+    RecipeSteering,
     RetrievalResult,
+    SteeringExample,
     UsableItem,
 )
 from app.ai.llm.protocol import LLMProvider
@@ -404,11 +406,42 @@ def _generation_prompt(
         lines.extend(("", "Do not repeat these shown titles:"))
         lines.append(", ".join(str(title) for title in exclude_titles) or "None")
 
+    lines.extend(_steering_lines(state.get("steering")))
     lines.extend(("", f"Maximum number of recipes: {ceiling}"))
     feedback = state.get("quality_feedback")
     if feedback:
         lines.extend(("", "Quality feedback from the previous attempt:", str(feedback)))
     return "\n".join(lines)
+
+
+def _steering_lines(steering: RecipeSteering | None) -> list[str]:
+    if not steering or not (steering["more_like"] or steering["less_like"]):
+        return []
+    lines = [
+        "",
+        (
+            "Steering from the cook. Two recipes are alike when they share at "
+            "least two foods and the shared foods are at least half of all the "
+            "foods the two use."
+        ),
+    ]
+    if steering["more_like"]:
+        lines.append(
+            "The cook asked for more recipes like these. Make each recipe alike "
+            "to one of them, while still a different dish:"
+        )
+        lines.extend(_steering_example(example) for example in steering["more_like"])
+    if steering["less_like"]:
+        lines.append(
+            "The cook asked for fewer recipes like these. Do not write a recipe "
+            "alike to any of them:"
+        )
+        lines.extend(_steering_example(example) for example in steering["less_like"])
+    return lines
+
+
+def _steering_example(example: SteeringExample) -> str:
+    return f"- {example['title']} (uses {', '.join(example['foods'])})"
 
 
 def _inventory_line(item: UsableItem) -> str:
