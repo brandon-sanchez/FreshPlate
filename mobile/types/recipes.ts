@@ -57,9 +57,18 @@ export type RecipeIngredient = {
   display_amount?: string | null;
 };
 
-/** One stage of a recipe's method. */
+/**
+ * One stage of a recipe's method. Steps are flat and numbered in cooking
+ * order; `phase` labels a step without grouping it.
+ */
 export type RecipeStep = {
-  /** A short action heading, a newline, then one or two sentences. */
+  /**
+   * The meal component the stage works on, such as "Rice" or "Finish".
+   * Missing or `null` for a dish with one component, and on string-step
+   * recipes.
+   */
+  phase?: string | null;
+  /** A short action heading, a newline, then one to three sentences. */
   instruction: string;
   /** What the cook sees, smells or tests when the stage is done, or `null`. */
   doneness_cue?: string | null;

@@ -12,6 +12,14 @@ describe("isRecipeStep", () => {
     expect(isRecipeStep({ instruction: "Boil.", uses: [3] })).toBe(false);
     expect(isRecipeStep({ instruction: "Boil.", minutes: "5" })).toBe(false);
   });
+
+  it("accepts a text or null phase and rejects any other phase", () => {
+    expect(isRecipeStep({ phase: "Rice", instruction: "Cook the rice." })).toBe(
+      true,
+    );
+    expect(isRecipeStep({ phase: null, instruction: "Serve." })).toBe(true);
+    expect(isRecipeStep({ phase: 2, instruction: "Serve." })).toBe(false);
+  });
 });
 
 describe("hasReadableCookbookFields", () => {
