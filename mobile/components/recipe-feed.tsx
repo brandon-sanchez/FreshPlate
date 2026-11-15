@@ -533,16 +533,6 @@ const RecipeCard = memo(function RecipeCard({
                 >
                   {recipe.servings} servings
                 </Text>
-                <Text
-                  style={{
-                    marginLeft: "auto",
-                    color: colors.accent,
-                    fontFamily: fonts.bodyStrong,
-                    fontSize: 12,
-                  }}
-                >
-                  {recipe.match_percent}% match
-                </Text>
               </View>
               <View style={{ gap: 5, flex: 1 }}>
                 <Text

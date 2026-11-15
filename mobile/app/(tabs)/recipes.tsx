@@ -418,7 +418,7 @@ function SavedRecipeRow({ recipe, photoEnabled, onRemove, disabled, onOpen }: { 
     <RecipePhoto recipeId={recipe.recipe_id} title={recipe.title} variant="thumbnail" enabled={photoEnabled} style={{ width: 110, height: 110, borderRadius: 12 }} />
     <View style={{ flex: 1, gap: 8 }}>
     <View style={{ flexDirection: "row", alignItems: "center" }}><Text style={{ flex: 1, color: colors.text, fontFamily: fonts.display, fontSize: 20 }}>{recipe.title}</Text><RecipePressable onPress={onRemove} disabled={disabled} accessibilityRole="button" accessibilityLabel={`Remove ${recipe.title} from saved recipes`} style={{ minHeight: 44, minWidth: 44, alignItems: "center", justifyContent: "center" }}><FontAwesome name="bookmark" size={20} color={colors.accent} /></RecipePressable></View>
-    <Text style={{ color: colors.textMuted, fontFamily: fonts.body, fontSize: 13 }}>{recipe.cook_time_minutes} min · {recipe.servings} servings · {recipe.match_percent}% match</Text>
+    <Text style={{ color: colors.textMuted, fontFamily: fonts.body, fontSize: 13 }}>{recipe.cook_time_minutes} min · {recipe.servings} servings</Text>
     <Text style={{ color: colors.accent, fontFamily: fonts.bodyStrong, fontSize: 12 }}>Household cookbook</Text>
     </View>
   </RecipePressable>;

@@ -176,7 +176,6 @@ describe("RecipeFeed", () => {
 
     expect(getByText("Spinach Pasta")).toBeTruthy();
     expect(getByText("24 min")).toBeTruthy();
-    expect(getByText("92% match")).toBeTruthy();
     expect(getByText("Uses up Baby Spinach")).toBeTruthy();
   });
 
