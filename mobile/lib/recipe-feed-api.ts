@@ -2,15 +2,24 @@ import { apiFetch } from "@/lib/api";
 import type {
   RecipeFeedResponse,
   RecipeFeedSessionRequest,
+  RecipeFeedSteering,
 } from "@/types/recipes";
 
 export const RECIPE_FEED_PAGE_SIZE = 5;
-export const RECIPE_FEED_REQUEST_TIMEOUT_MS = 35_000;
+/**
+ * How long the app waits for a feed response. It is above the backend's
+ * 48 s session and 43 s page budgets, which include generating each batch's
+ * photos, so the app receives the server's own answer instead of aborting
+ * first.
+ */
+export const RECIPE_FEED_REQUEST_TIMEOUT_MS = 50_000;
 
 type RecipeFeedPageRequest = {
   sessionId: string;
   cursor: string;
   signal?: AbortSignal;
+  /** Steers the batch the page generates. */
+  steering?: RecipeFeedSteering;
 };
 
 export async function createRecipeFeedSession(
@@ -30,6 +39,7 @@ export async function fetchRecipeFeedPage({
   sessionId,
   cursor,
   signal,
+  steering,
 }: RecipeFeedPageRequest): Promise<RecipeFeedResponse> {
   return requestWithTimeout(signal, (requestSignal) =>
     apiFetch<RecipeFeedResponse>(
@@ -39,6 +49,7 @@ export async function fetchRecipeFeedPage({
         body: JSON.stringify({
           cursor,
           limit: RECIPE_FEED_PAGE_SIZE,
+          ...(steering && { steering }),
         }),
         signal: requestSignal,
       },
