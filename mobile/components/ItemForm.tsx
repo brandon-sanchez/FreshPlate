@@ -126,7 +126,8 @@ function recommendedStorages(cat: FoodCategory): StorageLocation[] {
  * household's foods under the name field, pre-fills a picked food from its last
  * lot, and limits the unit chips to the stock base of the food the name
  * matches, so the submitted amount always fits that food. Reads household
- * foods through {@link useHouseholdFoods}.
+ * foods through {@link useHouseholdFoods}, and the submit button shows
+ * "Loading…" and ignores presses until they load.
  */
 function ItemForm({
   categories,
@@ -163,7 +164,9 @@ function ItemForm({
   });
   const nameInput = useRef<TextInput>(null);
 
-  const { data: foods = [] } = useHouseholdFoods();
+  // The matched food sets the unit, so an add before the foods load could go
+  // in a unit the food isn't tracked in. Submit waits for them instead.
+  const { data: foods = [], isPending: foodsLoading } = useHouseholdFoods();
   const food = useMemo(() => findFood(foods, name), [foods, name]);
   const suggestions = useMemo(() => suggestFoods(foods, name), [foods, name]);
   const showSuggestions =
@@ -258,8 +261,9 @@ function ItemForm({
     setStorage(lot.storage_location);
   };
 
+  const holdSubmit = isSubmitting || foodsLoading;
+
   const handleSubmit = () => {
-    if (isSubmitting) return;
     if (!isValid || !resolved.ok) {
       setTouched({ name: true, amount: true, category: true });
       return;
@@ -440,17 +444,23 @@ function ItemForm({
         </Field>
 
         <Pressable
+          accessibilityRole="button"
+          disabled={holdSubmit}
           style={[
             styles.submit,
             {
               backgroundColor: colors.accent,
-              opacity: !isValid || isSubmitting ? 0.5 : 1,
+              opacity: !isValid || holdSubmit ? 0.5 : 1,
             },
           ]}
           onPress={handleSubmit}
         >
           <Text style={[styles.submitLabel, { color: colors.accentInk }]}>
-            {isSubmitting ? (submittingLabel ?? "Saving…") : submitLabel}
+            {isSubmitting
+              ? (submittingLabel ?? "Saving…")
+              : foodsLoading
+                ? "Loading…"
+                : submitLabel}
           </Text>
         </Pressable>
       </View>

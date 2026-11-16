@@ -17,8 +17,11 @@ const mockHorchata: KnownFood = {
   lastLot: null,
   status: { kind: "live" },
 };
+const mockFoodsQuery: { current: { data: KnownFood[] | undefined; isPending: boolean } } = {
+  current: { data: [mockHorchata], isPending: false },
+};
 jest.mock("@/hooks/useHouseholdFoods", () => ({
-  useHouseholdFoods: () => ({ data: [mockHorchata] }),
+  useHouseholdFoods: () => mockFoodsQuery.current,
 }));
 
 import ItemForm from "@/components/ItemForm";
@@ -57,19 +60,50 @@ function lot(id: string, overrides: Partial<InventoryItem> = {}): InventoryItem 
 
 const onSubmit = jest.fn();
 
-function renderForm(existingLots?: InventoryItem[]) {
-  render(
+function formFor(existingLots?: InventoryItem[]) {
+  return (
     <ItemForm
       categories={[dairy] as never}
       existingLots={existingLots}
       submitLabel="Add to inventory"
       onSubmit={onSubmit}
-    />,
+    />
   );
-  fireEvent.changeText(screen.getByPlaceholderText("What are you adding?"), "  horchata ");
 }
 
-beforeEach(() => onSubmit.mockReset());
+function renderForm(existingLots?: InventoryItem[]) {
+  const view = render(formFor(existingLots));
+  fireEvent.changeText(screen.getByPlaceholderText("What are you adding?"), "  horchata ");
+  return view;
+}
+
+beforeEach(() => {
+  onSubmit.mockReset();
+  mockFoodsQuery.current = { data: [mockHorchata], isPending: false };
+});
+
+it("holds the add until the household's foods load, so the unit comes from the food", () => {
+  mockFoodsQuery.current = { data: undefined, isPending: true };
+  const lots = [lot("lot-jug")];
+  const { rerender } = renderForm(lots);
+  fireEvent.press(screen.getByRole("button", { name: "500 ml · Fridge" }));
+
+  fireEvent.press(screen.getByText("Loading…"));
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Loading…" })).toBeDisabled();
+
+  mockFoodsQuery.current = { data: [mockHorchata], isPending: false };
+  rerender(formFor(lots));
+  fireEvent.changeText(screen.getByLabelText("Amount"), "250");
+  fireEvent.press(screen.getByText("Add to inventory"));
+
+  expect(onSubmit).toHaveBeenCalledWith(
+    expect.objectContaining({
+      amount: { stockBase: "ml", quantity: 250, package: null },
+      into_lot_id: "lot-jug",
+    }),
+  );
+});
 
 it("offers the typed food's opened batches as containers to add into", () => {
   renderForm([
