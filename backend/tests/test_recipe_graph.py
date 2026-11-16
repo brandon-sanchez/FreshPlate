@@ -564,7 +564,8 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
                         "main_component": "pasta",
                         "portion_reasoning": "substantial",
                         "unlisted_foods": [],
-                        "is_full_meal": True,
+                        "dish_reasoning": "a meal on its own",
+                        "is_requested_dish": True,
                         "realistic_portions": True,
                         "coherent_method": True,
                     }
@@ -601,7 +602,7 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
     assert provider.calls[4]["deadline"] is deadline
     assert retriever.calls[0]["deadline"] is deadline
     assert result["metadata"]["prompt_name"] == "generate_recipes"
-    assert result["metadata"]["prompt_version"] == 7
+    assert result["metadata"]["prompt_version"] == 8
     assert result["metadata"]["request_id"] == "request-123"
 
 
@@ -822,7 +823,8 @@ async def test_graph_accepts_a_recipe_measured_in_a_smaller_unit_than_stock() ->
                         "main_component": "rice",
                         "portion_reasoning": "substantial",
                         "unlisted_foods": [],
-                        "is_full_meal": True,
+                        "dish_reasoning": "a meal on its own",
+                        "is_requested_dish": True,
                         "realistic_portions": True,
                         "coherent_method": True,
                     }

@@ -89,7 +89,8 @@ async def run(mode: str, experiment: str) -> dict[str, float | int | str]:
                         "main_component": "Grounded offline fixture",
                         "portion_reasoning": "Deterministic offline fixture",
                         "unlisted_foods": [],
-                        "is_full_meal": not rejected,
+                        "dish_reasoning": "Deterministic offline fixture",
+                        "is_requested_dish": not rejected,
                         "realistic_portions": True,
                         "coherent_method": True,
                     }

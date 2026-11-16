@@ -9,23 +9,61 @@ same dish as an earlier one in the batch is dropped.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from typing import NamedTuple
 
+from app.ai.agents.dish import RequestedDish
 from app.ai.agents.models import Recipe
 from app.ai.agents.state import UsableItem
 
 # Category names come from the food_categories seed in
 # supabase/migrations/20260329180000_create_inventory_tables.sql.
 MAIN_COMPONENT_CATEGORIES = frozenset({"meat & seafood"})
-_NEVER_LEAD_CATEGORIES = frozenset({"condiments", "beverages", "snacks"})
-_FORMATS = (
-    "a skillet, sauté or stir-fry cooked on the stovetop",
-    "a pasta, rice, grain or noodle dish",
-    "a soup, stew, curry or braise",
-    "a roast, bake or sheet-pan dinner from the oven",
-    "a hearty salad, grain bowl, wrap or sandwich",
-    "a hash, frittata, fritter or savory pancake",
-)
+_NEVER_LEAD_ANY_DISH = frozenset({"condiments", "beverages"})
+
+
+class _DirectionStyle(NamedTuple):
+    """Which foods lead and which formats a kind of dish cycles through."""
+
+    lead_first: frozenset[str]
+    never_lead: frozenset[str]
+    formats: tuple[str, ...]
+
+
+_STYLES: Mapping[RequestedDish, _DirectionStyle] = {
+    "meal": _DirectionStyle(
+        lead_first=MAIN_COMPONENT_CATEGORIES,
+        never_lead=_NEVER_LEAD_ANY_DISH | {"snacks"},
+        formats=(
+            "a skillet, sauté or stir-fry cooked on the stovetop",
+            "a pasta, rice, grain or noodle dish",
+            "a soup, stew, curry or braise",
+            "a roast, bake or sheet-pan dinner from the oven",
+            "a hearty salad, grain bowl, wrap or sandwich",
+            "a hash, frittata, fritter or savory pancake",
+        ),
+    ),
+    "snack": _DirectionStyle(
+        lead_first=frozenset(),
+        never_lead=_NEVER_LEAD_ANY_DISH,
+        formats=(
+            "a dip or spread with something to scoop it",
+            "a no-cook bite or plate, such as fruit with nut butter",
+            "a toast, cracker or small sandwich",
+            "a quick warm bite from the stovetop or oven",
+        ),
+    ),
+    "dessert": _DirectionStyle(
+        lead_first=frozenset(),
+        never_lead=_NEVER_LEAD_ANY_DISH | MAIN_COMPONENT_CATEGORIES,
+        formats=(
+            "a baked dessert, such as a crumble, cake or cookies",
+            "a no-bake dessert, such as a parfait, pudding or mousse",
+            "a warm fruit dessert with a topping, such as a crisp or cobbler",
+            "a chilled or frozen treat",
+        ),
+    ),
+}
 _TITLE_LINKING_WORDS = frozenset(
     {"a", "an", "and", "the", "with", "over", "on", "in", "of", "for", "plus"}
 )
@@ -34,14 +72,21 @@ _SAME_DISH_WORD_OVERLAP = 0.75
 
 
 def recipe_directions(
-    usable_items: Sequence[UsableItem], count: int, *, offset: int = 0
+    usable_items: Sequence[UsableItem],
+    count: int,
+    *,
+    offset: int = 0,
+    dish: RequestedDish = "meal",
 ) -> list[str]:
     """Return one prompt direction per call, each with its own lead and format.
 
-    Leads are taken in this order: meat and seafood, then the other foods,
-    each group in the inventory's order, which puts expiring foods first.
-    Condiments, drinks and snacks never lead unless the kitchen has nothing
-    else. Leads and formats repeat only when ``count`` is larger than the
+    Each kind of dish has its own formats and lead rules. For a meal, meat
+    and seafood lead first, then the other foods, and condiments, drinks
+    and snacks never lead. For a snack, any food except condiments and
+    drinks can lead. For a dessert, any food except meat, seafood,
+    condiments and drinks can lead. Leads keep the inventory's order, which
+    puts expiring foods first, and every food can lead in a kitchen with no
+    other lead. Leads and formats repeat only when ``count`` is larger than the
     kitchen's leads or the formats. Each direction lets the model change the
     format, then the lead, because a lead such as garlic can't carry every
     format.
@@ -51,8 +96,11 @@ def recipe_directions(
         count: How many directions to return. Zero returns an empty list.
         offset: How many directions to skip in the lead and format cycles,
             so a later batch from the same kitchen starts elsewhere.
+        dish: The kind of dish the session asks for.
     """
-    leads = _lead_names(usable_items)
+    style = _STYLES[dish]
+    leads = _lead_names(usable_items, style)
+    formats = style.formats
     return [
         "\n".join(
             (
@@ -60,8 +108,8 @@ def recipe_directions(
                 "options at the same time, each with a different direction):",
                 f"- Lead ingredient: {leads[position % len(leads)]}. Make it the "
                 "star of the dish.",
-                f"- Format: {_FORMATS[position % len(_FORMATS)]}.",
-                "If the kitchen can't make this direction into a real meal, "
+                f"- Format: {formats[position % len(formats)]}.",
+                f"If the kitchen can't make this direction into a real {dish}, "
                 "change the format first, then the lead.",
             )
         )
@@ -89,16 +137,18 @@ def drop_near_duplicate_titles(recipes: Sequence[Recipe]) -> list[Recipe]:
     return kept
 
 
-def _lead_names(usable_items: Sequence[UsableItem]) -> list[str]:
-    mains: list[str] = []
+def _lead_names(
+    usable_items: Sequence[UsableItem], style: _DirectionStyle
+) -> list[str]:
+    first: list[str] = []
     others: list[str] = []
     for item in usable_items:
         category = str(item["food"].get("category") or "").strip().casefold()
-        if category in MAIN_COMPONENT_CATEGORIES:
-            mains.append(item["name"])
-        elif category not in _NEVER_LEAD_CATEGORIES:
+        if category in style.lead_first:
+            first.append(item["name"])
+        elif category not in style.never_lead:
             others.append(item["name"])
-    return mains + others or [item["name"] for item in usable_items]
+    return first + others or [item["name"] for item in usable_items]
 
 
 def _title_words(title: str) -> frozenset[str]:

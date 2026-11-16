@@ -13,6 +13,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import TypeAdapter, ValidationError
 
+from app.ai.agents.dish import RequestedDish, requested_dish
 from app.ai.agents.diversity import (
     MAIN_COMPONENT_CATEGORIES,
     drop_near_duplicate_titles,
@@ -255,7 +256,8 @@ async def generate_recipes(
         return {"generated_recipes": [], "retry_count": retry_count}
 
     labels = FoodLabels(item["id"] for item in usable_items)
-    shared_prompt = _generation_prompt(state, usable_items, labels)
+    dish = requested_dish(state.get("preferences", {}))
+    shared_prompt = _generation_prompt(state, usable_items, labels, dish)
     response_model = recipe_batch_model(
         1, {item["id"]: item["units"] for item in usable_items}
     )
@@ -274,6 +276,7 @@ async def generate_recipes(
                 usable_items,
                 batch_ceiling,
                 offset=_shown_title_count(state),
+                dish=dish,
             )
         ),
         return_exceptions=True,
@@ -463,6 +466,7 @@ def _generation_prompt(
     state: Mapping[str, Any],
     usable_items: Sequence[UsableItem],
     labels: FoodLabels,
+    dish: RequestedDish,
 ) -> str:
     """Build the user prompt every call in a batch shares.
 
@@ -470,13 +474,14 @@ def _generation_prompt(
     can cache it with the system instruction. Each call's direction goes
     after it.
     """
+    asked = "" if dish == "meal" else f"The cook asked for a {dish}. "
     lines = [
         (
-            "Suggest one meal this kitchen can make. It is one of several "
-            "options the cook chooses between, so it may use the full listed "
-            "inventory, including the same main ingredient as another option. "
-            "If the kitchen cannot make a real meal, return an empty list. "
-            f"{WATER_RULE}"
+            f"{asked}Suggest one {dish} this kitchen can make. It is one of "
+            "several options the cook chooses between, so it may use the full "
+            "listed inventory, including the same main ingredient as another "
+            f"option. If the kitchen cannot make a real {dish}, return an empty "
+            f"list. {WATER_RULE}"
         ),
         "",
         (
@@ -524,9 +529,8 @@ def _generation_prompt(
     if not rendered_retrieval:
         lines.append("- None")
 
-    preferences = state.get("preferences", {})
     lines.extend(("", "Session preferences:"))
-    lines.append(_json_value(preferences))
+    lines.append(_json_value(state.get("preferences", {})))
 
     exclude_titles = state.get("exclude_titles", [])
     if isinstance(exclude_titles, Sequence) and not isinstance(

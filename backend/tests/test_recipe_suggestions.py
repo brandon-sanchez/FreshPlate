@@ -91,7 +91,8 @@ def _eligible(index: int = 0) -> dict[str, Any]:
         "main_component": "pasta",
         "portion_reasoning": "complete meal",
         "unlisted_foods": [],
-        "is_full_meal": True,
+        "dish_reasoning": "a meal on its own",
+        "is_requested_dish": True,
         "realistic_portions": True,
         "coherent_method": True,
     }
