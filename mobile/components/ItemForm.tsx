@@ -12,6 +12,7 @@ import FontAwesome from "@expo/vector-icons/FontAwesome";
 import Field from "@/components/Field";
 import SegmentedControl from "@/components/SegmentedControl";
 import { useTheme } from "@/hooks/useTheme";
+import { dateInDays } from "@/lib/expiry";
 import {
   FoodCategory,
   shelfLifeFor,
@@ -180,15 +181,7 @@ function ItemForm({
       setTouched({ name: true, quantity: true, category: true });
       return;
     }
-    /* Local-calendar math, not UTC slicing: `.toISOString().slice(0,10)` shifts
-     * to UTC and rounds to next-day for evening adds in negative-UTC zones. */
-    const now = new Date();
-    const target = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate() + expDays,
-    );
-    const expirationDate = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;
+    const expirationDate = dateInDays(expDays);
     onSubmit({
       name: trimmedName,
       category_id: categoryId,

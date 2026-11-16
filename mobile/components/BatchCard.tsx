@@ -3,6 +3,7 @@ import { useTheme } from "@/hooks/useTheme";
 import UrgencyBar from "@/components/UrgencyBar";
 import type { DrawnLot } from "@/lib/foodRows";
 import { formatAmount } from "@/lib/amount";
+import { expiryLabel } from "@/lib/expiry";
 
 type BatchCardProps = {
   /** The batch to show, with its expiry and its place in draw order. */
@@ -21,7 +22,7 @@ function BatchCard({ batch, onPress }: BatchCardProps) {
   const amount = formatAmount(lot.quantity, lot.unit, lot.is_estimate);
   const meta = [capitalize(lot.storage_location)];
   if (lot.opened_at !== null) meta.push("Opened");
-  const expiry = expiryText(days);
+  const expiry = expiryLabel(days);
   const expiryColor =
     days === null
       ? colors.textSubtle
@@ -118,14 +119,6 @@ function Pill({
       </Text>
     </View>
   );
-}
-
-function expiryText(days: number | null): string {
-  if (days === null) return "No expiry date";
-  if (days < 0) return `Expired ${Math.abs(days)} day${days === -1 ? "" : "s"} ago`;
-  if (days === 0) return "Expires today";
-  if (days === 1) return "Expires tomorrow";
-  return `Expires in ${days} days`;
 }
 
 function capitalize(s: string): string {
