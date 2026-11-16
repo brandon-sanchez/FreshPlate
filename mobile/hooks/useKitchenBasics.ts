@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { PostgrestError } from "@supabase/supabase-js";
-import Toast from "react-native-toast-message";
+import Toast, { type ToastShowParams } from "@/lib/toast";
 import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/stores/auth";
 
@@ -20,7 +20,7 @@ const RETRY_HINT = "Check your connection and try again.";
 
 const POSTGRES_UNIQUE_VIOLATION = "23505";
 
-function addErrorToast(error: PostgrestError, name: string) {
+function addErrorToast(error: PostgrestError, name: string): ToastShowParams {
   if (error.code === POSTGRES_UNIQUE_VIOLATION) {
     return { type: "info", text1: `${name} is already a basic` };
   }
