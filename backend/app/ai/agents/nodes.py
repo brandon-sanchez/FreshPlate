@@ -30,7 +30,9 @@ from app.ai.agents.state import (
     GenerationResult,
     InventoryAnalysis,
     QualityResult,
+    RecipeSteering,
     RetrievalResult,
+    SteeringExample,
     UsableItem,
 )
 from app.ai.llm.errors import ProviderError
@@ -397,12 +399,17 @@ def route_after_quality(
     *,
     quality_retry_limit: int = MAX_QUALITY_RETRIES,
     retry_only_when_no_valid: bool = False,
+    deadline: PipelineDeadline | None = None,
 ) -> Literal["retry", "finish"]:
-    """Retry only when generated recipes were rejected, within the retry budget."""
+    """Retry only when generated recipes were rejected, within the retry budget.
+
+    A retry also needs ``QUALITY_RETRY_MIN_BUDGET_SECONDS`` left on
+    ``deadline``, which defaults to the state's deadline.
+    """
     if retry_only_when_no_valid and state.get("valid_recipes"):
         return "finish"
     if state.get("quality_feedback") and _retry_count(state) < quality_retry_limit:
-        deadline = _state_deadline(state)
+        deadline = deadline or _state_deadline(state)
         if (
             deadline is not None
             and deadline.remaining_seconds < QUALITY_RETRY_MIN_BUDGET_SECONDS
@@ -528,10 +535,42 @@ def _generation_prompt(
         lines.extend(("", "Do not repeat these shown titles:"))
         lines.append(", ".join(str(title) for title in exclude_titles) or "None")
 
+    lines.extend(_steering_lines(state.get("steering")))
     feedback = state.get("quality_feedback")
     if feedback:
         lines.extend(("", "Quality feedback from the previous attempt:", str(feedback)))
     return "\n".join(lines)
+
+
+def _steering_lines(steering: RecipeSteering | None) -> list[str]:
+    if not steering or not (steering["more_like"] or steering["less_like"]):
+        return []
+    lines = [
+        "",
+        (
+            "Steering from the cook. Two recipes are alike when they share at "
+            "least two foods and the shared foods are at least half of all the "
+            "foods the two use. Follow this steering before the direction "
+            "below: change its lead or format when they disagree."
+        ),
+    ]
+    if steering["more_like"]:
+        lines.append(
+            "The cook asked for more recipes like these. Make each recipe alike "
+            "to one of them, while still a different dish:"
+        )
+        lines.extend(_steering_example(example) for example in steering["more_like"])
+    if steering["less_like"]:
+        lines.append(
+            "The cook asked for fewer recipes like these. Do not write a recipe "
+            "alike to any of them:"
+        )
+        lines.extend(_steering_example(example) for example in steering["less_like"])
+    return lines
+
+
+def _steering_example(example: SteeringExample) -> str:
+    return f"- {example['title']} (uses {', '.join(example['foods'])})"
 
 
 def _inventory_line(item: UsableItem, label: str) -> str:

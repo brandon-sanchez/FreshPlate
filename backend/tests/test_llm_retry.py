@@ -40,8 +40,7 @@ def test_an_earlier_deadline_ends_before_and_runs_on_the_same_clock() -> None:
 
     assert earlier.remaining_seconds == 10.0
     assert deadline.remaining_seconds == 21.0
-    with pytest.raises(ValueError):
-        deadline.ending_before(21.0)
+    assert deadline.ending_before(21.0).expired
 
 
 @pytest.mark.asyncio

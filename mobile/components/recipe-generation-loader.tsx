@@ -7,6 +7,7 @@ const GENERATION_STEPS = [
   "Starting with what's in your kitchen",
   "Finding a few ideas for you",
   "Giving your recipes a final look",
+  "Plating each dish for its photo",
 ];
 const GENERATION_STEP_INTERVAL_MS = 6500;
 
