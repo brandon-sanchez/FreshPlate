@@ -1247,6 +1247,46 @@ def test_steered_refill_asks_for_more_and_fewer_recipes_like_the_chosen_cards(
     assert all("Steering from the cook" in prompt for prompt in refill_calls)
 
 
+def test_steering_examples_leave_out_kitchen_basics(
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    patch_jwks([signing_key])
+    salted = _recipe("Salted Spinach", _SALT, basics=KitchenBasics(["Salt"]))
+    provider = PromptRecordingProvider(
+        [
+            *batch_responses(salted),
+            _assessment(1),
+            *batch_responses(_recipe("Spinach Pie")),
+            _assessment(1),
+        ]
+    )
+    app = create_app()
+    _install_dependencies(
+        app, provider, StubRetriever(), InMemoryRecipeFeedStore(), basics=["Salt"]
+    )
+
+    with TestClient(app) as client:
+        data = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        ).json()["data"]
+        page = client.post(
+            f"/api/recipes/sessions/{data['session_id']}/pages",
+            headers=_auth_headers(signing_key),
+            json={
+                "cursor": data["next_cursor"],
+                "limit": 5,
+                "steering": {"more_like": [data["recipes"][0]["recipe_id"]]},
+            },
+        )
+
+    assert page.status_code == 200
+    steering = _refill_prompt(provider).split("Steering from the cook")[1]
+    assert "- Salted Spinach (uses Baby Spinach)\n" in steering
+
+
 def test_unsteered_refill_prompt_has_no_steering(
     signing_key: SigningKey,
     patch_jwks,
