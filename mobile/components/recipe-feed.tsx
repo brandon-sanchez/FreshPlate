@@ -17,6 +17,7 @@ import FontAwesome from "@expo/vector-icons/FontAwesome";
 import RecipeCarousel from "@/components/recipe-carousel";
 import RecipeActionButton from "@/components/recipe-action-button";
 import RecipeIngredientsSheet from "@/components/recipe-ingredients-sheet";
+import RecipePhoto from "@/components/recipe-photo";
 import { RecipeActivity, RecipePressable } from "@/components/recipe-motion";
 import {
   RecipeContextBar,
@@ -147,6 +148,16 @@ export default function RecipeFeed({
   ).current;
   const reportActiveRecipe = useCallback(
     (index: number) => {
+      // The carousel mounts four cards on each side of the active one, so
+      // only the active card and the next count as seen. A seen card may
+      // start a paid photo generation.
+      setRevealedIds((previous) => {
+        const next = new Set(previous);
+        for (const recipe of recipesRef.current.slice(index, index + 2)) {
+          next.add(recipe.recipe_id);
+        }
+        return next.size === previous.size ? previous : next;
+      });
       const recipeIndex = Math.min(index, recipes.length - 1);
       lastVisibleIndexRef.current = recipeIndex;
       onNearEnd(recipeIndex);
@@ -167,6 +178,7 @@ export default function RecipeFeed({
     ({ item }: { item: RecipeSuggestion; index: number }) => (
       <RecipeCard
         recipe={item}
+        photoEnabled={revealedIds.has(item.recipe_id)}
         stride={stride}
         cardHeight={cardHeight}
         cardWidth={width - 48}
@@ -320,8 +332,9 @@ export default function RecipeFeed({
   );
 }
 
-  const RecipeCard = memo(function RecipeCard({
+const RecipeCard = memo(function RecipeCard({
   recipe,
+  photoEnabled,
   stride,
   cardHeight,
   cardWidth,
@@ -338,6 +351,7 @@ export default function RecipeFeed({
   isSavePending,
 }: {
   recipe: RecipeSuggestion;
+  photoEnabled: boolean;
   stride: number;
   cardHeight: number;
   cardWidth: number;
@@ -520,30 +534,50 @@ export default function RecipeFeed({
                   accessibilityLabel={`Preview ${recipe.title}`}
                   testID={`recipe-card-preview-${recipe.recipe_id}`}
                   onPress={() => onIngredients(recipe)}
-                  style={[StyleSheet.absoluteFillObject, { alignItems: "center", justifyContent: "center" }]}
+                  style={StyleSheet.absoluteFill}
                 >
-                <Feather
-                  name="image"
-                  size={34}
-                  color={colors.accent}
-                  style={{ opacity: 0.3 }}
-                />
-                <View style={styles.imageCaption}>
-                  <Feather name="zap" size={13} color={colors.accent} />
+                  <RecipePhoto
+                    recipeId={recipe.recipe_id}
+                    title={recipe.title}
+                    variant="card"
+                    enabled={photoEnabled}
+                    style={StyleSheet.absoluteFill}
+                  />
+                </RecipePressable>
+                <RecipePressable
+                  onPress={() => onToggleSave(recipe, saved)}
+                  disabled={isSavePending}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    saved
+                      ? "Remove " + recipe.title + " from saved recipes"
+                      : "Save " + recipe.title + " to household cookbook"
+                  }
+                  testID={"recipe-card-save-" + recipe.recipe_id}
+                  style={[styles.saveButton, { backgroundColor: colors.surface }]}
+                >
+                  {saved ? (
+                    <FontAwesome
+                      name="bookmark"
+                      size={19}
+                      color={colors.accent}
+                    />
+                  ) : (
+                    <Feather
+                      name="bookmark"
+                      size={19}
+                      color={colors.textMuted}
+                    />
+                  )}
                   <Text
                     style={{
-                      color: colors.accent,
+                      color: saved ? colors.accent : colors.textMuted,
                       fontFamily: fonts.bodyStrong,
                       fontSize: 12,
                     }}
                   >
-                    Generated
+                    {saved ? "Saved" : "Save"}
                   </Text>
-                </View>
-                </RecipePressable>
-                <RecipePressable onPress={() => onToggleSave(recipe, saved)} disabled={isSavePending} accessibilityRole="button" accessibilityLabel={saved ? "Remove " + recipe.title + " from saved recipes" : "Save " + recipe.title + " to household cookbook"} testID={"recipe-card-save-" + recipe.recipe_id} style={[styles.saveButton, { backgroundColor: colors.surface }]}>
-                  {saved ? <FontAwesome name="bookmark" size={19} color={colors.accent} /> : <Feather name="bookmark" size={19} color={colors.textMuted} />}
-                  <Text style={{ color: saved ? colors.accent : colors.textMuted, fontFamily: fonts.bodyStrong, fontSize: 12 }}>{saved ? "Saved" : "Save"}</Text>
                 </RecipePressable>
               </View>
               <View
@@ -565,19 +599,6 @@ export default function RecipeFeed({
                   {recipe.title}
                 </Text>
                 <View style={styles.facts}>
-                  <Feather name="clock" size={14} color={colors.textMuted} />
-                  <Text
-                    style={{
-                      color: colors.textMuted,
-                      fontFamily: fonts.body,
-                      fontSize: 13,
-                    }}
-                  >
-                    {recipe.cook_time_minutes} min
-                  </Text>
-                  <Text style={{ color: colors.textSubtle, fontSize: 13 }}>
-                    ·
-                  </Text>
                   <Text
                     style={{
                       color: colors.textMuted,
@@ -587,15 +608,18 @@ export default function RecipeFeed({
                   >
                     {recipe.servings} servings
                   </Text>
+                  <Text style={{ color: colors.textSubtle, fontSize: 13 }}>
+                    ·
+                  </Text>
+                  <Feather name="clock" size={14} color={colors.textMuted} />
                   <Text
                     style={{
-                      marginLeft: "auto",
-                      color: colors.accent,
-                      fontFamily: fonts.bodyStrong,
-                      fontSize: 12,
+                      color: colors.textMuted,
+                      fontFamily: fonts.body,
+                      fontSize: 13,
                     }}
                   >
-                    {recipe.match_percent}% match
+                    {recipe.cook_time_minutes} min
                   </Text>
                 </View>
                 <View style={{ gap: 5, flex: 1 }}>
@@ -885,15 +909,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     boxShadow: "0 4px 24px rgba(27,31,28,0.07)",
   },
-  artwork: { height: 164, alignItems: "center", justifyContent: "center" },
-  imageCaption: {
-    position: "absolute",
-    bottom: 14,
-    left: 20,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-  },
+  artwork: { height: 164 },
   cardContent: { flex: 1, padding: 20, gap: 12 },
   facts: {
     flexDirection: "row",

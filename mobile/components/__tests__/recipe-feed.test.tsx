@@ -12,7 +12,14 @@ import {
   fireGestureHandler,
   getByGestureTestId,
 } from "react-native-gesture-handler/jest-utils";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { RecipeSuggestion } from "@/types/recipes";
+
+const mockFetchRecipeImage = jest.fn();
+jest.mock("@/lib/supabase", () => ({ supabase: {} }));
+jest.mock("@/lib/image-api", () => ({
+  fetchRecipeImage: (...args: unknown[]) => mockFetchRecipeImage(...args),
+}));
 
 const mockReducedMotion = jest.fn(() => false);
 jest.mock("@/hooks/useReducedMotion", () => ({
@@ -32,16 +39,21 @@ jest.mock("@expo/vector-icons/FontAwesome", () => {
 import RecipeFeed from "@/components/recipe-feed";
 
 function render(ui: React.ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  });
   return renderNative(ui, {
     wrapper: ({ children }) => (
-      <SafeAreaProvider
-        initialMetrics={{
-          frame: { x: 0, y: 0, width: 390, height: 844 },
-          insets: { top: 44, right: 0, bottom: 34, left: 0 },
-        }}
-      >
-        {children}
-      </SafeAreaProvider>
+      <QueryClientProvider client={client}>
+        <SafeAreaProvider
+          initialMetrics={{
+            frame: { x: 0, y: 0, width: 390, height: 844 },
+            insets: { top: 44, right: 0, bottom: 34, left: 0 },
+          }}
+        >
+          {children}
+        </SafeAreaProvider>
+      </QueryClientProvider>
     ),
   });
 }
@@ -90,6 +102,8 @@ describe("RecipeFeed", () => {
       screen: { width: 390, height: 844, scale: 3, fontScale: 1 },
     });
     mockReducedMotion.mockReturnValue(false);
+    mockFetchRecipeImage.mockReset();
+    mockFetchRecipeImage.mockReturnValue(new Promise(() => {}));
   });
 
   afterEach(() => {
@@ -193,16 +207,61 @@ describe("RecipeFeed", () => {
     expect(getByText("Spinach Pasta")).toBeTruthy();
     expect(queryByText("That's all for now")).toBeNull();
   });
-  it("renders the generated card contract", () => {
-    const { getByText } = render(
+  it("renders the card contract", () => {
+    const { getAllByText, getByText } = render(
       <RecipeFeed {...defaultProps} recipes={[baseRecipe]} />,
     );
 
-    expect(getByText("Generated")).toBeTruthy();
     expect(getByText("Spinach Pasta")).toBeTruthy();
-    expect(getByText("24 min")).toBeTruthy();
-    expect(getByText("92% match")).toBeTruthy();
+    expect(
+      getAllByText(/^(2 servings|24 min)$/).map((node) =>
+        [node.props.children].flat().join(""),
+      ),
+    ).toEqual(["2 servings", "24 min"]);
     expect(getByText("Uses up Baby Spinach")).toBeTruthy();
+  });
+
+  it("shows the recipe photo on the card and reuses it in the preview", async () => {
+    jest.useRealTimers();
+    mockFetchRecipeImage.mockResolvedValue({
+      status: "ready",
+      image_key: "recipe:spinach",
+      url: "https://storage.test/spinach.webp?token=1",
+      expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+      reason: null,
+    });
+    const screen = render(
+      <RecipeFeed {...defaultProps} recipes={[baseRecipe]} />,
+    );
+    fireEvent(screen.getByTestId("recipe-feed-viewport"), "layout", {
+      nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 650 } },
+    });
+    expect(
+      await screen.findAllByLabelText("Photo of Spinach Pasta"),
+    ).toHaveLength(1);
+    fireEvent.press(screen.getByTestId("recipe-card-ingredients-recipe-1"));
+    expect(screen.getAllByLabelText("Photo of Spinach Pasta")).toHaveLength(2);
+    expect(mockFetchRecipeImage).toHaveBeenCalledTimes(1);
+  });
+
+  it("requests photos only for the active card and its neighbor", async () => {
+    const screen = render(
+      <RecipeFeed
+        {...defaultProps}
+        recipes={Array.from({ length: 5 }, (_, index) => ({
+          ...baseRecipe,
+          recipe_id: `recipe-${index + 1}`,
+        }))}
+      />,
+    );
+    fireEvent(screen.getByTestId("recipe-feed-viewport"), "layout", {
+      nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 650 } },
+    });
+    await act(async () => {});
+    expect(mockFetchRecipeImage.mock.calls.map(([id]) => id).sort()).toEqual([
+      "recipe-1",
+      "recipe-2",
+    ]);
   });
 
   it("keeps all recipes in the virtualized carousel", () => {

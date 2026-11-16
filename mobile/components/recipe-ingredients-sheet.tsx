@@ -2,12 +2,12 @@ import { Modal, PanResponder, ScrollView, Text, View } from "react-native";
 import { useRef } from "react";
 import Feather from "@expo/vector-icons/Feather";
 import Ionicons from "@expo/vector-icons/Ionicons";
-import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RecipePressable } from "@/components/recipe-motion";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
 import type { RecipeSuggestion } from "@/types/recipes";
+import RecipePhoto from "@/components/recipe-photo";
 import RecipeSteps from "@/components/recipe-steps";
 
 type RecipeIngredientsSheetProps = {
@@ -154,18 +154,14 @@ export default function RecipeIngredientsSheet({
             contentContainerStyle={{ paddingHorizontal: 24 }}
           >
             <View style={{ gap: 12, paddingBottom: 20 }}>
-              <View
-                testID="recipe-preview-artwork"
-                style={{
-                  height: 132,
-                  borderRadius: 18,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  backgroundColor: colors.accentSoft,
-                }}
-              >
-                <FontAwesome name="cutlery" size={48} color={colors.accent} />
-              </View>
+              {recipe && (
+                <RecipePhoto
+                  recipeId={recipe.recipe_id}
+                  title={recipe.title}
+                  variant="sheet"
+                  style={{ height: 180, borderRadius: 18 }}
+                />
+              )}
               <Text
                 selectable
                 style={{
@@ -184,7 +180,7 @@ export default function RecipeIngredientsSheet({
                   fontSize: 13,
                 }}
               >
-                {recipe?.cook_time_minutes} min · {recipe?.servings} servings
+                {recipe?.servings} servings · {recipe?.cook_time_minutes} min
               </Text>
             </View>
             {recipe?.ingredients.map((ingredient, index) => (

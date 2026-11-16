@@ -1,10 +1,12 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
+  FlatList,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
   StyleSheet,
+  type ViewToken,
   Text,
   View,
 } from "react-native";
@@ -17,7 +19,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@/hooks/useTheme";
 import { useInventoryItems } from "@/hooks/useInventoryItems";
 import { useRecipeFeed } from "@/hooks/useRecipeFeed";
-import { useSavedRecipes } from "@/hooks/useSavedRecipes";
+import { useSavedRecipes, type SavedRecipe } from "@/hooks/useSavedRecipes";
 import { useActiveCook } from "@/hooks/useActiveCook";
 import { useAuthStore } from "@/stores/auth";
 import {
@@ -38,6 +40,7 @@ import { RecipePressable } from "@/components/recipe-motion";
 import RecipeIngredientsSheet from "@/components/recipe-ingredients-sheet";
 import { RecipeScreenHeader } from "@/components/recipe-screen-header";
 import RecipeDetail from "@/components/recipe-detail";
+import RecipePhoto from "@/components/recipe-photo";
 
 export default function RecipesScreen() {
   const { colors, fonts } = useTheme();
@@ -424,13 +427,13 @@ const styles = StyleSheet.create({
   tabText: { fontSize: 13 },
 });
 
-function SavedRecipeRow({ recipe, onRemove, disabled, onOpen }: { recipe: RecipeSuggestion; onRemove: () => void; disabled: boolean; onOpen: () => void }) {
+function SavedRecipeRow({ recipe, photoEnabled, onRemove, disabled, onOpen }: { recipe: RecipeSuggestion; photoEnabled: boolean; onRemove: () => void; disabled: boolean; onOpen: () => void }) {
   const { colors, fonts } = useTheme();
   return <RecipePressable onPress={onOpen} accessibilityRole="button" accessibilityLabel={`Open ${recipe.title}`} style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 12, gap: 8, borderWidth: 1, borderColor: colors.border, flexDirection: "row" }}>
-    <View style={{ width: 110, height: 110, borderRadius: 12, backgroundColor: colors.accentSoft, alignItems: "center", justifyContent: "center" }}><Feather name="image" size={28} color={colors.accent} style={{ opacity: 0.35 }} /></View>
+    <RecipePhoto recipeId={recipe.recipe_id} title={recipe.title} variant="thumbnail" enabled={photoEnabled} style={{ width: 110, height: 110, borderRadius: 12 }} />
     <View style={{ flex: 1, gap: 8 }}>
-    <View style={{ flexDirection: "row", alignItems: "center" }}><Text style={{ flex: 1, color: colors.text, fontFamily: fonts.display, fontSize: 20 }}>{recipe.title}</Text><RecipePressable onPress={onRemove} disabled={disabled} accessibilityRole="button" accessibilityLabel={`Remove ${recipe.title} from saved recipes`} style={{ minHeight: 44, minWidth: 44, alignItems: "center", justifyContent: "center" }}><Feather name="bookmark" size={20} color={colors.accent} fill={colors.accent} /></RecipePressable></View>
-    <Text style={{ color: colors.textMuted, fontFamily: fonts.body, fontSize: 13 }}>{recipe.cook_time_minutes} min · {recipe.servings} servings · {recipe.match_percent}% match</Text>
+    <View style={{ flexDirection: "row", alignItems: "center" }}><Text style={{ flex: 1, color: colors.text, fontFamily: fonts.display, fontSize: 20 }}>{recipe.title}</Text><RecipePressable onPress={onRemove} disabled={disabled} accessibilityRole="button" accessibilityLabel={`Remove ${recipe.title} from saved recipes`} style={{ minHeight: 44, minWidth: 44, alignItems: "center", justifyContent: "center" }}><FontAwesome name="bookmark" size={20} color={colors.accent} /></RecipePressable></View>
+    <Text style={{ color: colors.textMuted, fontFamily: fonts.body, fontSize: 13 }}>{recipe.servings} servings · {recipe.cook_time_minutes} min</Text>
     <Text style={{ color: colors.accent, fontFamily: fonts.bodyStrong, fontSize: 12 }}>Household cookbook</Text>
     </View>
   </RecipePressable>;
@@ -445,8 +448,19 @@ function RecipeTabs({ tab, onChange }: { tab: "for-you" | "saved"; onChange: (ta
 
 function SavedRecipesContent({ saved, onOpen }: { saved: ReturnType<typeof useSavedRecipes>; onOpen: (recipe: RecipeSuggestion) => void }) {
   const { colors } = useTheme();
+  // A saved recipe that is still in the user's feed may start a paid photo
+  // generation, so only rows that have been on screen request photos.
+  const [seenIds, setSeenIds] = useState(new Set<string>());
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 15 }).current;
+  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken<SavedRecipe>[] }) => {
+    setSeenIds((previous) => {
+      const next = new Set(previous);
+      for (const { item } of viewableItems) next.add(item.recipe_id);
+      return next.size === previous.size ? previous : next;
+    });
+  }).current;
   if (saved.isPending) return <LoadingState label="Loading your cookbook..." />;
   if (saved.isError) return <ErrorState onRetry={() => saved.refetch()} />;
   if (!saved.data?.length) return <EmptyState icon={<View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: colors.accentSoft, alignItems: "center", justifyContent: "center" }}><Feather name="bookmark" size={24} color={colors.accent} /></View>} title="Nothing saved yet" message="Tap the bookmark on any recipe to keep it in your household cookbook" />;
-  return <ScrollView contentContainerStyle={{ padding: 24, gap: 12 }} showsVerticalScrollIndicator={false}>{saved.data.map((entry) => <SavedRecipeRow key={entry.recipe_id} recipe={entry.recipe} disabled={saved.isToggling} onOpen={() => onOpen(entry.recipe)} onRemove={() => { void saved.toggle({ recipe: entry.recipe, saved: true }).catch(() => Toast.show({ type: "error", text1: "Couldn't update saved recipes", text2: "Check your connection and try again." })); }} />)}</ScrollView>;
+  return <FlatList testID="saved-recipes-list" data={saved.data} keyExtractor={(entry) => entry.recipe_id} extraData={seenIds} viewabilityConfig={viewabilityConfig} onViewableItemsChanged={onViewableItemsChanged} contentContainerStyle={{ padding: 24, gap: 12 }} showsVerticalScrollIndicator={false} renderItem={({ item: entry }) => <SavedRecipeRow recipe={entry.recipe} photoEnabled={seenIds.has(entry.recipe_id)} disabled={saved.isToggling} onOpen={() => onOpen(entry.recipe)} onRemove={() => { void saved.toggle({ recipe: entry.recipe, saved: true }).catch(() => Toast.show({ type: "error", text1: "Couldn't update saved recipes", text2: "Check your connection and try again." })); }} />} />;
 }
