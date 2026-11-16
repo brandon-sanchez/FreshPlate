@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from app.ai.agents.models import Recipe, RecipeIngredient
-from app.ai.images.openai import MAX_PROMPT_BYTES
+import re
+
+from app.ai.agents.models import Recipe
 
 _MAX_NAME_CHARS = 80
+_NON_WORD = re.compile(r"[\W_]+")
 
 _RECIPE_STYLE = (
     "Realistic food photograph of the finished dish described below, as served. "
     "Natural window light, true-to-life food texture, professional plating on a "
     "simple plate, three-quarter overhead angle, shallow depth of field. "
-    "Show only the listed ingredients in the amounts given. Do not add sides, "
+    "Show only the listed ingredients. Do not add sides, "
     "garnishes, sauces, drinks, utensils with food, or any ingredient that is not "
     "listed. No text, labels, logos, hands or people."
 )
@@ -24,21 +26,33 @@ _INGREDIENT_STYLE = (
 )
 
 
+def recipe_photo_subject(recipe: Recipe) -> tuple[str, list[str]]:
+    """Return what a recipe photo depicts: the dish title and its ingredients.
+
+    Both are normalized: case-folded, with punctuation, underscores and runs
+    of whitespace collapsed to single spaces. The ingredients are a sorted
+    set of names, so their order, duplicates, amounts and units drop out.
+    Steps are left out too. The photo cache key and the photo prompt are both
+    built from this one value, so every recipe that shares a cached photo
+    would have produced the same prompt.
+    """
+    title = _normalized(recipe.title)
+    ingredients = sorted({_normalized(item.name) for item in recipe.ingredients})
+    return title, ingredients
+
+
 def recipe_image_prompt(recipe: Recipe) -> str:
     """Return the photo prompt for a validated recipe.
 
-    The prompt names the title, every ingredient with its amount, and the
-    preparation steps, so the picture matches what the recipe makes. Steps are
-    dropped from the end when the prompt would exceed the provider's limit.
-    The title and ingredients are always kept.
+    The prompt names only the dish title and its set of ingredients, from
+    `recipe_photo_subject`. Amounts and steps are left out because one
+    photo serves every recipe with the same title and ingredients, in any
+    household.
     """
-    lines = [_RECIPE_STYLE, "", f"Dish: {_clip(recipe.title)}", "Ingredients:"]
-    lines += [f"- {_ingredient_line(item)}" for item in recipe.ingredients]
-    lines.append("Preparation:")
-    steps = [f"{index}. {step.strip()}" for index, step in enumerate(recipe.steps, 1)]
-    while steps and len("\n".join(lines + steps).encode()) > MAX_PROMPT_BYTES:
-        steps.pop()
-    return "\n".join(lines + steps)
+    title, ingredients = recipe_photo_subject(recipe)
+    lines = [_RECIPE_STYLE, "", f"Dish: {_clip(title)}", "Ingredients:"]
+    lines += [f"- {_clip(name)}" for name in ingredients]
+    return "\n".join(lines)
 
 
 def ingredient_image_prompt(name: str) -> str:
@@ -46,12 +60,8 @@ def ingredient_image_prompt(name: str) -> str:
     return _INGREDIENT_STYLE.format(name=_clip(name))
 
 
-def _ingredient_line(item: RecipeIngredient) -> str:
-    name = _clip(item.name)
-    if item.use_amount is None:
-        return name
-    amount = f"{item.use_amount:g}"
-    return f"{amount} {_clip(item.unit)} {name}"
+def _normalized(text: str) -> str:
+    return " ".join(_NON_WORD.sub(" ", text.casefold()).split())
 
 
 def _clip(text: str) -> str:

@@ -1,12 +1,12 @@
 """Serve generated recipe and ingredient images under a global monthly budget.
 
-Each image is generated at most once per cache key: a recipe's content or an
-ingredient's identity. A request first claims the key in the database ledger.
-The claim reserves spend under the cap before any provider call. The attempt
-then ends by settling the claim with the stored file or by releasing it.
-Requests never retry the provider themselves. A failed image is attempted
-again only by a later request, after the ledger's cooldown and within its
-attempt limit.
+Each image is generated at most once per cache key: a dish and its
+ingredients, or an ingredient's identity. A request first claims the key in
+the database ledger. The claim reserves spend under the cap before any
+provider call. The attempt then ends by settling the claim with the stored
+file or by releasing it. Requests never retry the provider themselves. A
+failed image is attempted again only by a later request, after the ledger's
+cooldown and within its attempt limit.
 """
 
 from __future__ import annotations
@@ -25,7 +25,11 @@ from pydantic import BaseModel
 
 from app.ai.agents.models import Recipe
 from app.ai.images.openai import MAX_PROMPT_BYTES
-from app.ai.images.prompts import ingredient_image_prompt, recipe_image_prompt
+from app.ai.images.prompts import (
+    ingredient_image_prompt,
+    recipe_image_prompt,
+    recipe_photo_subject,
+)
 from app.ai.llm.errors import ProviderError
 from app.core.config import Settings
 
@@ -213,7 +217,7 @@ class ImageResult(BaseModel):
             request generates it, or `unavailable` when the screen shows its
             placeholder.
         image_key: Stable identity of the image, the same for every view of
-            one recipe snapshot or ingredient. Suitable as a client cache key,
+            one dish or ingredient. Suitable as a client cache key,
             since `url` changes each time it is signed.
         url: Signed URL of the WebP image. Set only when ready.
         expires_at: When `url` stops working. Set only when ready.
@@ -263,19 +267,19 @@ class ImageService:
 
     @staticmethod
     def recipe_key(recipe: Recipe) -> str:
-        """Return the cache key of a recipe snapshot.
+        """Return the cache key of a recipe's photo.
 
-        It covers only what the picture shows (title, ingredients with
-        amounts, and steps), so a feed copy and a saved copy of one recipe
-        share an image.
+        The key is the dish title plus the set of ingredient names, as
+        `recipe_photo_subject` normalizes them. Ingredient order, duplicates,
+        amounts, units, steps, servings and cook time are left out, because
+        the photo prompt leaves them out too. Adding, removing or swapping an
+        ingredient, or renaming the dish, gives a new key. Names are used
+        rather than food ids, which belong to one household, so households
+        that get the same dish share its photo. The photo shows only food,
+        so sharing it reveals nothing about a household.
         """
-        content = {
-            "title": recipe.title,
-            "ingredients": [
-                [item.name, item.use_amount, item.unit] for item in recipe.ingredients
-            ],
-            "steps": recipe.steps,
-        }
+        title, ingredients = recipe_photo_subject(recipe)
+        content = {"title": title, "ingredients": ingredients}
         return _digest("recipe", json.dumps(content, sort_keys=True))
 
     @staticmethod
