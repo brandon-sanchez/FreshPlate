@@ -107,10 +107,11 @@ def disposable_database(migrations: tuple[str, ...]) -> Iterator[DB]:
           CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
           GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
           GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
-          CREATE TABLE public.households(id uuid primary key);
+          CREATE TABLE public.households(id uuid primary key, created_by uuid);
           CREATE TABLE public.household_members(
             household_id uuid references public.households(id) on delete cascade,
-            user_id uuid references auth.users(id)
+            user_id uuid references auth.users(id),
+            role text NOT NULL DEFAULT 'member'
           );
           INSERT INTO auth.users VALUES ({q(USER)}), ({q(OTHER)});
         """)
