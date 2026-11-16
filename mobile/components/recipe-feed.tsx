@@ -12,6 +12,7 @@ import RecipeCarousel from "@/components/recipe-carousel";
 import RecipeFeedMessage from "@/components/recipe-feed-message";
 import RecipeIngredientsSheet from "@/components/recipe-ingredients-sheet";
 import RecipeSweepExit from "@/components/recipe-sweep-exit";
+import { showUndoToast } from "@/components/toastConfig";
 import {
   RecipeContextBar,
   RecipeScreenHeader,
@@ -35,8 +36,13 @@ type RecipeFeedProps = {
   topInset: number;
   bottomInset: number;
   onAsk: () => void;
-  /** Removes the cards a sweep took out, once their exits finish. */
+  /**
+   * Removes cards from the feed: the cards a sweep took out once their exits
+   * finish, or a discarded card once it has left the screen.
+   */
   onDismiss: (recipeIds: readonly string[]) => void;
+  /** Puts dismissed cards back in their places; called by a discard's Undo. */
+  onRestore: (recipeIds: readonly string[]) => void;
   /**
    * Called by a card's "More like this" or "Less like this" button with that
    * card's recipe, before the sweep's cards leave.
@@ -71,7 +77,9 @@ const replacementTransition = LinearTransition.duration(360).easing(
 
 /**
  * The vertical feed of generated recipe cards with prefetch, dismiss, save and
- * cook actions. A right swipe on a card starts a cook through `onCook`.
+ * cook actions. A right swipe on a card starts a cook through `onCook`. A left
+ * swipe discards the card through `onDismiss` and shows an Undo toast that
+ * brings it back through `onRestore`.
  */
 export default function RecipeFeed({
   recipes,
@@ -85,6 +93,7 @@ export default function RecipeFeed({
   bottomInset,
   onAsk,
   onDismiss,
+  onRestore,
   onSteer,
   onNearEnd,
   onRetryMore,
@@ -180,6 +189,17 @@ export default function RecipeFeed({
     (recipe: RecipeSuggestion) => steer("less", recipe),
     [steer],
   );
+  const discard = useCallback(
+    (recipe: RecipeSuggestion) => {
+      onDismiss([recipe.recipe_id]);
+      showUndoToast({
+        text1: "Recipe discarded",
+        text2: recipe.title,
+        onUndo: () => onRestore([recipe.recipe_id]),
+      });
+    },
+    [onDismiss, onRestore],
+  );
   const moreLikeThis = useCallback(
     (recipe: RecipeSuggestion) => steer("more", recipe),
     [steer],
@@ -201,6 +221,7 @@ export default function RecipeFeed({
         onPreview={setPreviewRecipe}
         onMoreLikeThis={moreLikeThis}
         onCook={onCook}
+        onDiscard={discard}
         saved={savedIds.has(item.recipe_id)}
         onToggleSave={onToggleSave}
         isSavePending={isSavePending}
@@ -221,6 +242,7 @@ export default function RecipeFeed({
       savedIds,
       isSavePending,
       onCook,
+      discard,
     ],
   );
   const renderItem = useCallback(
