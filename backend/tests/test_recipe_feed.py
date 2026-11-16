@@ -11,8 +11,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.ai.llm.errors import ProviderError
 from app.ai.llm.providers import FakeProvider
 from app.ai.rag.vector_store import RetrievedRecipe
+from app.api.images import get_image_service
 from app.api.recipes import (
     get_food_line_source,
     get_recipe_feed_store,
@@ -20,8 +22,11 @@ from app.api.recipes import (
     get_recipe_retriever,
 )
 from app.main import create_app
+from app.services.image_service import ImageService
 from app.services.recipe_feed_store import RecipeFeedSession, RecipeFeedStoreError
 from tests.conftest import HOUSEHOLD_ID, FakeFoodLineSource, SigningKey
+from tests.image_fakes import POLICY, FakeStore
+from tests.image_fakes import FakeProvider as FakeImageProvider
 
 
 def _auth_headers(signing_key: SigningKey) -> dict[str, str]:
@@ -220,6 +225,7 @@ def _install_dependencies(
     app.dependency_overrides[get_recipe_provider] = lambda: provider
     app.dependency_overrides[get_recipe_retriever] = lambda: retriever
     app.dependency_overrides[get_recipe_feed_store] = lambda: store
+    _install_images(app, FakeStore())
 
 
 def test_initial_feed_page_uses_a_five_card_head_batch(
@@ -871,7 +877,9 @@ async def test_concurrent_refills_share_the_last_generation_run(
         [prompt for prompt in provider.prompts if prompt.startswith("Suggest up to")]
     ) == 2
     assert all(page.status_code == 200 for page in pages)
-    assert pages[0].json() == pages[1].json()
+    assert _without_photo_expiry(pages[0].json()) == _without_photo_expiry(
+        pages[1].json()
+    )
     assert store.sessions[session_id].generation_runs == 6
     assert (
         len(store.items[session_id]) == store.sessions[session_id].candidate_count == 2
@@ -917,3 +925,241 @@ def test_failed_refill_can_retry_without_refunding_its_run(signing_key, patch_jw
     assert retry.status_code == 200
     assert retry.json()["data"]["recipes"][0]["title"] == "Retry"
     assert store.sessions[session_id].generation_runs == 3
+
+
+def _without_photo_expiry(body: dict[str, Any]) -> dict[str, Any]:
+    for card in body["data"]["recipes"]:
+        card["image"].pop("expires_at")
+    return body
+
+
+def _forget_stored_photo(images: FakeStore, card: dict[str, Any]) -> None:
+    images.assets.pop(("recipe", card["image"]["image_key"]))
+
+
+def _install_images(app: FastAPI, store: FakeStore, provider: Any = None) -> None:
+    policy = POLICY.model_copy(
+        update={"monthly_cap_microusd": 10_000, "user_monthly_cap_microusd": 10_000}
+    )
+    images = ImageService(store, provider or FakeImageProvider(), policy)
+    app.dependency_overrides[get_image_service] = lambda: images
+
+
+def test_feed_cards_arrive_with_their_photos(signing_key, patch_jwks) -> None:
+    patch_jwks([signing_key])
+    provider = FakeProvider(
+        [
+            {"recipes": [_recipe("Recipe 1"), _recipe("Recipe 2")]},
+            _assessment(2),
+            {"recipes": [_recipe("Recipe 3")]},
+            _assessment(1),
+        ]
+    )
+    feed = InMemoryRecipeFeedStore()
+    images = FakeStore()
+    app = create_app()
+    _install_dependencies(app, provider, StubRetriever(), feed)
+    _install_images(app, images)
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        )
+        session_id = first.json()["data"]["session_id"]
+        refill = client.post(
+            f"/api/recipes/sessions/{session_id}/pages",
+            headers=_auth_headers(signing_key),
+            json={"cursor": "2", "limit": 5},
+        )
+
+    cards = first.json()["data"]["recipes"] + refill.json()["data"]["recipes"]
+    assert [card["title"] for card in cards] == ["Recipe 1", "Recipe 2", "Recipe 3"]
+    assert {card["image"]["status"] for card in cards} == {"ready"}
+    assert all(card["image"]["url"].startswith("https://cdn.test/") for card in cards)
+    assert len(images.files) == 3
+    stored = feed.items[UUID(session_id)]
+    assert all("image" not in recipe.model_dump() for recipe in stored)
+
+
+def test_a_failed_photo_never_fails_the_feed(signing_key, patch_jwks) -> None:
+    patch_jwks([signing_key])
+    provider = FakeProvider([{"recipes": [_recipe("Recipe 1")]}, _assessment(1)])
+    app = create_app()
+    _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
+    failing = FakeImageProvider(ProviderError("down", status_code=500))
+    _install_images(app, FakeStore(), failing)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        )
+
+    assert response.status_code == 200
+    [card] = response.json()["data"]["recipes"]
+    assert card["image"]["status"] == "unavailable"
+    assert card["image"]["reason"] == "failed"
+
+
+def test_stored_pages_reuse_cached_photos_and_never_generate(
+    signing_key, patch_jwks
+) -> None:
+    patch_jwks([signing_key])
+    provider = FakeProvider(
+        [{"recipes": [_recipe("Recipe 1"), _recipe("Recipe 2")]}, _assessment(2)]
+    )
+    images = FakeStore()
+    image_provider = FakeImageProvider()
+    app = create_app()
+    _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
+    _install_images(app, images, image_provider)
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        )
+        session_id = first.json()["data"]["session_id"]
+        _forget_stored_photo(images, first.json()["data"]["recipes"][0])
+        again = client.post(
+            f"/api/recipes/sessions/{session_id}/pages",
+            headers=_auth_headers(signing_key),
+            json={"cursor": "0", "limit": 2},
+        )
+
+    cards = again.json()["data"]["recipes"]
+    assert [card["image"] and card["image"]["status"] for card in cards] == [
+        None,
+        "ready",
+    ]
+    assert len(image_provider.prompts) == 2
+
+
+def _steering_session(
+    signing_key: SigningKey, refill: list[dict[str, Any]]
+) -> tuple[PromptRecordingProvider, FastAPI]:
+    titles = ["Spinach Frittata", "Spinach Soup", "Tomato Salad"]
+    provider = PromptRecordingProvider(
+        [
+            {"recipes": [_recipe(title) for title in titles]},
+            _assessment(3),
+            {"recipes": refill},
+            _assessment(len(refill)),
+        ]
+    )
+    app = create_app()
+    _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
+    return provider, app
+
+
+def _refill_prompt(provider: PromptRecordingProvider) -> str:
+    return [
+        prompt for prompt in provider.prompts if prompt.startswith("Suggest up to")
+    ][-1]
+
+
+def test_steered_refill_asks_for_more_and_fewer_recipes_like_the_chosen_cards(
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    patch_jwks([signing_key])
+    provider, app = _steering_session(signing_key, [_recipe("Spinach Pie")])
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        )
+        data = first.json()["data"]
+        ids = {card["title"]: card["recipe_id"] for card in data["recipes"]}
+        page = client.post(
+            f"/api/recipes/sessions/{data['session_id']}/pages",
+            headers=_auth_headers(signing_key),
+            json={
+                "cursor": "3",
+                "limit": 5,
+                "steering": {
+                    "more_like": [ids["Spinach Frittata"]],
+                    "less_like": [
+                        ids["Tomato Salad"],
+                        "00000000-0000-4000-8000-000000000000",
+                    ],
+                },
+            },
+        )
+
+    assert page.status_code == 200
+    assert [card["title"] for card in page.json()["data"]["recipes"]] == [
+        "Spinach Pie"
+    ]
+    steering = (
+        _refill_prompt(provider)
+        .split("Steering from the cook")[1]
+        .split("Maximum number of recipes")[0]
+    )
+    more, _, less = steering.partition("fewer recipes like these")
+    assert "- Spinach Frittata (uses Baby Spinach)" in more
+    assert "- Tomato Salad (uses Baby Spinach)" in less
+    assert "Spinach Soup" not in steering
+    assert "share at least two foods" in steering
+
+
+def test_unsteered_refill_prompt_has_no_steering(
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    patch_jwks([signing_key])
+    provider, app = _steering_session(signing_key, [_recipe("Spinach Pie")])
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        )
+        client.post(
+            f"/api/recipes/sessions/{first.json()['data']['session_id']}/pages",
+            headers=_auth_headers(signing_key),
+            json={"cursor": "3", "limit": 5},
+        )
+
+    assert "recipes like these" not in _refill_prompt(provider)
+
+
+def _uuid(n: int) -> str:
+    return f"00000000-0000-4000-8000-{n:012d}"
+
+
+@pytest.mark.parametrize(
+    "steering",
+    [
+        {"more_like": [_uuid(n) for n in range(4)]},
+        {"less_like": [_uuid(n) for n in range(11)]},
+        {"more_like": [], "less_like": [], "extra": []},
+        {"more_like": ["not-a-uuid"]},
+    ],
+)
+def test_page_request_rejects_malformed_steering(
+    signing_key: SigningKey,
+    patch_jwks,
+    steering: dict[str, Any],
+) -> None:
+    patch_jwks([signing_key])
+    app = create_app()
+    _install_dependencies(
+        app, FakeProvider([]), StubRetriever(), InMemoryRecipeFeedStore()
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/recipes/sessions/00000000-0000-4000-8000-000000000000/pages",
+            headers=_auth_headers(signing_key),
+            json={"cursor": "0", "limit": 5, "steering": steering},
+        )
+
+    assert response.status_code == 422

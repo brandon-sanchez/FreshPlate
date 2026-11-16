@@ -9,6 +9,7 @@ import pytest
 from PIL import Image
 
 from app.ai.llm.errors import ProviderError
+from app.ai.llm.retry import PipelineDeadline
 from app.core.config import Settings
 from app.services.image_service import FoodIdentity, ImagePolicy, ImageService
 from tests.image_fakes import POLICY, FakeProvider, FakeStore, png, recipe
@@ -39,14 +40,26 @@ async def test_first_request_generates_stores_webp_and_returns_a_signed_url():
     assert [kind for kind, _ in provider.prompts] == ["recipe"]
 
 
-async def test_recipe_prompt_lists_only_the_recipe_content():
+async def test_recipe_prompt_names_only_the_dish_and_its_ingredients():
     provider = FakeProvider()
     await service(provider=provider).recipe_image(recipe(), USER, generate=True)
     [(_, prompt)] = provider.prompts
-    assert "Tomato pasta" in prompt
-    assert "200 g spaghetti" in prompt and "3 each tomato" in prompt
-    assert "1. Boil the pasta." in prompt
+    assert "Dish: tomato pasta" in prompt
+    assert "- spaghetti\n- tomato" in prompt
+    assert "200" not in prompt and "Boil the pasta" not in prompt
     assert "Do not add sides, garnishes" in prompt
+
+
+async def test_recipes_sharing_a_photo_key_get_the_same_prompt():
+    first, second = FakeProvider(), FakeProvider()
+    await service(provider=first).recipe_image(recipe(), USER, generate=True)
+    reworded = recipe(
+        "  Tomato-PASTA ",
+        ingredients=_ingredients("Tomato", "spaghetti", amount=9),
+        steps=["Bake it instead."],
+    )
+    await service(provider=second).recipe_image(reworded, OTHER, generate=True)
+    assert first.prompts == second.prompts
 
 
 async def test_same_recipe_snapshot_reuses_the_image_without_charging():
@@ -60,13 +73,58 @@ async def test_same_recipe_snapshot_reuses_the_image_without_charging():
     assert len(provider.prompts) == 1 and store.spent == 60
 
 
-async def test_changed_recipe_content_gets_its_own_image():
-    images = service()
-    first = await images.recipe_image(recipe(), USER, generate=True)
-    second = await images.recipe_image(
-        recipe(steps=["Bake it instead."]), USER, generate=True
+def _ingredients(*names: str, amount: float = 1) -> list[dict]:
+    return [{"name": name, "use_amount": amount, "unit": "each"} for name in names]
+
+
+_BASE = {"title": "Tomato pasta", "ingredients": _ingredients("spaghetti", "tomato")}
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        {"title": "  tomato PASTA! "},
+        {"title": "Tomato-pasta"},
+        {"ingredients": _ingredients("Tomato", "Spaghetti")},
+        {"ingredients": _ingredients("spaghetti", "tomato", amount=7)},
+        {"ingredients": _ingredients("spaghetti", "tomato", "tomato")},
+        {"steps": ["Bake it instead.", "Serve."]},
+        {"servings": 6, "cook_time_minutes": 45},
+    ],
+)
+async def test_recipe_key_ignores_order_amounts_steps_and_title_formatting(variant):
+    assert ImageService.recipe_key(
+        recipe(**{**_BASE, **variant})
+    ) == ImageService.recipe_key(recipe(**_BASE))
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        {"ingredients": _ingredients("spaghetti", "tomato", "basil")},
+        {"ingredients": _ingredients("spaghetti", "zucchini")},
+        {"ingredients": _ingredients("spaghetti")},
+        {"title": "Tomato soup"},
+    ],
+)
+async def test_recipe_key_changes_with_the_ingredient_set_or_the_title(variant):
+    assert ImageService.recipe_key(
+        recipe(**{**_BASE, **variant})
+    ) != ImageService.recipe_key(recipe(**_BASE))
+
+
+async def test_recipes_from_different_households_share_a_photo():
+    store, provider = FakeStore(), FakeProvider()
+    images = service(store, provider)
+    line = {"name": "tomato", "use_amount": 2, "unit": "each"}
+    mine = recipe(ingredients=[{**line, "inventory_item_id": "food-a"}])
+    theirs = recipe(
+        ingredients=[{**line, "name": "Tomato", "inventory_item_id": "food-b"}]
     )
-    assert first.image_key != second.image_key
+    first = await images.recipe_image(mine, USER, generate=True)
+    second = await images.recipe_image(theirs, OTHER, generate=True)
+    assert second.status == "ready" and second.image_key == first.image_key
+    assert len(provider.prompts) == 1
 
 
 async def test_ingredient_images_are_shared_by_profile_across_households():
@@ -284,3 +342,25 @@ async def test_refunded_failure_does_not_use_up_attempts():
 async def test_generation_needs_the_switch_a_key_and_positive_caps(overrides, enabled):
     settings = Settings(_env_file=None, **{"openai_api_key": "test-key", **overrides})
     assert ImagePolicy.from_settings(settings).enabled is enabled
+
+
+async def test_a_caller_deadline_shorter_than_the_policy_bounds_the_attempt():
+    store = FakeStore()
+    images = service(store, FakeProvider(delay=1))
+    started = asyncio.get_running_loop().time()
+    # Two seconds are kept for storing the photo, leaving the provider 0.05.
+    result = await images.recipe_image(
+        recipe(), USER, generate=True, deadline=PipelineDeadline(2.05)
+    )
+    assert asyncio.get_running_loop().time() - started < 0.5
+    assert result.status == "unavailable" and result.reason == "late"
+    assert store.spent == 60
+
+
+async def test_a_deadline_too_short_to_store_a_photo_refunds_the_claim():
+    store, provider = FakeStore(), FakeProvider()
+    result = await service(store, provider).recipe_image(
+        recipe(), USER, generate=True, deadline=PipelineDeadline(1)
+    )
+    assert result.status == "unavailable" and result.reason == "late"
+    assert provider.prompts == [] and store.spent == 0

@@ -98,9 +98,9 @@ class Settings(BaseSettings):
     # Cap per requesting user per UTC month, so one account cannot use up the
     # global cap with made-up food names.
     image_generation_user_monthly_cap_microusd: int = Field(default=2_000_000, ge=0)
-    # Spend reserved per attempt: the published 1536x1024 medium output price
-    # ($0.041) or 1024x1024 low price ($0.006), plus headroom for prompt tokens.
-    recipe_image_cost_microusd: int = Field(default=60_000, gt=0)
+    # Spend reserved per attempt: the published low-quality output price for
+    # 1536x1024 ($0.005) or 1024x1024 ($0.006), plus headroom for prompt tokens.
+    recipe_image_cost_microusd: int = Field(default=12_000, gt=0)
     ingredient_image_cost_microusd: int = Field(default=12_000, gt=0)
     image_generation_max_attempts: int = Field(default=2, ge=1, le=5)
     image_generation_retry_after_seconds: int = Field(default=900, ge=0)
@@ -117,8 +117,17 @@ class Settings(BaseSettings):
     langsmith_project: str = ""
 
     ai_pipeline_budget_seconds: float = Field(default=25.0, gt=0, lt=30.0)
-    recipe_feed_initial_budget_seconds: float = Field(default=30.0, gt=0, lt=35.0)
-    recipe_feed_page_budget_seconds: float = Field(default=30.0, gt=0, lt=35.0)
+    # Feed budgets include the batch's photos: the recipe steps stop
+    # PHOTO_RESERVE_SECONDS early to leave them time. Each must stay
+    # under the app's 50 s request timeout (RECIPE_FEED_REQUEST_TIMEOUT_MS in
+    # mobile/lib/recipe-feed-api.ts), so the app sees the server's answer.
+    # The recipe steps need about 16 s to generate, then at least 10 s
+    # (GEMINI_MIN_DEADLINE_SECONDS) still on their deadline to start the
+    # quality check.
+    recipe_feed_initial_budget_seconds: float = Field(default=48.0, gt=0, lt=50.0)
+    # A refill must also finalize before its claim expires, 45 s after
+    # claim_recipe_feed_refill grants it.
+    recipe_feed_page_budget_seconds: float = Field(default=43.0, gt=0, lt=45.0)
     recipe_feed_store_timeout_seconds: float = Field(default=2.0, gt=0, lt=5.0)
 
     # Server
