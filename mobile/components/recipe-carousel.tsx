@@ -19,16 +19,42 @@ import Animated, {
 } from "react-native-reanimated";
 import Feather from "@expo/vector-icons/Feather";
 import { RecipePressable } from "@/components/recipe-motion";
+import RecipeSweepExit from "@/components/recipe-sweep-exit";
 import { useTheme } from "@/hooks/useTheme";
 
+/** One slot in {@link RecipeCarousel}. */
 export type RecipeCarouselItem = {
+  /** Stable key for the slot. */
   id: string;
   content: ReactNode;
-  isRecipe: boolean;
+  /**
+   * `recipe` and `loading` slots stack like cards. A `message` slot has no
+   * card of its own: it fades in once centered, and the recipe cards slide
+   * above the stage while it shows.
+   */
+  kind: "recipe" | "loading" | "message";
+  /**
+   * Set while the slot's card leaves in a sweep: its exit delay in
+   * milliseconds.
+   */
+  exitDelayMs?: number;
 };
 
 const transition = { duration: 360, easing: Easing.inOut(Easing.cubic) };
+const GAP_ABOVE_STAGE = 32;
+const VISIBLE_STACK_DEPTH = 4;
+
 const dragDistance = 180;
+
+/**
+ * Returns how far the carousel has moved from the slot before the message
+ * onto the message: 0 up to that slot, 1 once the message is centered.
+ */
+function progressOntoMessage(position: number, messageIndex: number | null) {
+  "worklet";
+  if (messageIndex === null) return 0;
+  return Math.max(0, Math.min(1, position - (messageIndex - 1)));
+}
 
 // Native adaptation of 21st's Scrollable Card Stack, with a centered,
 // two-sided stack and finite navigation matching the recipe cursor order.
@@ -53,6 +79,8 @@ export default function RecipeCarousel({
   const dragStart = useSharedValue(activeIndex);
   const dragging = useSharedValue(false);
   const peek = Math.max(20, Math.min(48, (height - cardHeight) / 4));
+  const firstMessage = items.findIndex((item) => item.kind === "message");
+  const messageIndex = firstMessage === -1 ? null : firstMessage;
 
   const select = useCallback(
     (index: number) => {
@@ -144,7 +172,7 @@ export default function RecipeCarousel({
         >
           {items
             .map((item, index) => ({ item, index }))
-            .filter(({ index }) => Math.abs(index - activeIndex) <= 4)
+            .filter(({ index }) => Math.abs(index - activeIndex) <= VISIBLE_STACK_DEPTH)
             .map(({ item, index }) => (
               <CarouselSlot
                 key={item.id}
@@ -156,6 +184,9 @@ export default function RecipeCarousel({
                 reducedMotion={reducedMotion}
                 dimColor={colors.bg}
                 active={index === activeIndex}
+                isCard={item.kind !== "message"}
+                messageIndex={messageIndex}
+                exitDelayMs={item.exitDelayMs}
               >
                 {item.content}
               </CarouselSlot>
@@ -185,7 +216,7 @@ export default function RecipeCarousel({
             fontSize: 12,
           }}
         >
-          {items[activeIndex]?.isRecipe
+          {items[activeIndex]?.kind === "recipe"
             ? `Recipe ${activeIndex + 1}`
             : "This set of ideas"}
         </Text>
@@ -218,6 +249,9 @@ function CarouselSlot({
   reducedMotion,
   dimColor,
   active,
+  isCard,
+  messageIndex,
+  exitDelayMs,
 }: {
   children: ReactNode;
   index: number;
@@ -228,6 +262,9 @@ function CarouselSlot({
   reducedMotion: boolean;
   dimColor: string;
   active: boolean;
+  isCard: boolean;
+  messageIndex: number | null;
+  exitDelayMs: number | undefined;
 }) {
   const slotIndex = useSharedValue(index);
   useLayoutEffect(() => {
@@ -236,23 +273,33 @@ function CarouselSlot({
   const style = useAnimatedStyle(() => {
     const distance = slotIndex.value - position.value;
     const depth = Math.min(3.5, Math.abs(distance));
-    const scale = 1 - depth * 0.12;
+    const stackScale = 1 - depth * 0.12;
+    const stackY =
+      Math.sign(distance) *
+      ((cardHeight * (1 - stackScale)) / 2 + depth * peek);
+    const toList = isCard
+      ? progressOntoMessage(position.value, messageIndex)
+      : 0;
+    const listY = distance * ((height + cardHeight) / 2 + GAP_ABOVE_STAGE);
+    const scale = stackScale + (1 - stackScale) * toList;
+    const fade = isCard
+      ? VISIBLE_STACK_DEPTH - Math.abs(distance)
+      : 1 - Math.abs(distance);
     return {
       zIndex: Math.round(100 - Math.abs(distance) * 10),
-      opacity: Math.max(0, Math.min(1, 4 - Math.abs(distance))),
-      transform: [
-        {
-          translateY:
-            Math.sign(distance) *
-            ((cardHeight * (1 - scale)) / 2 + depth * peek),
-        },
-        { scale },
-      ],
+      opacity: Math.max(0, Math.min(1, fade)),
+      transform: [{ translateY: stackY + (listY - stackY) * toList }, { scale }],
     };
-  }, [cardHeight, peek]);
-  const dimStyle = useAnimatedStyle(() => ({
-    opacity: Math.min(0.8, Math.abs(slotIndex.value - position.value) * 0.24),
-  }));
+  }, [cardHeight, height, isCard, messageIndex, peek]);
+  const dimStyle = useAnimatedStyle(() => {
+    const dim = Math.min(
+      0.8,
+      Math.abs(slotIndex.value - position.value) * 0.24,
+    );
+    return {
+      opacity: dim * (1 - progressOntoMessage(position.value, messageIndex)),
+    };
+  }, [messageIndex]);
   return (
     <Animated.View
       testID={`recipe-carousel-slot-${index}`}
@@ -270,29 +317,38 @@ function CarouselSlot({
         style,
       ]}
     >
-      {children}
-      <Animated.View
-        pointerEvents="none"
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-        style={[
-          {
-            position: "absolute",
-            top: 0,
-            bottom: 0,
-            left: 24,
-            right: 24,
-            borderRadius: 24,
-            backgroundColor: dimColor,
-          },
-          dimStyle,
-        ]}
-      />
+      <RecipeSweepExit
+        exitDelayMs={exitDelayMs}
+        reducedMotion={reducedMotion}
+        style={styles.slotContent}
+      >
+        {children}
+        {isCard && (
+          <Animated.View
+            pointerEvents="none"
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            style={[
+              {
+                position: "absolute",
+                top: 0,
+                bottom: 0,
+                left: 24,
+                right: 24,
+                borderRadius: 24,
+                backgroundColor: dimColor,
+              },
+              dimStyle,
+            ]}
+          />
+        )}
+      </RecipeSweepExit>
     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
+  slotContent: { flex: 1 },
   navigation: {
     minHeight: 44,
     flexDirection: "row",

@@ -76,21 +76,3 @@ export function defaultStorageForCategory(
   if (category.freezer_days !== null) return "freezer";
   return "fridge";
 }
-
-/* Parses messy OFF quantity strings ("1L", "500 g", "17.6 oz tub"). Captures
- * the leading number + first unit token; trailing words ("tub", "pack of 6")
- * are dropped. */
-const QUANTITY_PATTERN = /^([\d]+(?:[.,]\d+)?)\s*([a-zA-Z]+)?/;
-
-export function parseQuantity(
-  raw: string | null | undefined,
-): { quantity: number; unit: string } | null {
-  if (!raw) return null;
-  const match = raw.trim().match(QUANTITY_PATTERN);
-  if (!match) return null;
-  const [, numStr, unitStr] = match;
-  const normalised = numStr.replace(",", ".");
-  const value = parseFloat(normalised);
-  if (!Number.isFinite(value) || value <= 0) return null;
-  return { quantity: value, unit: unitStr?.toLowerCase() ?? "item" };
-}

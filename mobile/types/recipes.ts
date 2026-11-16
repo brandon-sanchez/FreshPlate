@@ -1,3 +1,5 @@
+import type { ImageResult } from "@/types/images";
+
 export const RECIPE_PREFERENCE_KEYS = [
   "meal",
   "time",
@@ -13,24 +15,23 @@ export type RecipePreferences = Partial<
   Record<RecipePreferenceKey, string>
 >;
 
-export type RecipeInventoryContext = {
-  id: string;
-  name: string;
-  quantity: number;
-  unit: string;
-  expiration_date: string | null;
-  category: string | null;
-};
-
+/**
+ * Body of `POST /api/recipes/suggestions`. The backend reads
+ * `household_id`'s foods itself, so the request carries no inventory.
+ */
 export type RecipeSuggestionRequest = {
-  inventory: RecipeInventoryContext[];
+  household_id: string;
   preferences: RecipePreferences;
   exclude_titles: string[];
   batch_ceiling: number;
 };
 
+/**
+ * Body of `POST /api/recipes/sessions`. The backend reads `household_id`'s
+ * foods itself, so the request carries no inventory.
+ */
 export type RecipeFeedSessionRequest = {
-  inventory: RecipeInventoryContext[];
+  household_id: string;
   preferences: RecipePreferences;
 };
 
@@ -58,10 +59,31 @@ export type RecipeSuggestionsResponse = {
   };
 };
 
+/**
+ * The `steering` field of `POST /api/recipes/sessions/{id}/pages`: the
+ * session's "More like this" and "Less like this" picks, most recent last.
+ * The backend accepts at most 3 and 10 ids.
+ */
+export type RecipeFeedSteering = {
+  more_like: string[];
+  less_like: string[];
+};
+
+/** A recipe as the feed endpoints serve it, with its photo. */
+export type RecipeFeedCard = RecipeSuggestion & {
+  /**
+   * The recipe's photo or placeholder result, generated with the batch.
+   * `null` when a page read from the stored pool found no stored photo; the
+   * photo is then requested from `POST /api/images/recipes/{recipe_id}`.
+   */
+  image: ImageResult | null;
+};
+
+/** Body of a feed session or page response. */
 export type RecipeFeedResponse = {
   data: {
     session_id: string;
-    recipes: RecipeSuggestion[];
+    recipes: RecipeFeedCard[];
     next_cursor: string | null;
     has_more: boolean;
     ready_count: number;

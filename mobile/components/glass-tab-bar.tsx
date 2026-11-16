@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Animated, Keyboard, Platform, Text, View } from "react-native";
+import { Animated, Keyboard, Platform, StyleSheet, Text, View } from "react-native";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Feather from "@expo/vector-icons/Feather";
-import GlassTabBackground from "@/components/glass-tab-background";
+import GlassSurface from "@/components/glass-surface";
 import { RecipePressable } from "@/components/recipe-motion";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
@@ -15,6 +15,22 @@ const ICONS = {
   recipes: "book-open",
   profile: "user",
 } as const;
+const BAR_HEIGHT = 72;
+
+function barBottom(bottomInset: number) {
+  return Math.max(bottomInset, 12);
+}
+
+/**
+ * Returns how far the top edge of {@link GlassTabBar} sits above the bottom of
+ * the screen, in points, so floating content such as toasts can clear it.
+ *
+ * @param bottomInset - The bottom safe-area inset in points.
+ */
+export function tabBarTop(bottomInset: number) {
+  return barBottom(bottomInset) + BAR_HEIGHT;
+}
+
 function iconForRoute(name: string) {
   switch (name) {
     case "index":
@@ -27,6 +43,11 @@ function iconForRoute(name: string) {
       return "circle";
   }
 }
+/**
+ * Renders the app's floating tab bar: a glass capsule with a sliding glass
+ * pill under the selected tab and a raised glass Add button in the middle. It
+ * hides while the keyboard is open.
+ */
 export default function GlassTabBar({
   state,
   descriptors,
@@ -77,11 +98,11 @@ export default function GlassTabBar({
         position: "absolute",
         left: 16,
         right: 16,
-        bottom: Math.max(insets.bottom, 12),
-        height: 72,
+        bottom: barBottom(insets.bottom),
+        height: BAR_HEIGHT,
       }}
     >
-      <GlassTabBackground />
+      <GlassSurface radius={38} style={StyleSheet.absoluteFill} />
       {width > 0 && state.routes[state.index]?.name !== "add-item" && (
         <Animated.View
           pointerEvents="none"
@@ -91,11 +112,15 @@ export default function GlassTabBar({
             bottom: 7,
             left: 4,
             width: slotWidth - 8,
-            borderRadius: 30,
-            backgroundColor: colors.accentSoft,
             transform: [{ translateX: Animated.multiply(position, slotWidth) }],
           }}
-        />
+        >
+          <GlassSurface
+            radius={30}
+            tint={colors.accentSoft}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
       )}
       <View style={{ flexDirection: "row", flex: 1 }}>
         {state.routes.map((route, index) => {
@@ -133,17 +158,24 @@ export default function GlassTabBar({
               {isAdd ? (
                 <View
                   style={{
-                    width: 54,
-                    height: 54,
                     borderRadius: 27,
-                    backgroundColor: colors.accent,
-                    alignItems: "center",
-                    justifyContent: "center",
                     transform: [{ translateY: -12 }],
                     boxShadow: "0 4px 16px rgba(27,31,28,0.14)",
                   }}
                 >
-                  <Feather name="plus" size={25} color={colors.accentInk} />
+                  <GlassSurface
+                    radius={27}
+                    tint={colors.accent}
+                    interactive
+                    style={{
+                      width: 54,
+                      height: 54,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Feather name="plus" size={25} color={colors.accentInk} />
+                  </GlassSurface>
                 </View>
               ) : (
                 <>

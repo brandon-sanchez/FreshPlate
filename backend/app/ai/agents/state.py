@@ -4,40 +4,39 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date
-from typing import Any, NotRequired, TypedDict
+from typing import Any, NotRequired
+
+# Pydantic validates feed refills' stored usable items against these, and on
+# Python 3.11 it accepts only typing_extensions TypedDicts.
+from typing_extensions import TypedDict
 
 from app.ai.agents.models import Recipe
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.rag.vector_store import RetrievedRecipe
+from app.models.images import ImageResult
 
 
-class InventoryItem(TypedDict, total=False):
-    """The inventory fields consumed by recipe analysis.
+class UsableItem(TypedDict):
+    """One food recipe generation may use, with its unexpired stock.
 
-    ``depleted_at`` is optional until the cook-flow migration adds the column
-    to the live inventory table. Keeping it optional lets the graph support
-    both the current and MVP inventory response shapes.
+    ``quantity`` is the food's available stock in ``unit``, its stock unit
+    ("g", "ml", or a count word such as "head"). ``units`` lists the recipe
+    units the converter can turn into a number for this food, and an
+    ingredient must use one of them. ``expiration_date`` is the soonest
+    unexpired batch's date. ``food`` is the ``FoodLine`` the item came from,
+    in JSON form, so a feed refill can rebuild its unit facts.
     """
 
     id: str
     name: str
     quantity: float
     unit: str
-    expiration_date: str | date | None
-    depleted_at: Any
-    category: str | None
-
-
-class UsableItem(TypedDict):
-    """An inventory item that is safe to include in recipe generation."""
-
-    id: str
-    name: str
-    quantity: float
-    unit: str
+    units: list[str]
+    lot_count: int
     expiration_date: date | None
     days_until_expiration: int | None
     is_expiring: bool
+    food: dict[str, Any]
 
 
 class InventoryAnalysis(TypedDict):
@@ -68,10 +67,40 @@ class QualityResult(TypedDict):
     metadata: NotRequired[dict[str, Any]]
 
 
-class RecipeState(TypedDict, total=False):
-    """The shared state carried through the four-node recipe graph."""
+class PhotoResult(TypedDict):
+    """State update returned by the photo step."""
 
-    inventory: list[InventoryItem | Mapping[str, Any]]
+    recipe_photos: dict[str, ImageResult]
+
+
+class SteeringExample(TypedDict):
+    """A recipe the cook picked "More like this" or "Less like this" on.
+
+    ``foods`` lists the recipe's ingredient names, in recipe order.
+    """
+
+    title: str
+    foods: list[str]
+
+
+class RecipeSteering(TypedDict):
+    """Recipes generation should move toward (``more_like``) or away from."""
+
+    more_like: list[SteeringExample]
+    less_like: list[SteeringExample]
+
+
+class RecipeState(TypedDict, total=False):
+    """The shared state carried through the recipe graph.
+
+    ``inventory`` holds one ``FoodLine`` mapping per household food.
+    ``recipe_photos`` maps each valid recipe's photo cache key
+    (``ImageService.recipe_key``) to its photo. Only graphs built with a
+    photo source set it. ``steering`` is absent when the cook hasn't picked
+    "More like this" or "Less like this" on any recipe.
+    """
+
+    inventory: list[Mapping[str, Any]]
     preferences: Mapping[str, Any]
     exclude_titles: list[str]
     batch_ceiling: int
@@ -85,3 +114,5 @@ class RecipeState(TypedDict, total=False):
     errors: list[str]
     metadata: dict[str, Any]
     deadline: PipelineDeadline
+    recipe_photos: dict[str, ImageResult]
+    steering: RecipeSteering

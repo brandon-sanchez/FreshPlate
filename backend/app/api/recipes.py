@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -18,7 +18,8 @@ from app.ai.agents.nodes import (
     GENERATION_DOCS_CEILING,
     RecipeRetrieverPort,
 )
-from app.ai.agents.state import RecipeState
+from app.ai.agents.photos import RecipePhotoSource
+from app.ai.agents.state import RecipeState, RecipeSteering
 from app.ai.eval.scorers import ingredient_coverage_percent
 from app.ai.llm.errors import AI_UNAVAILABLE, ProviderError
 from app.ai.llm.protocol import LLMProvider
@@ -29,18 +30,31 @@ from app.ai.prompts.tracing import build_trace_config
 from app.ai.rag.embeddings import EmbeddingClient
 from app.ai.rag.retriever import RecipeRetriever
 from app.ai.rag.vector_store import SupabaseVectorStore
+from app.api.images import get_image_service
 from app.core.auth import CurrentUserId
 from app.core.config import settings
+from app.inventory.food_facts import FoodLine
+from app.models.images import ImageResult
 from app.models.recipes import (
+    RecipeFeedCard,
     RecipeFeedData,
     RecipeFeedPageRequest,
     RecipeFeedResponse,
     RecipeFeedSessionRequest,
-    RecipeInventoryContext,
     RecipeSuggestion,
     RecipeSuggestionRequest,
     RecipeSuggestionsData,
     RecipeSuggestionsResponse,
+)
+from app.services.food_lines import (
+    FoodLinesError,
+    FoodLineSource,
+    SupabaseFoodLineSource,
+)
+from app.services.image_service import (
+    ImageService,
+    ImageStoreError,
+    RequesterRecipePhotos,
 )
 from app.services.recipe_feed_store import (
     RecipeFeedSession,
@@ -48,6 +62,7 @@ from app.services.recipe_feed_store import (
     RecipeFeedStoreError,
     SupabaseRecipeFeedStore,
 )
+from app.services.recipe_steering import resolve_steering
 
 router = APIRouter(prefix="/api/recipes", tags=["recipes"])
 logger = logging.getLogger("freshplate.recipes")
@@ -80,23 +95,41 @@ def get_recipe_retriever(request: Request) -> RecipeRetrieverPort:
 
 def get_recipe_feed_store(request: Request) -> RecipeFeedStore:
     """Bind user-scoped reads and trusted writes to the shared HTTP client."""
-    authorization = request.headers.get("authorization", "")
-    scheme, _, token = authorization.partition(" ")
-    if scheme.casefold() != "bearer" or not token.strip():
-        raise _feed_unavailable()
     return SupabaseRecipeFeedStore(
-        token, http_client=request.app.state.supabase_http_client
+        _bearer_token(request, _feed_unavailable),
+        http_client=request.app.state.supabase_http_client,
     )
+
+
+def get_food_line_source(request: Request) -> FoodLineSource:
+    """Read the caller's household foods with the caller's own token."""
+    return SupabaseFoodLineSource(
+        _bearer_token(request, _ai_unavailable),
+        http_client=request.app.state.supabase_http_client,
+    )
+
+
+def _bearer_token(request: Request, unavailable: Callable[[], HTTPException]) -> str:
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    if scheme.casefold() != "bearer" or not token.strip():
+        raise unavailable()
+    return token
 
 
 @router.post("/suggestions", response_model=RecipeSuggestionsResponse)
 async def post_recipe_suggestions(
     payload: RecipeSuggestionRequest,
     _user_id: CurrentUserId,
+    foods: FoodLineSource = Depends(get_food_line_source),
     provider: LLMProvider = Depends(get_recipe_provider),
     retriever: RecipeRetrieverPort = Depends(get_recipe_retriever),
 ) -> RecipeSuggestionsResponse:
-    """Generate one authenticated, session-scoped batch of recipe suggestions."""
+    """Generate one authenticated, session-scoped batch of recipe suggestions.
+
+    Reads the household's foods as the caller, then runs the recipe graph.
+    Responds 503 ``AI_UNAVAILABLE`` when the foods can't be read or
+    generation fails.
+    """
     if payload.batch_ceiling == 0:
         return RecipeSuggestionsResponse(
             data=RecipeSuggestionsData(recipes=[]),
@@ -104,18 +137,31 @@ async def post_recipe_suggestions(
 
     deadline = PipelineDeadline.from_now(settings.ai_pipeline_budget_seconds)
     prompt = load_prompt("generate_recipes")
-    state = _initial_recipe_state(payload, deadline=deadline)
 
     try:
+        lines = await _within_recipe_deadline(
+            deadline, lambda: foods.list_food_lines(payload.household_id)
+        )
+        state = _initial_recipe_state(
+            lines,
+            preferences=payload.preferences,
+            exclude_titles=payload.exclude_titles,
+            batch_ceiling=payload.batch_ceiling,
+            deadline=deadline,
+        )
         result = await _invoke_recipe_graph(
             build_recipe_graph(provider, retriever, prompt=prompt),
             state,
             prompt,
         )
-        recipes = _build_suggestions(result, payload)
+        recipes = _build_suggestions(
+            result,
+            exclude_titles=payload.exclude_titles,
+            batch_ceiling=payload.batch_ceiling,
+        )
     except asyncio.CancelledError:
         raise
-    except (ProviderError, TimeoutError, ValueError) as exc:
+    except (ProviderError, TimeoutError, ValueError, FoodLinesError) as exc:
         raise _ai_unavailable() from exc
 
     return RecipeSuggestionsResponse(
@@ -128,21 +174,36 @@ async def post_recipe_feed_session(
     payload: RecipeFeedSessionRequest,
     _user_id: CurrentUserId,
     store: RecipeFeedStore = Depends(get_recipe_feed_store),
+    foods: FoodLineSource = Depends(get_food_line_source),
     provider: LLMProvider = Depends(get_recipe_provider),
     retriever: RecipeRetrieverPort = Depends(get_recipe_retriever),
+    images: ImageService = Depends(get_image_service),
 ) -> RecipeFeedResponse:
-    """Create a feed session and persist its first bounded candidate pool."""
-    suggestion_request = RecipeSuggestionRequest(
-        inventory=payload.inventory,
-        preferences=payload.preferences,
-        batch_ceiling=RECIPE_FEED_INITIAL_HEAD_BATCH_CEILING,
-    )
+    """Create a feed session and persist its first bounded candidate pool.
+
+    Reads the household's foods as the caller. Each card carries its photo:
+    the pipeline generates the batch's photos, charged to the caller, before
+    the session is stored and returned. A missing photo never fails the
+    request; its card carries a placeholder result. Responds 503
+    ``RECIPE_FEED_UNAVAILABLE`` when the foods can't be read or the session
+    can't be stored, and 503 ``AI_UNAVAILABLE`` when generation fails or the
+    deadline runs out.
+    """
     prompt = load_prompt("generate_recipes")
     deadline = PipelineDeadline.from_now(settings.recipe_feed_initial_budget_seconds)
-    state: RecipeState = _initial_recipe_state(suggestion_request, deadline=deadline)
 
     started_at = time.monotonic()
     try:
+        lines = await _within_recipe_deadline(
+            deadline, lambda: foods.list_food_lines(payload.household_id)
+        )
+        state = _initial_recipe_state(
+            lines,
+            preferences=payload.preferences,
+            exclude_titles=[],
+            batch_ceiling=RECIPE_FEED_INITIAL_HEAD_BATCH_CEILING,
+            deadline=deadline,
+        )
         result = await _invoke_recipe_graph(
             build_recipe_graph(
                 provider,
@@ -151,6 +212,7 @@ async def post_recipe_feed_session(
                 quality_retry_limit=RECIPE_FEED_INITIAL_QUALITY_RETRY_LIMIT,
                 retry_only_when_no_valid=RECIPE_FEED_INITIAL_RETRY_ONLY_WHEN_EMPTY,
                 retrieval_limit=RECIPE_FEED_RETRIEVAL_POOL_LIMIT,
+                photos=RequesterRecipePhotos(images, _user_id),
             ),
             state,
             prompt,
@@ -164,12 +226,13 @@ async def post_recipe_feed_session(
             result.get("retry_count"),
             (result.get("quality_feedback") or "")[:200],
         )
-        recipes = _build_suggestions(result, suggestion_request)
-        session = _session_from_initial_result(
-            _user_id,
-            suggestion_request,
+        recipes = _build_suggestions(
             result,
-            len(recipes),
+            exclude_titles=[],
+            batch_ceiling=RECIPE_FEED_INITIAL_HEAD_BATCH_CEILING,
+        )
+        session = _session_from_initial_result(
+            _user_id, payload.preferences, result, len(recipes)
         )
         session = session.model_copy(
             update={
@@ -182,6 +245,9 @@ async def post_recipe_feed_session(
             deadline,
             lambda: store.create_session(session, recipes=recipes),
         )
+        cards = await _feed_cards(
+            recipes, result.get("recipe_photos", {}), images, _user_id, deadline
+        )
     except asyncio.CancelledError:
         raise
     except (ProviderError, TimeoutError, ValueError) as exc:
@@ -191,7 +257,7 @@ async def post_recipe_feed_session(
             exc,
         )
         raise _ai_unavailable() from exc
-    except RecipeFeedStoreError as exc:
+    except (RecipeFeedStoreError, FoodLinesError) as exc:
         logger.warning(
             "Recipe feed session store failure after %.2fs: %s",
             time.monotonic() - started_at,
@@ -201,7 +267,7 @@ async def post_recipe_feed_session(
 
     return _feed_response(
         session,
-        recipes,
+        cards,
         cursor=0,
         empty_reason=(
             None if recipes else RECIPE_FEED_EMPTY_REASON_UNSUPPORTED_INVENTORY
@@ -219,9 +285,17 @@ async def post_recipe_feed_page(
     _user_id: CurrentUserId,
     store: RecipeFeedStore = Depends(get_recipe_feed_store),
     provider: LLMProvider = Depends(get_recipe_provider),
+    images: ImageService = Depends(get_image_service),
 ) -> RecipeFeedResponse:
-    """Return a stable cursor page, refilling the pool only at its tail."""
+    """Return a stable cursor page, refilling the pool only at its tail.
+
+    A refill generates its batch's photos before the batch is stored, as the
+    first session does. Cards read from the stored pool carry their stored
+    photo, or no image when there is none; this request never generates
+    photos for them.
+    """
     cursor = _parse_feed_cursor(payload.cursor)
+    photos: Mapping[str, ImageResult] = {}
     deadline = PipelineDeadline.from_now(settings.recipe_feed_page_budget_seconds)
     try:
         session = await _within_recipe_deadline(
@@ -243,12 +317,18 @@ async def post_recipe_feed_page(
             ),
         )
         if len(recipes) < payload.limit and session.has_more:
-            session, added = await _refill_recipe_feed_session(
+            steering = await _within_recipe_deadline(
+                deadline,
+                lambda: resolve_steering(store, _user_id, session, payload.steering),
+            )
+            session, added, photos = await _refill_recipe_feed_session(
                 session,
                 _user_id,
                 store,
                 provider,
+                RequesterRecipePhotos(images, _user_id),
                 deadline,
+                steering,
             )
             if added:
                 recipes = await _within_recipe_deadline(
@@ -260,6 +340,7 @@ async def post_recipe_feed_page(
                         limit=payload.limit,
                     ),
                 )
+        cards = await _feed_cards(recipes, photos, images, _user_id, deadline)
     except asyncio.CancelledError:
         raise
     except HTTPException:
@@ -271,7 +352,21 @@ async def post_recipe_feed_page(
         logger.warning("Recipe feed page store failure: %s", exc)
         raise _feed_unavailable() from exc
 
-    return _feed_response(session, recipes, cursor=cursor)
+    return _feed_response(session, cards, cursor=cursor)
+
+
+class _RefillOutcome(NamedTuple):
+    """What one refill attempt produced.
+
+    Attributes:
+        session: The session after the refill.
+        added: Whether the pool grew.
+        photos: Photos this request generated, by photo key.
+    """
+
+    session: RecipeFeedSession
+    added: bool
+    photos: Mapping[str, ImageResult]
 
 
 async def _refill_recipe_feed_session(
@@ -279,9 +374,16 @@ async def _refill_recipe_feed_session(
     user_id: str,
     store: RecipeFeedStore,
     provider: LLMProvider,
+    photo_source: RecipePhotoSource,
     deadline: PipelineDeadline,
-) -> tuple[RecipeFeedSession, bool]:
-    """Generate one tail batch using the session's cached retrieval context."""
+    steering: RecipeSteering,
+) -> _RefillOutcome:
+    """Generate one tail batch using the session's cached retrieval context.
+
+    A batch another request generated comes back with no photos, and its
+    cards are served with their stored photos. That batch was generated
+    without this request's ``steering``.
+    """
     original_count = session.candidate_count
     claim_id = uuid4()
     claimed = await _within_recipe_deadline(
@@ -304,15 +406,17 @@ async def _refill_recipe_feed_session(
             if current is None:
                 raise _feed_not_found()
             claimed = current
-        return claimed, claimed.candidate_count > original_count
+        return _RefillOutcome(claimed, claimed.candidate_count > original_count, {})
     try:
         return await _generate_claimed_recipe_refill(
             claimed,
             user_id,
             store,
             provider,
+            photo_source,
             deadline,
             claim_id,
+            steering,
         )
     except Exception:
         # Cleanup is conditional on the claim, so a lost finalize response cannot
@@ -335,19 +439,12 @@ async def _generate_claimed_recipe_refill(
     user_id: str,
     store: RecipeFeedStore,
     provider: LLMProvider,
+    photo_source: RecipePhotoSource,
     deadline: PipelineDeadline,
     claim_id: UUID,
-) -> tuple[RecipeFeedSession, bool]:
+    steering: RecipeSteering,
+) -> _RefillOutcome:
     """Generate and finalize the batch owned by one database reservation."""
-    inventory = [
-        RecipeInventoryContext.model_validate(item) for item in session.inventory
-    ]
-    suggestion_request = RecipeSuggestionRequest(
-        inventory=inventory,
-        preferences=session.preferences,
-        exclude_titles=session.exclude_titles,
-        batch_ceiling=RECIPE_FEED_REFILL_BATCH_CEILING,
-    )
     prompt = load_prompt("generate_recipes")
     retrieval_window = session.retrieved_recipes[
         session.retrieval_cursor : session.retrieval_cursor + GENERATION_DOCS_CEILING
@@ -361,17 +458,23 @@ async def _generate_claimed_recipe_refill(
         "retry_count": 0,
         "metadata": {},
         "deadline": deadline,
+        "steering": steering,
     }
     result = await _invoke_recipe_graph(
         build_recipe_generation_graph(
             provider,
             prompt=prompt,
             quality_retry_limit=RECIPE_FEED_REFILL_QUALITY_RETRY_LIMIT,
+            photos=photo_source,
         ),
         state,
         prompt,
     )
-    generated = _build_suggestions(result, suggestion_request)
+    generated = _build_suggestions(
+        result,
+        exclude_titles=session.exclude_titles,
+        batch_ceiling=RECIPE_FEED_REFILL_BATCH_CEILING,
+    )
     existing_titles = {_normalize_title(title) for title in session.exclude_titles}
     recipes = [
         recipe
@@ -397,7 +500,7 @@ async def _generate_claimed_recipe_refill(
             retrieval_cursor=next_retrieval_cursor,
         ),
     )
-    return persisted, bool(recipes)
+    return _RefillOutcome(persisted, bool(recipes), result.get("recipe_photos", {}))
 
 
 async def _invoke_recipe_graph(
@@ -436,25 +539,27 @@ async def _within_recipe_deadline(
 
 
 def _initial_recipe_state(
-    payload: RecipeSuggestionRequest,
+    lines: Sequence[FoodLine],
     *,
-    deadline: PipelineDeadline | None = None,
+    preferences: dict[str, Any],
+    exclude_titles: list[str],
+    batch_ceiling: int,
+    deadline: PipelineDeadline,
 ) -> RecipeState:
     return {
-        "inventory": [item.model_dump(mode="python") for item in payload.inventory],
-        "preferences": payload.preferences,
-        "exclude_titles": payload.exclude_titles,
-        "batch_ceiling": payload.batch_ceiling,
+        "inventory": [line.model_dump(mode="python") for line in lines],
+        "preferences": preferences,
+        "exclude_titles": exclude_titles,
+        "batch_ceiling": batch_ceiling,
         "retry_count": 0,
         "metadata": {},
-        "deadline": deadline
-        or PipelineDeadline.from_now(settings.ai_pipeline_budget_seconds),
+        "deadline": deadline,
     }
 
 
 def _session_from_initial_result(
     user_id: str,
-    payload: RecipeSuggestionRequest,
+    preferences: Mapping[str, Any],
     result: Mapping[str, Any],
     candidate_count: int,
 ) -> RecipeFeedSession:
@@ -469,10 +574,7 @@ def _session_from_initial_result(
     return RecipeFeedSession(
         id=uuid4(),
         user_id=user_id,
-        inventory=jsonable_encoder(
-            [item.model_dump(mode="json") for item in payload.inventory]
-        ),
-        preferences=jsonable_encoder(payload.preferences),
+        preferences=jsonable_encoder(preferences),
         usable_items=jsonable_encoder(list(usable_items)),
         retrieved_recipes=jsonable_encoder(list(retrieved_recipes)),
         retrieval_cursor=min(GENERATION_DOCS_CEILING, len(retrieved_recipes)),
@@ -483,9 +585,43 @@ def _session_from_initial_result(
     )
 
 
+async def _feed_cards(
+    recipes: Sequence[RecipeSuggestion],
+    photos: Mapping[str, ImageResult],
+    images: ImageService,
+    user_id: str,
+    deadline: PipelineDeadline,
+) -> list[RecipeFeedCard]:
+    """Attach each recipe's photo from `photos`, or else from the photo cache."""
+
+    async def card(recipe: RecipeSuggestion) -> RecipeFeedCard:
+        image = photos.get(images.recipe_key(recipe))
+        if image is None:
+            image = await _stored_photo(recipe, images, user_id, deadline)
+        return RecipeFeedCard(**recipe.model_dump(), image=image)
+
+    return list(await asyncio.gather(*(card(recipe) for recipe in recipes)))
+
+
+async def _stored_photo(
+    recipe: RecipeSuggestion,
+    images: ImageService,
+    user_id: str,
+    deadline: PipelineDeadline,
+) -> ImageResult | None:
+    try:
+        result = await _within_recipe_deadline(
+            deadline,
+            lambda: images.recipe_image(recipe, user_id, generate=False),
+        )
+    except (ImageStoreError, TimeoutError):
+        return None
+    return result if result.status == "ready" else None
+
+
 def _feed_response(
     session: RecipeFeedSession,
-    recipes: Sequence[RecipeSuggestion],
+    recipes: Sequence[RecipeFeedCard],
     *,
     cursor: int,
     empty_reason: str | None = None,
@@ -522,7 +658,9 @@ def _invalid_feed_cursor() -> HTTPException:
 
 def _build_suggestions(
     result: Any,
-    payload: RecipeSuggestionRequest,
+    *,
+    exclude_titles: Sequence[str],
+    batch_ceiling: int,
 ) -> list[RecipeSuggestion]:
     if not isinstance(result, Mapping):
         raise ValueError("Recipe graph returned an invalid state")
@@ -537,7 +675,7 @@ def _build_suggestions(
         raise ValueError("Recipe graph returned an invalid recipe state")
 
     excluded_titles = {
-        _normalize_title(title) for title in payload.exclude_titles if title.strip()
+        _normalize_title(title) for title in exclude_titles if title.strip()
     }
     suggestions: list[RecipeSuggestion] = []
     for raw_recipe in raw_recipes:
@@ -552,7 +690,7 @@ def _build_suggestions(
                 saves_expiring=_expiring_item_names(recipe, raw_inventory),
             )
         )
-        if len(suggestions) >= payload.batch_ceiling:
+        if len(suggestions) >= batch_ceiling:
             break
     return suggestions
 

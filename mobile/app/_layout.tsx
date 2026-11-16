@@ -15,11 +15,10 @@ import { useAuthStore } from "@/stores/auth";
 import { Inter_400Regular, Inter_600SemiBold } from "@expo-google-fonts/inter";
 import { Fraunces_500Medium } from "@expo-google-fonts/fraunces";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import Toast from "react-native-toast-message";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { toastConfig } from "@/components/toastConfig";
-import CenterToast from "@/components/CenterToast";
+import { ToastHost } from "@/components/toastConfig";
+import { tabBarTop } from "@/components/glass-tab-bar";
 import { bindActiveCookAuthLifecycle } from "@/stores/activeCook";
 
 const queryClient = new QueryClient({
@@ -75,8 +74,11 @@ export default function RootLayout() {
 
 function SafeAreaToast() {
   const insets = useSafeAreaInsets();
+  const onTabs = useSegments()[0] === "(tabs)";
 
-  return <Toast config={toastConfig} topOffset={Math.max(insets.top, 8)} />;
+  return (
+    <ToastHost bottomInset={onTabs ? tabBarTop(insets.bottom) : insets.bottom} />
+  );
 }
 
 //  Navigation + Auth Guard
@@ -127,11 +129,23 @@ function RootLayoutNav() {
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
               <Stack.Screen
                 name="item/[id]"
-                options={{ title: "Item", headerBackTitle: "Inventory" }}
+                options={{ title: "Batch" }}
+              />
+              <Stack.Screen
+                name="food/[id]"
+                options={{ title: "" }}
+              />
+              <Stack.Screen
+                name="review-expired"
+                options={{ title: "Review expired" }}
               />
               <Stack.Screen
                 name="set-name"
                 options={{ headerShown: false, presentation: "modal" }}
+              />
+              <Stack.Screen
+                name="cook"
+                options={{ headerShown: false, presentation: "fullScreenModal" }}
               />
               <Stack.Screen
                 name="scan-review"
@@ -140,7 +154,6 @@ function RootLayoutNav() {
             </Stack>
           </ThemeProvider>
           <SafeAreaToast />
-          <CenterToast />
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

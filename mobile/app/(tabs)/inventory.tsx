@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Pressable,
   RefreshControl,
@@ -7,32 +7,17 @@ import {
   TextInput,
   View,
 } from "react-native";
-import ReanimatedSwipeable, {
-  type SwipeableMethods,
-} from "react-native-gesture-handler/ReanimatedSwipeable";
-import {
-  runOnJS,
-  SharedValue,
-  useAnimatedReaction,
-  useSharedValue,
-} from "react-native-reanimated";
-import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
-import Toast from "react-native-toast-message";
 import { useTheme } from "@/hooks/useTheme";
-import {
-  daysUntilExpiration,
-  InventoryItem,
-  useInventoryItems,
-} from "@/hooks/useInventoryItems";
+import { useInventoryItems } from "@/hooks/useInventoryItems";
+import { daysUntilExpiration } from "@/lib/expiry";
 import { useFoodCategories } from "@/hooks/useFoodCategories";
-import { useDeleteItem } from "@/hooks/useDeleteItem";
-import { useCenterToast } from "@/stores/centerToast";
 import SegmentedControl from "@/components/SegmentedControl";
 import InventoryRow from "@/components/InventoryRow";
+import LotOutcomeSwipe from "@/components/LotOutcomeSwipe";
 import LoadingState from "@/components/LoadingState";
 import EmptyState from "@/components/EmptyState";
 import ErrorState from "@/components/ErrorState";
@@ -41,9 +26,13 @@ import FilterSheet, {
   EMPTY_FILTERS,
   InventoryFilters,
 } from "@/components/FilterSheet";
-
-type GroupBy = "Urgency" | "Location" | "Category";
-type Section = { key: string; label: string; tone?: "crit" | "warn"; data: InventoryItem[] };
+import {
+  type FoodRow,
+  type FoodSection,
+  type GroupBy,
+  groupFoodRows,
+  stackLots,
+} from "@/lib/foodRows";
 
 const GROUP_BY_OPTIONS: GroupBy[] = ["Urgency", "Location", "Category"];
 
@@ -54,27 +43,6 @@ export default function InventoryScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const inventory = useInventoryItems();
   const categoriesQuery = useFoodCategories();
-  const deleteItem = useDeleteItem();
-  const showCenterToast = useCenterToast((s) => s.show);
-
-  const handleSwipeDelete = (
-    item: InventoryItem,
-    swipeable: SwipeableMethods | null,
-  ) => {
-    deleteItem.mutate(item.id, {
-      onSuccess: () => {
-        showCenterToast({ icon: "check", text: "Deleted", tone: "success" });
-      },
-      onError: () => {
-        Toast.show({
-          type: "error",
-          text1: "Couldn't delete",
-          text2: "Check your connection and try again.",
-        });
-        swipeable?.close();
-      },
-    });
-  };
 
   /* The `added` query param pulses the matching row once per navigation, then
    * clears so subsequent re-renders don't replay the animation. */
@@ -119,57 +87,14 @@ export default function InventoryScreen() {
     });
   }, [items, query, filters]);
 
-  const sections: Section[] = useMemo(() => {
-    if (groupBy === "Urgency") {
-      const withDays = filtered.map((i) => ({
-        item: i,
-        days: daysUntilExpiration(i.expiration_date),
-      }));
-      const bucket = (test: (d: number | null) => boolean) =>
-        withDays
-          .filter((x) => test(x.days))
-          .sort((a, b) => (a.days ?? Infinity) - (b.days ?? Infinity))
-          .map((x) => x.item);
-      return [
-        { key: "expired", label: "Expired", tone: "crit", data: bucket((d) => d !== null && d < 0) },
-        {
-          key: "today",
-          label: "Use today or tomorrow",
-          tone: "warn",
-          data: bucket((d) => d !== null && d >= 0 && d <= 1),
-        },
-        { key: "week", label: "This week", data: bucket((d) => d !== null && d >= 2 && d <= 6) },
-        { key: "fresh", label: "Fresh", data: bucket((d) => d === null || d > 6) },
-      ];
-    }
-    if (groupBy === "Location") {
-      const locs: InventoryItem["storage_location"][] = ["fridge", "freezer", "pantry"];
-      return locs.map((loc) => ({
-        key: loc,
-        label: capitalize(loc),
-        data: filtered.filter((i) => i.storage_location === loc),
-      }));
-    }
-    const byCat = new Map<string, InventoryItem[]>();
-    filtered.forEach((i) => {
-      const key = i.category?.id ?? "uncategorized";
-      const arr = byCat.get(key) ?? [];
-      arr.push(i);
-      byCat.set(key, arr);
-    });
-    return Array.from(byCat.entries()).map(([key, data]) => ({
-      key,
-      label: data[0]?.category?.name ?? "Uncategorized",
-      data,
-    }));
-  }, [filtered, groupBy]);
+  const sections = useMemo(() => groupFoodRows(filtered, groupBy), [filtered, groupBy]);
 
   /* Auto-open the collapsible section containing the highlighted row so the
    * pulse animation isn't hidden behind a closed group. */
   useEffect(() => {
     if (!highlightId) return;
     for (const s of sections) {
-      if (s.data.some((it) => it.id === highlightId)) {
+      if (s.data.some((row) => holdsLot(row, highlightId))) {
         if (openGroups[s.key] === false) {
           setOpenGroups((g) => ({ ...g, [s.key]: true }));
         }
@@ -178,15 +103,14 @@ export default function InventoryScreen() {
     }
   }, [highlightId, sections, openGroups]);
 
-  const visibleSections: Section[] = sections
+  const visibleSections: FoodSection[] = sections
     .filter((s) => s.data.length > 0)
     .map((s) => ({ ...s, data: openGroups[s.key] === false ? [] : s.data }));
 
   const activeFilterCount = countActiveFilters(filters);
-  const expiredCount = items.filter((i) => {
-    const d = daysUntilExpiration(i.expiration_date);
-    return d !== null && d < 0;
-  }).length;
+  const allRows = useMemo(() => stackLots(items), [items]);
+  const expiredCount = allRows.filter((r) => r.expiredLots > 0).length;
+  const openReview = () => router.push("/review-expired");
 
   if (inventory.isPending) {
     return (
@@ -231,14 +155,16 @@ export default function InventoryScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <SectionList
+    // The top inset pads the container rather than the list so sticky section
+    // headers pin below the status bar.
+    <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
+      <SectionList<FoodRow, FoodSection>
         sections={visibleSections}
-        keyExtractor={(item) => item.id}
-        stickySectionHeadersEnabled={false}
+        keyExtractor={(row) => row.key}
+        stickySectionHeadersEnabled
         contentContainerStyle={{
           paddingHorizontal: 16,
-          paddingTop: insets.top + 8,
+          paddingTop: 8,
           paddingBottom: tabBarHeight + 24,
         }}
         ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
@@ -254,7 +180,16 @@ export default function InventoryScreen() {
           <View style={{ paddingTop: 4 }}>
             <TopBar
               title="Inventory"
-              subtitle={`${items.length} item${items.length === 1 ? "" : "s"} · ${expiredCount} expired`}
+              subtitle={
+                <>
+                  {`${allRows.length} item${allRows.length === 1 ? "" : "s"} · `}
+                  <Text style={expiredCount > 0 ? { color: colors.crit } : undefined}>
+                    {`${expiredCount} expired`}
+                  </Text>
+                </>
+              }
+              onSubtitlePress={expiredCount > 0 ? openReview : undefined}
+              subtitleLabel={`${expiredCount} expired. Review expired batches`}
               colors={colors}
               fonts={fonts}
               padded={false}
@@ -432,8 +367,7 @@ export default function InventoryScreen() {
             </View>
           </View>
         }
-        renderSectionHeader={({ section }) => {
-          const s = section as unknown as Section;
+        renderSectionHeader={({ section: s }) => {
           const open = openGroups[s.key] !== false;
           const labelColor =
             s.tone === "crit"
@@ -452,6 +386,7 @@ export default function InventoryScreen() {
                 gap: 6,
                 paddingTop: 14,
                 paddingBottom: 8,
+                backgroundColor: colors.bg,
               }}
             >
               <FontAwesome
@@ -479,16 +414,30 @@ export default function InventoryScreen() {
               >
                 {sections.find((x) => x.key === s.key)?.data.length ?? 0}
               </Text>
+              {groupBy === "Urgency" && s.key === "expired" ? (
+                <Pressable
+                  onPress={openReview}
+                  hitSlop={12}
+                  accessibilityRole="link"
+                  accessibilityLabel="Review expired batches"
+                  style={({ pressed }) => ({ marginLeft: "auto", opacity: pressed ? 0.6 : 1 })}
+                >
+                  <Text style={{ fontFamily: fonts.bodyStrong, fontSize: 12, color: colors.accent }}>
+                    Review
+                  </Text>
+                </Pressable>
+              ) : null}
             </Pressable>
           );
         }}
-        renderItem={({ item }) => (
-          <SwipeableInventoryRow
-            item={item}
-            highlight={item.id === highlightId}
-            onPress={() => router.push(`/item/${item.id}`)}
-            onSwipeDelete={handleSwipeDelete}
-          />
+        renderItem={({ item: row }) => (
+          <LotOutcomeSwipe lotIds={row.countedLots.map((lot) => lot.id)} name={row.name}>
+            <InventoryRow
+              row={row}
+              highlight={highlightId !== null && holdsLot(row, highlightId)}
+              onPress={() => router.push(`/food/${row.foodId}`)}
+            />
+          </LotOutcomeSwipe>
         )}
         ListEmptyComponent={
           <View style={{ paddingVertical: 40, alignItems: "center" }}>
@@ -523,16 +472,33 @@ export default function InventoryScreen() {
 function TopBar({
   title,
   subtitle,
+  onSubtitlePress,
+  subtitleLabel,
   colors,
   fonts,
   padded = true,
 }: {
   title: string;
-  subtitle?: string;
+  subtitle?: React.ReactNode;
+  /** Makes the subtitle a link, with a chevron after it. */
+  onSubtitlePress?: () => void;
+  /** The subtitle link's screen-reader label. */
+  subtitleLabel?: string;
   colors: ReturnType<typeof useTheme>["colors"];
   fonts: ReturnType<typeof useTheme>["fonts"];
   padded?: boolean;
 }) {
+  const subtitleText = subtitle ? (
+    <Text
+      style={{
+        fontFamily: fonts.body,
+        fontSize: 13,
+        color: colors.textMuted,
+      }}
+    >
+      {subtitle}
+    </Text>
+  ) : null;
   return (
     <View
       style={{
@@ -550,17 +516,26 @@ function TopBar({
       >
         {title}
       </Text>
-      {subtitle ? (
-        <Text
-          style={{
-            fontFamily: fonts.body,
-            fontSize: 13,
-            color: colors.textMuted,
+      {subtitleText && onSubtitlePress ? (
+        <Pressable
+          onPress={onSubtitlePress}
+          hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+          accessibilityRole="link"
+          accessibilityLabel={subtitleLabel}
+          style={({ pressed }) => ({
+            flexDirection: "row",
+            alignItems: "center",
+            alignSelf: "flex-start",
+            gap: 5,
             marginTop: 2,
-          }}
+            opacity: pressed ? 0.6 : 1,
+          })}
         >
-          {subtitle}
-        </Text>
+          {subtitleText}
+          <FontAwesome name="angle-right" size={13} color={colors.crit} />
+        </Pressable>
+      ) : subtitleText ? (
+        <View style={{ marginTop: 2 }}>{subtitleText}</View>
       ) : null}
     </View>
   );
@@ -619,131 +594,6 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-type SwipeableInventoryRowProps = {
-  item: InventoryItem;
-  highlight: boolean;
-  onPress: () => void;
-  onSwipeDelete: (
-    item: InventoryItem,
-    swipeable: SwipeableMethods | null,
-  ) => void;
-};
-
-/* ReanimatedSwipeable needs a fixed action width — `flex: 1` leaves the
- * snap-open animation without an anchor and the swipe stalls mid-drag. */
-const ACTION_WIDTH = 96;
-/* Commit threshold is capped by ACTION_WIDTH because `overshootRight: false`
- * prevents drag past the action edge. Higher feels more deliberate. */
-const COMMIT_THRESHOLD = 88;
-const PILL_RADIUS = 14;
-
-function fireHaptic(style: Haptics.ImpactFeedbackStyle) {
-  Haptics.impactAsync(style).catch(() => {});
-}
-
-function SwipeableInventoryRow({
-  item,
-  highlight,
-  onPress,
-  onSwipeDelete,
-}: SwipeableInventoryRowProps) {
-  const { colors, fonts } = useTheme();
-  const swipeRef = useRef<SwipeableMethods>(null);
-  /* onSwipeableWillOpen fires at snap kickoff; onSwipeableOpen fires when fully
-   * open. Either commits the delete; this ref blocks the duplicate call. */
-  const committedRef = useRef(false);
-
-  const commit = () => {
-    if (committedRef.current) return;
-    committedRef.current = true;
-    fireHaptic(Haptics.ImpactFeedbackStyle.Medium);
-    onSwipeDelete(item, swipeRef.current);
-  };
-
-  return (
-    <ReanimatedSwipeable
-      ref={swipeRef}
-      friction={1}
-      rightThreshold={COMMIT_THRESHOLD}
-      overshootRight={false}
-      onSwipeableWillOpen={commit}
-      onSwipeableOpen={commit}
-      onSwipeableClose={() => {
-        committedRef.current = false;
-      }}
-      renderRightActions={(progress) => (
-        <SwipeDeleteAction
-          progress={progress}
-          colors={colors}
-          fonts={fonts}
-        />
-      )}
-    >
-      <InventoryRow item={item} highlight={highlight} onPress={onPress} />
-    </ReanimatedSwipeable>
-  );
-}
-
-type SwipeDeleteActionProps = {
-  progress: SharedValue<number>;
-  colors: ReturnType<typeof useTheme>["colors"];
-  fonts: ReturnType<typeof useTheme>["fonts"];
-};
-
-function SwipeDeleteAction({ progress, colors, fonts }: SwipeDeleteActionProps) {
-  /* Fire one light haptic as the row crosses the open threshold; re-arm when
-   * the swipe relaxes so each gesture gets its own cue. */
-  const armed = useSharedValue(false);
-  useAnimatedReaction(
-    () => progress.value,
-    (current, previous) => {
-      if (current >= 1 && (previous ?? 0) < 1 && !armed.value) {
-        armed.value = true;
-        runOnJS(fireHaptic)(Haptics.ImpactFeedbackStyle.Light);
-      } else if (current < 0.35) {
-        armed.value = false;
-      }
-    },
-  );
-
-  return (
-    <View
-      style={{
-        width: ACTION_WIDTH,
-        paddingLeft: 8,
-        paddingRight: 4,
-        paddingVertical: 4,
-        alignItems: "stretch",
-        justifyContent: "center",
-      }}
-    >
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: colors.crit,
-          borderRadius: PILL_RADIUS,
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 4,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.16,
-          shadowRadius: 6,
-          elevation: 3,
-        }}
-      >
-        <FontAwesome name="trash" size={18} color="#FFFFFF" />
-        <Text
-          style={{
-            color: "#FFFFFF",
-            fontFamily: fonts.bodyStrong,
-            fontSize: 11.5,
-            letterSpacing: -0.1,
-          }}
-        >
-          Delete
-        </Text>
-      </View>
-    </View>
-  );
+function holdsLot(row: FoodRow, lotId: string): boolean {
+  return row.lots.some((lot) => lot.id === lotId);
 }

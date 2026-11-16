@@ -13,6 +13,7 @@ from app.ai.agents.nodes import analyze_inventory
 from app.ai.llm.errors import ProviderError
 from app.ai.llm.providers import FakeProvider
 from app.ai.llm.retry import PipelineDeadline
+from app.inventory.units import table_unit
 
 CASES = json.loads(
     (Path(__file__).parents[1] / "app/ai/eval/meal_fixtures.json").read_text()
@@ -66,10 +67,28 @@ def assessment(*verdicts):
     return {"checks": [check(i, verdict) for i, verdict in enumerate(verdicts)]}
 
 
+TBSP_ML = table_unit("tbsp")[1]
+
+
+def _food_line(ingredient):
+    unit = ingredient["unit"]
+    line = {"id": ingredient["inventory_item_id"], "name": ingredient["name"]}
+    if unit == "g":
+        return {**line, "available": ingredient["use_amount"] * 2, "stock_base": "g"}
+    if unit == "tbsp":
+        ml = ingredient["use_amount"] * float(TBSP_ML) * 2
+        return {**line, "available": ml, "stock_base": "ml"}
+    return {
+        **line,
+        "available": ingredient["use_amount"] * 2,
+        "stock_base": "each",
+        "each_label": unit,
+    }
+
+
 def inventory():
     return [
-        {"id": item["inventory_item_id"], "name": item["name"],
-         "quantity": item["use_amount"] * 2, "unit": item["unit"]}
+        _food_line(item)
         for case in CASES[:2] for item in case["recipe"]["ingredients"]
     ]
 
@@ -189,7 +208,13 @@ async def test_water_is_never_an_unlisted_food():
 @pytest.mark.asyncio
 async def test_judge_sees_only_each_recipes_own_inventory_items_at_minimal_thinking():
     recipe = Recipe.model_validate(CASES[1]["recipe"])
-    unrelated = {"id": "unrelated", "name": "Anchovies", "quantity": 1, "unit": "can"}
+    unrelated = {
+        "id": "unrelated",
+        "name": "Anchovies",
+        "available": 1,
+        "stock_base": "each",
+        "each_label": "can",
+    }
     state = analyze_inventory({"inventory": [*inventory(), unrelated]})
     provider = RecordingProvider([assessment("eligible")])
     await assess_meals([recipe], state, provider, deadline=PipelineDeadline(30))
@@ -199,6 +224,9 @@ async def test_judge_sees_only_each_recipes_own_inventory_items_at_minimal_think
     [candidate] = payload["candidates"]
     assert sorted(item["name"] for item in candidate["kitchen_items"]) == sorted(
         ingredient.name for ingredient in recipe.ingredients
+    )
+    assert all(
+        item["recipe_names"] == [item["name"]] for item in candidate["kitchen_items"]
     )
     assert provider.calls[0]["thinking"] == "minimal"
 

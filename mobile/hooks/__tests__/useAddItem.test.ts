@@ -2,61 +2,12 @@ import React from "react";
 import { renderHook, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-type SupaResult<T> = { data: T | null; error: Error | null };
-
-let mockLookupResult: SupaResult<{
-  id: string;
-  quantity: number;
-  expiration_date: string | null;
-}> = { data: null, error: null };
-let mockInsertResult: SupaResult<{ id: string }> = {
-  data: { id: "inserted-id" },
-  error: null,
-};
-let mockUpdateResult: SupaResult<{ id: string }> = {
-  data: { id: "updated-id" },
-  error: null,
-};
-
-let lastInsertPayload: Record<string, unknown> | null = null;
-let lastUpdatePayload: Record<string, unknown> | null = null;
-let updateMatchedId: string | null = null;
-let insertCallCount = 0;
-let updateCallCount = 0;
-
-function buildQueryBuilder() {
-  let didInsert = false;
-  const b: any = {};
-  const chain = ["select", "eq", "ilike", "is", "limit"] as const;
-  chain.forEach((m) => {
-    b[m] = jest.fn(() => b);
-  });
-  b.insert = jest.fn((payload: Record<string, unknown>) => {
-    didInsert = true;
-    lastInsertPayload = payload;
-    insertCallCount += 1;
-    return b;
-  });
-  b.update = jest.fn((payload: Record<string, unknown>) => {
-    lastUpdatePayload = payload;
-    updateCallCount += 1;
-    // capture the next .eq("id", ...) call so we can assert it
-    const origEq = b.eq;
-    b.eq = jest.fn((col: string, val: string) => {
-      if (col === "id") updateMatchedId = val;
-      return origEq(col, val);
-    });
-    return b;
-  });
-  b.maybeSingle = jest.fn(async () => mockLookupResult);
-  b.single = jest.fn(async () => (didInsert ? mockInsertResult : mockUpdateResult));
-  return b;
-}
-
-const mockFrom = jest.fn((_table: string) => buildQueryBuilder());
+const mockRpc = jest.fn();
 
 jest.mock("@/lib/supabase", () => ({
-  supabase: { from: (table: string) => mockFrom(table) },
+  supabase: {
+    rpc: (fn: string, args: Record<string, unknown>) => mockRpc(fn, args),
+  },
 }));
 
 jest.mock("@/stores/auth", () => {
@@ -70,83 +21,211 @@ jest.mock("@/stores/auth", () => {
   return { useAuthStore };
 });
 
-import { useAddItem } from "@/hooks/useAddItem";
+import {
+  AddItemInput,
+  addItemErrorToast,
+  StockUnitMismatchError,
+  useAddItem,
+} from "@/hooks/useAddItem";
 import { useAuthStore } from "@/stores/auth";
 
+let client: QueryClient;
+
 function wrapper({ children }: { children: React.ReactNode }) {
-  const client = new QueryClient({
-    // gcTime: 0 stops cache GC timers from keeping the Jest worker alive.
-    defaultOptions: {
-      queries: { retry: false, gcTime: 0 },
-      mutations: { retry: false, gcTime: 0 },
-    },
-  });
   return React.createElement(QueryClientProvider, { client }, children);
 }
 
-const validInput = {
+const validInput: AddItemInput = {
   name: "Spinach",
   category_id: "cat-1",
-  quantity: 1,
-  unit: "bag",
+  amount: { stockBase: "each", eachLabel: "bag", quantity: 1 },
   expiration_date: "2026-06-01",
-  storage_location: "fridge" as const,
+  storage_location: "fridge",
   notes: null,
+  into_lot_id: null,
 };
+
+function rpcResolves(lotMerged: boolean) {
+  mockRpc.mockResolvedValue({
+    data: {
+      food_id: "food-1",
+      lot_id: "lot-1",
+      food_created: !lotMerged,
+      lot_merged: lotMerged,
+    },
+    error: null,
+  });
+}
+
+function rpcFailsWith(message: string, details: string | null) {
+  mockRpc.mockResolvedValue({
+    data: null,
+    error: { message, code: "22023", details },
+  });
+}
 
 describe("useAddItem", () => {
   beforeEach(() => {
-    mockFrom.mockClear();
-    lastInsertPayload = null;
-    lastUpdatePayload = null;
-    updateMatchedId = null;
-    insertCallCount = 0;
-    updateCallCount = 0;
-    mockLookupResult = { data: null, error: null };
-    mockInsertResult = { data: { id: "inserted-id" }, error: null };
-    mockUpdateResult = { data: { id: "updated-id" }, error: null };
+    client = new QueryClient({
+      // gcTime: 0 stops cache GC timers from keeping the Jest worker alive.
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0 },
+        mutations: { retry: false, gcTime: 0 },
+      },
+    });
+    mockRpc.mockReset();
+    rpcResolves(false);
     (useAuthStore.getState as jest.Mock).mockReturnValue({
       user: { id: "user-1" },
       householdId: "household-1",
     });
   });
 
-  it("inserts a new row when no matching item exists (merged: false)", async () => {
+  it("adds a counted batch through add_lot with its each label and no package", async () => {
+    const invalidate = jest.spyOn(client, "invalidateQueries");
     const { result } = renderHook(() => useAddItem(), { wrapper });
-    result.current.mutate(validInput);
+    result.current.mutate({
+      ...validInput,
+      amount: { stockBase: "each", eachLabel: "bag", quantity: 2 },
+    });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(insertCallCount).toBe(1);
-    expect(updateCallCount).toBe(0);
-    expect(lastInsertPayload).toEqual({
-      ...validInput,
-      household_id: "household-1",
-      added_by: "user-1",
+    expect(mockRpc).toHaveBeenCalledWith("add_lot", {
+      p_household_id: "household-1",
+      p_name: "Spinach",
+      p_stock_base: "each",
+      p_quantity: 2,
+      p_storage_location: "fridge",
+      p_expiration_date: "2026-06-01",
+      p_category_id: "cat-1",
+      p_each_label: "bag",
+      p_package_size: null,
+      p_package_label: null,
+      p_notes: null,
     });
-    expect(result.current.data).toEqual({ id: "inserted-id", merged: false });
+    expect(result.current.data).toEqual({ id: "lot-1", merged: false });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["inventory"] });
   });
 
-  it("updates the existing row when a match is found (merged: true) with summed quantity and earlier expiration", async () => {
-    mockLookupResult = {
-      data: { id: "existing-1", quantity: 2, expiration_date: "2026-05-25" },
-      error: null,
-    };
-    mockUpdateResult = { data: { id: "existing-1" }, error: null };
+  it.each<[string, AddItemInput["amount"], Record<string, unknown>]>([
+    [
+      "a loose weight",
+      { stockBase: "g", quantity: 1500, package: null },
+      {
+        p_stock_base: "g",
+        p_quantity: 1500,
+        p_each_label: null,
+        p_package_size: null,
+        p_package_label: null,
+      },
+    ],
+    [
+      "packages of a known size",
+      {
+        stockBase: "ml",
+        quantity: 2000,
+        package: { label: "bottle", size: 1000 },
+      },
+      {
+        p_stock_base: "ml",
+        p_quantity: 2000,
+        p_each_label: null,
+        p_package_size: 1000,
+        p_package_label: "bottle",
+      },
+    ],
+  ])("adds %s as a measured lot", async (_, amount, args) => {
+    const { result } = renderHook(() => useAddItem(), { wrapper });
+    result.current.mutate({ ...validInput, name: "Milk", amount });
 
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(mockRpc).toHaveBeenCalledWith(
+      "add_lot",
+      expect.objectContaining(args),
+    );
+  });
+
+  it("reports a merge into an existing lot", async () => {
+    rpcResolves(true);
     const { result } = renderHook(() => useAddItem(), { wrapper });
     result.current.mutate(validInput);
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual({ id: "lot-1", merged: true });
+  });
 
-    expect(updateCallCount).toBe(1);
-    expect(insertCallCount).toBe(0);
-    expect(lastUpdatePayload).toEqual({
-      quantity: 3,
-      expiration_date: "2026-05-25",
+  it.each([
+    ["Food 7c1e is stored as each (can)", "can"],
+    ["Food 7c1e is stored as ml", "ml"],
+  ])("reads the tracked unit from %j", async (details, trackedUnit) => {
+    rpcFailsWith("STOCK_BASE_MISMATCH", details);
+    const { result } = renderHook(() => useAddItem(), { wrapper });
+    result.current.mutate(validInput);
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error).toBeInstanceOf(StockUnitMismatchError);
+    expect((result.current.error as StockUnitMismatchError).trackedUnit).toBe(
+      trackedUnit,
+    );
+  });
+
+  it("surfaces other RPC errors unchanged", async () => {
+    rpcFailsWith("Quantity must be finite and positive", null);
+    const { result } = renderHook(() => useAddItem(), { wrapper });
+    result.current.mutate(validInput);
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error).not.toBeInstanceOf(StockUnitMismatchError);
+    expect(result.current.error?.message).toBe(
+      "Quantity must be finite and positive",
+    );
+  });
+
+  it("adds into an existing container through add_to_lot", async () => {
+    mockRpc.mockResolvedValue({ data: null, error: null });
+    const invalidate = jest.spyOn(client, "invalidateQueries");
+    const { result } = renderHook(() => useAddItem(), { wrapper });
+    result.current.mutate({
+      ...validInput,
+      name: "Horchata",
+      amount: { stockBase: "ml", quantity: 1000, package: { label: "jug", size: 1000 } },
+      into_lot_id: "lot-jug",
     });
-    expect(updateMatchedId).toBe("existing-1");
-    expect(result.current.data).toEqual({ id: "existing-1", merged: true });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(mockRpc).toHaveBeenCalledWith("add_to_lot", {
+      p_household_id: "household-1",
+      p_lot_id: "lot-jug",
+      p_stock_base: "ml",
+      p_quantity: 1000,
+      p_expiration_date: "2026-06-01",
+      p_each_label: null,
+    });
+    expect(result.current.data).toEqual({ id: "lot-jug", merged: true });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["inventory"] });
+  });
+
+  it("reads the tracked unit when a container's food is tracked in another unit", async () => {
+    rpcFailsWith("STOCK_BASE_MISMATCH", "Food 7c1e is stored as ml");
+    const { result } = renderHook(() => useAddItem(), { wrapper });
+    result.current.mutate({ ...validInput, into_lot_id: "lot-jug" });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect((result.current.error as StockUnitMismatchError).trackedUnit).toBe("ml");
+  });
+
+  it("says the container changed elsewhere when it is no longer live", async () => {
+    rpcFailsWith("LOT_NOT_LIVE", null);
+    const { result } = renderHook(() => useAddItem(), { wrapper });
+    result.current.mutate({ ...validInput, into_lot_id: "lot-jug" });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(addItemErrorToast(result.current.error!, "Horchata")).toEqual(
+      expect.objectContaining({ text1: "Couldn't add Horchata", text2: expect.stringMatching(/another phone/) }),
+    );
   });
 
   it("throws when the user is not signed in", async () => {
@@ -160,30 +239,6 @@ describe("useAddItem", () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.error?.message).toBe("not signed in");
-    expect(insertCallCount).toBe(0);
-    expect(updateCallCount).toBe(0);
-  });
-
-  it("surfaces supabase lookup errors via the mutation error state", async () => {
-    mockLookupResult = { data: null, error: new Error("RLS denied on select") };
-
-    const { result } = renderHook(() => useAddItem(), { wrapper });
-    result.current.mutate(validInput);
-
-    await waitFor(() => expect(result.current.isError).toBe(true));
-    expect(result.current.error?.message).toBe("RLS denied on select");
-    expect(insertCallCount).toBe(0);
-    expect(updateCallCount).toBe(0);
-  });
-
-  it("surfaces supabase insert errors via the mutation error state", async () => {
-    mockInsertResult = { data: null, error: new Error("RLS denied on insert") };
-
-    const { result } = renderHook(() => useAddItem(), { wrapper });
-    result.current.mutate(validInput);
-
-    await waitFor(() => expect(result.current.isError).toBe(true));
-    expect(result.current.error?.message).toBe("RLS denied on insert");
-    expect(insertCallCount).toBe(1);
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 });

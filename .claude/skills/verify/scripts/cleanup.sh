@@ -4,6 +4,18 @@
 set -uo pipefail
 source "$(dirname "$0")/env.sh"
 
+# A recording left running would hold the simulator's screen. SIGINT makes
+# simctl write a playable file; no GIF is made from an abandoned clip.
+if [ -f "$STATE_DIR/record.pid" ]; then
+  pid=$(cat "$STATE_DIR/record.pid")
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -INT "$pid" 2>/dev/null
+    for _ in $(seq 1 10); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+    echo "recording: stopped pid $pid"
+  fi
+  rm -f "$STATE_DIR/record.pid" "$STATE_DIR/record.name"
+fi
+
 for label in metro api; do
   pidfile="$STATE_DIR/$label.pid"
   [ -f "$pidfile" ] || continue

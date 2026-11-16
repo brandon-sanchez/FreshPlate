@@ -4,13 +4,18 @@ import { useRouter } from "expo-router";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useIsFocused } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 import SegmentedControl from "@/components/SegmentedControl";
 import BarcodeScanner from "@/components/BarcodeScanner";
 import ItemForm from "@/components/ItemForm";
 import { useTheme } from "@/hooks/useTheme";
 import { useFoodCategories } from "@/hooks/useFoodCategories";
-import { useAddItem } from "@/hooks/useAddItem";
+import { useInventoryItems } from "@/hooks/useInventoryItems";
+import {
+  addItemErrorToast,
+  addItemSuccessToast,
+  useAddItem,
+} from "@/hooks/useAddItem";
 
 type EntryMode = "Manual" | "Scan";
 
@@ -67,44 +72,37 @@ type ManualFormProps = {
 function ManualForm({ tabBarHeight }: ManualFormProps) {
   const router = useRouter();
   const { data: categories } = useFoodCategories();
+  const { data: lots } = useInventoryItems();
   const addItem = useAddItem();
   const [resetKey, setResetKey] = useState(0);
 
   return (
     <ItemForm
+      key={resetKey}
       categories={categories}
-      resetKey={resetKey}
+      existingLots={lots}
       submitLabel="Add to inventory"
       submittingLabel="Adding…"
       isSubmitting={addItem.isPending}
       contentContainerStyle={{ paddingBottom: tabBarHeight + 24 }}
       onSubmit={(input) => {
         const addedName = input.name;
-        addItem.mutate(input, {
-          onSuccess: ({ id, merged }) => {
-            setResetKey((k) => k + 1);
-            Toast.show({
-              type: "success",
-              text1: merged
-                ? `Updated ${addedName}`
-                : `Added ${addedName}`,
-              text2: merged
-                ? "Added to your existing item."
-                : "Tap to view in your inventory.",
-            });
-            router.push({
-              pathname: "/(tabs)/inventory",
-              params: { added: id },
-            });
+        addItem.mutate(
+          { ...input, notes: null },
+          {
+            onSuccess: (result) => {
+              setResetKey((k) => k + 1);
+              Toast.show(addItemSuccessToast(result, addedName));
+              router.push({
+                pathname: "/(tabs)/inventory",
+                params: { added: result.id },
+              });
+            },
+            onError: (error) => {
+              Toast.show(addItemErrorToast(error, addedName));
+            },
           },
-          onError: () => {
-            Toast.show({
-              type: "error",
-              text1: "Couldn't save",
-              text2: "Check your connection and try again.",
-            });
-          },
-        });
+        );
       }}
     />
   );

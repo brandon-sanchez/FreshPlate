@@ -4,7 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // Final node of the chain — `await`ed by the hook. We swap its resolved value per-test.
 const mockOrder = jest.fn();
-const mockEq = jest.fn((_col: string, _val: unknown) => ({ order: mockOrder }));
+const mockIs = jest.fn((_col: string, _val: unknown) => ({ order: mockOrder }));
+const mockEq = jest.fn((_col: string, _val: unknown) => ({ is: mockIs }));
 const mockSelect = jest.fn((_cols: string) => ({ eq: mockEq }));
 const mockFrom = jest.fn((_table: string) => ({ select: mockSelect }));
 
@@ -22,10 +23,7 @@ jest.mock("@/stores/auth", () => ({
   ),
 }));
 
-import {
-  daysUntilExpiration,
-  useInventoryItems,
-} from "@/hooks/useInventoryItems";
+import { useInventoryItems } from "@/hooks/useInventoryItems";
 
 function wrapper({ children }: { children: React.ReactNode }) {
   const client = new QueryClient({
@@ -35,17 +33,48 @@ function wrapper({ children }: { children: React.ReactNode }) {
   return React.createElement(QueryClientProvider, { client }, children);
 }
 
-const fixtureRow = {
-  id: "i1",
-  name: "Spinach",
+const spinachLot = {
+  id: "lot-1",
   quantity: 1,
-  unit: "bag",
   expiration_date: "2026-06-01",
   storage_location: "fridge",
-  is_leftover: false,
   notes: null,
   added_by: "u1",
-  category: { id: "c1", name: "Produce", icon: "leaf" },
+  opened_at: "2026-05-30T09:15:00+00:00",
+  created_at: "2026-05-28T18:00:00+00:00",
+  updated_at: "2026-05-30T09:15:00.654321+00:00",
+  initial_quantity: 2,
+  is_estimate: true,
+  food: {
+    id: "food-1",
+    name: "Spinach",
+    stock_base: "each",
+    each_label: "bag",
+    whole_units_only: true,
+    category: { id: "c1", name: "Produce", icon: "leaf" },
+  },
+};
+
+const soupLot = {
+  id: "lot-2",
+  quantity: 750,
+  expiration_date: null,
+  storage_location: "freezer",
+  notes: "Tuesday's batch",
+  added_by: null,
+  opened_at: null,
+  created_at: "2026-05-29T20:30:00+00:00",
+  updated_at: "2026-05-29T20:30:00+00:00",
+  initial_quantity: null,
+  is_estimate: false,
+  food: {
+    id: "food-2",
+    name: "Chicken soup",
+    stock_base: "ml",
+    each_label: null,
+    whole_units_only: false,
+    category: { id: "c2", name: "Leftovers", icon: "inbox" },
+  },
 };
 
 describe("useInventoryItems", () => {
@@ -53,20 +82,80 @@ describe("useInventoryItems", () => {
     mockFrom.mockClear();
     mockSelect.mockClear();
     mockEq.mockClear();
+    mockIs.mockClear();
     mockOrder.mockReset();
     mockHouseholdId.current = "household-1";
   });
 
-  it("fetches items scoped to the household and resolves with the rows", async () => {
-    mockOrder.mockResolvedValue({ data: [fixtureRow], error: null });
+  it("reads the household's live lots with their food, soonest expiry first", async () => {
+    mockOrder.mockResolvedValue({ data: [], error: null });
 
     const { result } = renderHook(() => useInventoryItems(), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(mockFrom).toHaveBeenCalledWith("inventory_items");
+    expect(mockFrom).toHaveBeenCalledWith("lots");
+    expect(mockSelect.mock.calls[0][0].replace(/\s+/g, " ").trim()).toBe(
+      "id, quantity, initial_quantity, is_estimate, expiration_date, storage_location, notes, " +
+        "added_by, opened_at, created_at, updated_at, " +
+        "food:food_stock!inner(id, name, stock_base, each_label, whole_units_only, " +
+        "category:food_categories(id, name, icon))",
+    );
     expect(mockEq).toHaveBeenCalledWith("household_id", "household-1");
-    expect(result.current.data).toEqual([fixtureRow]);
+    expect(mockIs).toHaveBeenCalledWith("depleted_at", null);
+    expect(mockOrder).toHaveBeenCalledWith("expiration_date", {
+      ascending: true,
+      nullsFirst: false,
+    });
+  });
+
+  it("maps each lot into one inventory row named and unitized by its food, with its opened and added times", async () => {
+    mockOrder.mockResolvedValue({ data: [spinachLot, soupLot], error: null });
+
+    const { result } = renderHook(() => useInventoryItems(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual([
+      {
+        id: "lot-1",
+        food_id: "food-1",
+        name: "Spinach",
+        quantity: 1,
+        initial_quantity: 2,
+        is_estimate: true,
+        unit: "bag",
+        whole_units_only: true,
+        expiration_date: "2026-06-01",
+        storage_location: "fridge",
+        is_leftover: false,
+        notes: null,
+        added_by: "u1",
+        opened_at: "2026-05-30T09:15:00+00:00",
+        created_at: "2026-05-28T18:00:00+00:00",
+        updated_at: "2026-05-30T09:15:00.654321+00:00",
+        category: { id: "c1", name: "Produce", icon: "leaf" },
+      },
+      {
+        id: "lot-2",
+        food_id: "food-2",
+        name: "Chicken soup",
+        quantity: 750,
+        initial_quantity: null,
+        is_estimate: false,
+        unit: "ml",
+        whole_units_only: false,
+        expiration_date: null,
+        storage_location: "freezer",
+        is_leftover: true,
+        notes: "Tuesday's batch",
+        added_by: null,
+        opened_at: null,
+        created_at: "2026-05-29T20:30:00+00:00",
+        updated_at: "2026-05-29T20:30:00+00:00",
+        category: { id: "c2", name: "Leftovers", icon: "inbox" },
+      },
+    ]);
   });
 
   it("does not fetch while householdId is null (auth still loading)", async () => {
@@ -91,34 +180,5 @@ describe("useInventoryItems", () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.error?.message).toBe("RLS denied");
-  });
-});
-
-describe("daysUntilExpiration", () => {
-  function localDateString(date: Date): string {
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, "0");
-    const d = String(date.getDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
-  }
-
-  it("returns null when expiration_date is null", () => {
-    expect(daysUntilExpiration(null)).toBeNull();
-  });
-
-  it("returns 0 when expiration is today", () => {
-    expect(daysUntilExpiration(localDateString(new Date()))).toBe(0);
-  });
-
-  it("returns a negative number when expiration is in the past", () => {
-    const past = new Date();
-    past.setDate(past.getDate() - 3);
-    expect(daysUntilExpiration(localDateString(past))).toBe(-3);
-  });
-
-  it("returns a positive number when expiration is in the future", () => {
-    const future = new Date();
-    future.setDate(future.getDate() + 7);
-    expect(daysUntilExpiration(localDateString(future))).toBe(7);
   });
 });

@@ -13,7 +13,7 @@ All helpers live in `.claude/skills/verify/scripts/` and run from the repo root.
 
 - **One run at a time, across every session and worktree.** There is one signed-in simulator, one Supabase project and one household. `launch.sh` takes a lock in the shared git directory and exits with code 3 if another checkout holds it, naming the holder and when it started. When that happens, keep coding, then retry `launch.sh` every few minutes. Never stop another checkout's servers or delete its lock. `cleanup.sh` releases the lock, so always run it when your proof is done, including after a failed attempt. A lock left behind by a crashed run is taken over automatically after 5 minutes if nothing is serving the app.
 - **Servers you didn't start.** If `doctor.sh` shows servers you didn't start from this checkout, they belong to Brandon: reuse them, never kill them.
-- **Real data.** Supabase is the hosted project, not a local copy. Every add, delete, save and cook changes Brandon's real household. Name test items `verify-<something>` and remove them at the end of the run.
+- **Real data.** Supabase is the hosted project, not a local copy. Every add, delete, save and cook changes Brandon's real household. Name test items `verify-<something>` and remove them at the end of the run. Never swipe, edit or delete a real item, even to take a screenshot: on `main` a full swipe on an Inventory row deletes it with no Undo. Add a `verify-` item first and act on that.
 - **No sign-in by agents.** Sign-in is Google or Apple only. If the app shows the login screen, stop and ask Brandon to sign in on the simulator. Never type credentials.
 - **AI calls cost money.** Recipe generation calls Gemini (paid tier) and recipe photos call a paid image API. Generate only when the feature under test needs it, and once per run, not in a loop.
 
@@ -64,6 +64,8 @@ Prove navigation by tapping, not by deep link.
 
 ```bash
 .claude/skills/verify/scripts/shot.sh <step-name>     # -> .verify/runs/<run>/NN-<step-name>.png
+.claude/skills/verify/scripts/record.sh start <name>  # starts <run>/<name>.mp4
+.claude/skills/verify/scripts/record.sh stop          # stops it and writes <run>/<name>.gif
 python3 -I .claude/skills/verify/scripts/db.py <table> "<postgrest query>"
 ```
 
@@ -76,6 +78,14 @@ Proof standards:
 - Confirm side effects with `db.py`, filtered by `household_id`. For example, an added item shows in `inventory_items`, a saved recipe in `saved_recipes`, a cook in `cook_events`. `db.py` is GET-only but uses the backend secret key, which bypasses row-level security, so always filter.
 - For API features, quote the matching `api.log` request lines (method, path, status).
 - Save `db.py` output into the run directory (`> "$(readlink .verify/current)/<name>.json"`) so the proof survives the session.
+
+### Images for a pull request
+
+The create-pr skill decides how many images a PR gets and how to post them. This section covers how to take them here.
+
+- **Screenshots:** `shot.sh`. For a before shot, launch from a checkout of the base branch.
+- **GIFs:** run `record.sh start <name>` right before the action and `record.sh stop` once the result settles. `stop` converts the clip with `scripts/gif.swift`, which uses macOS's own video and image frameworks, so ffmpeg isn't needed. The GIF is 440 px wide at 10 frames per second. Set `GIF_FPS` or `GIF_WIDTH` lower if it comes out over 5 MB.
+- **Personal data:** the household is real. Keep real item names, the greeting with Brandon's name, and emails out of frame, or crop them out before posting.
 
 ## Cleanup
 

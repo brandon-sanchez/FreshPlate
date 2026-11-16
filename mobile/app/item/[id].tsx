@@ -10,19 +10,21 @@ import {
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import Slider from "@react-native-community/slider";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "@/hooks/useTheme";
 import SegmentedControl from "@/components/SegmentedControl";
 import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";
-import {
-  daysUntilExpiration,
-  InventoryItem,
-  useInventoryItems,
-} from "@/hooks/useInventoryItems";
-import { useUpdateItem } from "@/hooks/useUpdateItem";
+import LotRemainingControl from "@/components/LotRemainingControl";
+import CutLotControl from "@/components/CutLotControl";
+import SectionLabel from "@/components/SectionLabel";
+import { InventoryItem, useInventoryItems } from "@/hooks/useInventoryItems";
+import { dateInDays, daysUntilExpiration } from "@/lib/expiry";
+import { formatAmount } from "@/lib/amount";
+import { FoodNameTakenError, useUpdateItem } from "@/hooks/useUpdateItem";
 import { useDeleteItem } from "@/hooks/useDeleteItem";
+import { ChangedElsewhereError } from "@/lib/lotRpc";
 import { useAuthStore } from "@/stores/auth";
 import { getUrgency } from "@/constants/theme";
 
@@ -54,8 +56,6 @@ export default function ItemDetailScreen() {
   const deleteItem = useDeleteItem();
 
   const [name, setName] = useState("");
-  const [quantity, setQuantity] = useState(1);
-  const [unit, setUnit] = useState("item");
   const [expDays, setExpDays] = useState<number | null>(null);
   const [storage, setStorage] = useState<StorageLocation>("fridge");
   const [notes, setNotes] = useState("");
@@ -64,8 +64,6 @@ export default function ItemDetailScreen() {
   useEffect(() => {
     if (!item || hydrated) return;
     setName(item.name);
-    setQuantity(item.quantity);
-    setUnit(item.unit);
     setExpDays(daysUntilExpiration(item.expiration_date));
     setStorage(item.storage_location);
     setNotes(item.notes ?? "");
@@ -95,15 +93,8 @@ export default function ItemDetailScreen() {
   }
 
   const trimmedName = name.trim();
-  const isValid = trimmedName.length > 0 && quantity > 0;
-  /* Local-calendar math; UTC slicing rounds evening adds in negative-UTC
-   * zones to the next day. */
-  const expirationISO = (() => {
-    if (expDays === null) return null;
-    const now = new Date();
-    const t = new Date(now.getFullYear(), now.getMonth(), now.getDate() + expDays);
-    return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
-  })();
+  const isValid = trimmedName.length > 0;
+  const expirationISO = expDays === null ? null : dateInDays(expDays);
   const urgency = expDays === null ? null : getUrgency(expDays);
   const urgencyColor =
     urgency?.level === "crit"
@@ -114,16 +105,18 @@ export default function ItemDetailScreen() {
 
   const handleSave = () => {
     if (!isValid || updateItem.isPending) return;
+    const trimmedNotes = notes.trim() || null;
     updateItem.mutate(
       {
         id: item.id,
+        foodId: item.food_id,
         patch: {
-          name: trimmedName,
-          quantity,
-          unit: unit.trim() || "item",
-          expiration_date: expirationISO,
-          storage_location: storage,
-          notes: notes.trim() || null,
+          ...(trimmedName !== item.name && { name: trimmedName }),
+          ...(expirationISO !== item.expiration_date && {
+            expiration_date: expirationISO,
+          }),
+          ...(storage !== item.storage_location && { storage_location: storage }),
+          ...(trimmedNotes !== item.notes && { notes: trimmedNotes }),
         },
       },
       {
@@ -131,37 +124,43 @@ export default function ItemDetailScreen() {
           Toast.show({ type: "success", text1: "Saved" });
           router.back();
         },
-        onError: () =>
+        onError: (error) =>
           Toast.show({
             type: "error",
             text1: "Couldn't save",
-            text2: "Check your connection and try again.",
+            text2:
+              error instanceof FoodNameTakenError
+                ? `Another item is already called ${trimmedName}.`
+                : "Check your connection and try again.",
           }),
       },
     );
   };
 
   const handleDelete = () => {
-    Alert.alert("Remove item?", `${item.name} will be removed from your fridge.`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Remove",
-        style: "destructive",
-        onPress: () =>
-          deleteItem.mutate(item.id, {
-            onSuccess: () => {
-              Toast.show({ type: "success", text1: "Removed" });
-              router.back();
-            },
-            onError: () =>
-              Toast.show({
-                type: "error",
-                text1: "Couldn't remove",
-                text2: "Check your connection and try again.",
-              }),
-          }),
-      },
-    ]);
+    Alert.alert(
+      "Delete this batch?",
+      `This erases the batch of ${item.name}. Use it for a batch added by mistake. To record that food was eaten or thrown out, swipe the batch and choose Used up or Toss.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () =>
+            deleteItem.mutate(
+              { id: item.id, name: item.name },
+              {
+                onSuccess: () => router.back(),
+                // The refetch that follows drops the batch, so staying would
+                // leave the editor on "Item not found" under the toast.
+                onError: (error) => {
+                  if (error instanceof ChangedElsewhereError) router.back();
+                },
+              },
+            ),
+        },
+      ],
+    );
   };
 
   const iconName = (item.category?.icon ?? "circle-o") as React.ComponentProps<
@@ -232,14 +231,19 @@ export default function ItemDetailScreen() {
                 marginTop: 2,
               }}
             >
-              {item.category?.name ?? "Uncategorized"}
+              {`${item.category?.name ?? "Uncategorized"} · ${formatAmount(item.quantity, item.unit, item.is_estimate)}`}
             </Text>
           </View>
         </View>
 
+        <LotRemainingControl lot={item} />
+        <CutLotControl lot={item} onCut={() => router.back()} />
+
         <SectionLabel text="Name" />
         <TextInput
           value={name}
+          // Mirrors the 80-character CHECK on foods.name.
+          maxLength={80}
           onChangeText={setName}
           placeholder="Item name"
           placeholderTextColor={colors.textSubtle}
@@ -249,73 +253,6 @@ export default function ItemDetailScreen() {
             borderRadius: 12,
             borderWidth: 1,
             borderColor: trimmedName.length === 0 ? colors.crit : colors.border,
-            backgroundColor: colors.surface,
-            color: colors.text,
-            fontFamily: fonts.body,
-            fontSize: 15,
-          }}
-        />
-
-        <SectionLabel text="Quantity" />
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 14,
-            backgroundColor: colors.surface,
-            borderWidth: 1,
-            borderColor: colors.border,
-            borderRadius: 12,
-            paddingVertical: 12,
-          }}
-        >
-          <StepperButton
-            label="−"
-            disabled={quantity <= 0.1}
-            onPress={() =>
-              setQuantity((q) => Math.max(0.1, Math.round((q - 0.1) * 10) / 10))
-            }
-          />
-          <View style={{ minWidth: 120, alignItems: "center" }}>
-            <Text
-              style={{
-                fontFamily: fonts.bodyStrong,
-                fontSize: 22,
-                color: colors.text,
-                letterSpacing: -0.5,
-              }}
-            >
-              {formatQuantity(quantity)}{" "}
-              <Text
-                style={{
-                  fontFamily: fonts.body,
-                  fontSize: 14,
-                  color: colors.textMuted,
-                }}
-              >
-                {unit}
-              </Text>
-            </Text>
-          </View>
-          <StepperButton
-            label="+"
-            onPress={() => setQuantity((q) => Math.round((q + 0.1) * 10) / 10)}
-          />
-        </View>
-
-        <SectionLabel text="Unit" />
-        <TextInput
-          value={unit}
-          onChangeText={setUnit}
-          placeholder="item"
-          placeholderTextColor={colors.textSubtle}
-          style={{
-            height: 48,
-            paddingHorizontal: 14,
-            borderRadius: 12,
-            borderWidth: 1,
-            borderColor: colors.border,
             backgroundColor: colors.surface,
             color: colors.text,
             fontFamily: fonts.body,
@@ -430,7 +367,7 @@ export default function ItemDetailScreen() {
               color: colors.crit,
             }}
           >
-            {deleteItem.isPending ? "Removing…" : "Remove"}
+            {deleteItem.isPending ? "Deleting…" : "Delete"}
           </Text>
         </Pressable>
         <Pressable
@@ -459,67 +396,6 @@ export default function ItemDetailScreen() {
       </View>
     </View>
   );
-}
-
-function SectionLabel({ text, inline }: { text: string; inline?: boolean }) {
-  const { colors, fonts } = useTheme();
-  return (
-    <Text
-      style={{
-        fontFamily: fonts.bodyStrong,
-        fontSize: 11,
-        color: colors.textMuted,
-        textTransform: "uppercase",
-        letterSpacing: 0.8,
-        marginTop: inline ? 0 : 8,
-        marginBottom: inline ? 0 : -8,
-      }}
-    >
-      {text}
-    </Text>
-  );
-}
-
-function StepperButton({
-  label,
-  onPress,
-  disabled,
-}: {
-  label: string;
-  onPress: () => void;
-  disabled?: boolean;
-}) {
-  const { colors, fonts } = useTheme();
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      style={{
-        width: 40,
-        height: 40,
-        borderRadius: 100,
-        backgroundColor: colors.accent,
-        alignItems: "center",
-        justifyContent: "center",
-        opacity: disabled ? 0.4 : 1,
-      }}
-    >
-      <Text
-        style={{
-          fontFamily: fonts.bodyStrong,
-          fontSize: 22,
-          color: colors.accentInk,
-          lineHeight: 22,
-        }}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
-function formatQuantity(q: number): string {
-  return Number.isInteger(q) ? String(q) : q.toFixed(1);
 }
 
 function capitalize(s: string): string {

@@ -36,7 +36,7 @@ async def test_scorers_and_curated_dataset_contract():
     cases = json.loads((Path(__file__).parents[1] / "app/ai/eval/dataset.json").read_text())
     assert len(cases) == 22
     assert set(CASE_COVERAGE).issubset({case["name"] for case in cases})
-    assert all(all("name" in item and "quantity" in item and "unit" in item for item in case["inventory"]) for case in cases)
+    assert all(all("name" in item and "available" in item and "stock_base" in item for item in case["inventory"]) for case in cases)
     for case in cases:
         usable = analyze_inventory({"inventory": case["inventory"]})["usable_items"]
         mapped = [RecipeIngredient(name=item["name"], inventory_item_id=item["id"], use_amount=1, unit=item["unit"]) for item in usable]
@@ -85,3 +85,13 @@ def test_coverage_leaves_out_unmapped_water():
         }
     )
     assert ingredient_coverage_percent(soup, [{"id": "t", "quantity": 4}]) == 100
+
+
+def test_mapping_compares_amounts_in_a_common_unit():
+    rice = [{"id": "t", "quantity": 2, "unit": "kg"}]
+    light = recipe().ingredients[0].model_copy(update={"use_amount": 300, "unit": "g"})
+    heavy = light.model_copy(update={"use_amount": 2.5, "unit": "kg"})
+    light_recipe = recipe().model_copy(update={"ingredients": [light]})
+    heavy_recipe = recipe().model_copy(update={"ingredients": [heavy]})
+    assert mapping_validity_percent(light_recipe, rice) == 100
+    assert mapping_validity_percent(heavy_recipe, rice) == 0

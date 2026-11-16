@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from typing import Any, Literal, Protocol
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING, MAX_BATCH_CEILING
 from app.ai.agents.models import (
@@ -22,7 +21,9 @@ from app.ai.agents.state import (
     GenerationResult,
     InventoryAnalysis,
     QualityResult,
+    RecipeSteering,
     RetrievalResult,
+    SteeringExample,
     UsableItem,
 )
 from app.ai.llm.protocol import LLMProvider
@@ -33,6 +34,8 @@ from app.ai.rag.vector_store import (
     DEFAULT_MATCH_THRESHOLD,
     RetrievedRecipe,
 )
+from app.inventory.food_facts import FoodLine
+from app.inventory.units import Exact, FoodFacts, convertible_units, to_stock
 
 EXPIRING_WITHIN_DAYS = 5
 MAX_QUALITY_RETRIES = 1
@@ -51,6 +54,7 @@ WATER_RULE = (
     "seasoning or fat, must come from the listed inventory."
 )
 _QUERY_TERM_SEPARATOR = re.compile(r"[^\w]+", flags=re.UNICODE)
+_USABLE_ITEMS = TypeAdapter(list[UsableItem])
 
 
 class RecipeRetrieverPort(Protocol):
@@ -71,13 +75,19 @@ def analyze_inventory(
     *,
     today: date | None = None,
 ) -> InventoryAnalysis:
-    """Filter inventory and produce priority-ordered retrieval inputs.
+    """Turn the kitchen's foods into usable items and retrieval terms.
 
-    Expired, depleted, and zero-quantity rows never reach the generator. Rows
-    expiring today through five days from ``today`` are placed first and carry
-    an explicit ``is_expiring`` flag for downstream prompt and UI work. The
-    retrieval query lists expiring items, then main components, then the rest,
+    ``state["inventory"]`` holds one ``FoodLine`` mapping per food. Foods with
+    no unexpired stock never reach the generator. Each usable item lists the
+    units the converter can turn into a number for that food. Foods expiring
+    today through five days from ``today`` are placed first and carry an
+    explicit ``is_expiring`` flag for downstream prompt and UI work. The
+    retrieval query lists expiring foods, then main components, then the rest,
     capped at ``RETRIEVAL_QUERY_TERM_LIMIT`` names.
+
+    Raises:
+        ValueError: When the inventory is not a sequence or a line is not a
+            valid ``FoodLine``.
     """
     reference_date = today or date.today()
     raw_inventory = state.get("inventory", [])
@@ -88,39 +98,34 @@ def analyze_inventory(
 
     candidates: list[tuple[tuple[int, int, int], UsableItem]] = []
     query_candidates: list[tuple[tuple[int, int, int], str]] = []
-    for index, raw_item in enumerate(raw_inventory):
-        if not isinstance(raw_item, Mapping):
-            raise ValueError("Recipe state inventory items must be mappings")
-
-        item_id = _required_text(raw_item, "id")
-        name = _required_text(raw_item, "name")
-        quantity = _quantity(raw_item.get("quantity", 1))
-        if quantity <= 0 or _is_depleted(raw_item.get("depleted_at")):
-            continue
-
-        expiration_date = _expiration_date(raw_item.get("expiration_date"))
-        if expiration_date is not None and expiration_date < reference_date:
+    for index, raw_food in enumerate(raw_inventory):
+        try:
+            food = FoodLine.model_validate(raw_food)
+        except ValidationError as exc:
+            raise ValueError(f"Invalid recipe inventory line: {exc}") from exc
+        if food.available <= 0:
             continue
 
         days_until_expiration = (
-            (expiration_date - reference_date).days
-            if expiration_date is not None
+            (food.next_expiry - reference_date).days
+            if food.next_expiry is not None
             else None
         )
         is_expiring = days_until_expiration is not None and (
             0 <= days_until_expiration <= EXPIRING_WITHIN_DAYS
         )
-        unit = _unit(raw_item.get("unit", "item"))
         usable_item: UsableItem = {
-            "id": item_id,
-            "name": name,
-            "quantity": quantity,
-            "unit": unit,
-            "expiration_date": expiration_date,
+            "id": food.id,
+            "name": food.name,
+            "quantity": food.available,
+            "unit": food.stock_unit,
+            "units": list(convertible_units(food.facts)),
+            "lot_count": food.lot_count,
+            "expiration_date": food.next_expiry,
             "days_until_expiration": days_until_expiration,
             "is_expiring": is_expiring,
+            "food": food.model_dump(mode="json"),
         }
-        normalized_name = normalize_query_term(name)
 
         priority = 0 if is_expiring else 1
         days_priority = (
@@ -131,12 +136,12 @@ def analyze_inventory(
         candidates.append(((priority, days_priority, index), usable_item))
         if is_expiring:
             query_priority = 0
-        elif _is_main_component(raw_item):
+        elif _is_main_component(food.category):
             query_priority = 1
         else:
             query_priority = 2
         query_candidates.append(
-            ((query_priority, days_priority, index), normalized_name)
+            ((query_priority, days_priority, index), normalize_query_term(food.name))
         )
 
     candidates.sort(key=lambda candidate: candidate[0])
@@ -164,9 +169,7 @@ async def retrieve_recipes(
 
     if any(not isinstance(term, str) for term in raw_terms):
         raise ValueError("Recipe state query_terms must contain strings")
-    query_terms = _unique_terms(
-        normalize_query_term(term) for term in raw_terms
-    )
+    query_terms = _unique_terms(normalize_query_term(term) for term in raw_terms)
     if not query_terms:
         return {"retrieved_recipes": []}
 
@@ -186,25 +189,34 @@ async def generate_recipes(
     prompt: PromptTemplate | None = None,
     deadline: PipelineDeadline | None = None,
 ) -> GenerationResult:
-    """Generate recipes while preserving provider amounts for validation."""
+    """Generate recipes while preserving provider amounts for validation.
+
+    The response schema limits each ingredient to one usable food and that
+    food's units. A kitchen with no usable food makes no provider call and
+    returns an empty batch.
+    """
     template = prompt or load_prompt("generate_recipes")
     batch_ceiling = _batch_ceiling(state)
     usable_items = _usable_items(state.get("usable_items", []))
-    active_deadline = deadline or _state_deadline(state)
-    response = await provider.generate(
-        _generation_prompt(state, usable_items),
-        response_model=recipe_batch_model(batch_ceiling),
-        system_instruction=template.system,
-        deadline=active_deadline,
-        thinking=template.thinking,
-    )
-    validated_response = RecipeGenerationResponse.model_validate(response)
     retry_count = _retry_count(state)
     if state.get("quality_feedback"):
         # The router bounds retries against the caller's configured limit,
         # so the counter must stay truthful: capping it here would let a
         # limit above the default retry forever.
         retry_count = retry_count + 1
+    if not usable_items:
+        return {"generated_recipes": [], "retry_count": retry_count}
+    active_deadline = deadline or _state_deadline(state)
+    response = await provider.generate(
+        _generation_prompt(state, usable_items),
+        response_model=recipe_batch_model(
+            batch_ceiling, {item["id"]: item["units"] for item in usable_items}
+        ),
+        system_instruction=template.system,
+        deadline=active_deadline,
+        thinking=template.thinking,
+    )
+    validated_response = RecipeGenerationResponse.model_validate(response)
     return {
         "generated_recipes": validated_response.recipes[:batch_ceiling],
         "retry_count": retry_count,
@@ -219,6 +231,9 @@ def check_quality(state: Mapping[str, Any]) -> QualityResult:
     """
     usable_items = _usable_items(state.get("usable_items", []))
     inventory_by_id = {item["id"]: item for item in usable_items}
+    facts_by_id = {
+        item["id"]: FoodLine.model_validate(item["food"]).facts for item in usable_items
+    }
     generated = state.get("generated_recipes", [])
     if not isinstance(generated, Sequence) or isinstance(generated, (str, bytes)):
         raise ValueError("Recipe state generated_recipes must be a sequence")
@@ -232,7 +247,7 @@ def check_quality(state: Mapping[str, Any]) -> QualityResult:
             failures.append(f"Recipe {index} is incomplete: {_validation_message(exc)}")
             continue
 
-        issues = _quality_issues(recipe, inventory_by_id)
+        issues = _quality_issues(recipe, inventory_by_id, facts_by_id)
         if issues:
             failures.append(f"Recipe '{recipe.title}': {'; '.join(issues)}")
         else:
@@ -254,12 +269,17 @@ def route_after_quality(
     *,
     quality_retry_limit: int = MAX_QUALITY_RETRIES,
     retry_only_when_no_valid: bool = False,
+    deadline: PipelineDeadline | None = None,
 ) -> Literal["retry", "finish"]:
-    """Retry only when generated recipes were rejected, within the retry budget."""
+    """Retry only when generated recipes were rejected, within the retry budget.
+
+    A retry also needs ``QUALITY_RETRY_MIN_BUDGET_SECONDS`` left on
+    ``deadline``, which defaults to the state's deadline.
+    """
     if retry_only_when_no_valid and state.get("valid_recipes"):
         return "finish"
     if state.get("quality_feedback") and _retry_count(state) < quality_retry_limit:
-        deadline = _state_deadline(state)
+        deadline = deadline or _state_deadline(state)
         if (
             deadline is not None
             and deadline.remaining_seconds < QUALITY_RETRY_MIN_BUDGET_SECONDS
@@ -276,50 +296,7 @@ def normalize_query_term(value: str) -> str:
     return " ".join(_QUERY_TERM_SEPARATOR.sub(" ", value.casefold()).split())
 
 
-def _required_text(item: Mapping[str, Any], field: str) -> str:
-    value = item.get(field)
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"Inventory item '{field}' must be a non-empty string")
-    return value
-
-
-def _quantity(value: Any) -> float:
-    try:
-        quantity = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("Inventory quantity must be numeric") from exc
-    if not math.isfinite(quantity):
-        raise ValueError("Inventory quantity must be finite")
-    return quantity
-
-
-def _unit(value: Any) -> str:
-    if not isinstance(value, str) or not value.strip():
-        return "item"
-    return value.strip()
-
-
-def _expiration_date(value: Any) -> date | None:
-    if value is None or value == "":
-        return None
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    if isinstance(value, str):
-        try:
-            return date.fromisoformat(value.strip())
-        except ValueError as exc:
-            raise ValueError("Inventory expiration_date must be ISO formatted") from exc
-    raise ValueError("Inventory expiration_date must be a date or ISO string")
-
-
-def _is_depleted(value: Any) -> bool:
-    return value is not None and value != ""
-
-
-def _is_main_component(item: Mapping[str, Any]) -> bool:
-    category = item.get("category")
+def _is_main_component(category: str | None) -> bool:
     return (
         isinstance(category, str)
         and category.strip().casefold() in MAIN_COMPONENT_CATEGORIES
@@ -346,33 +323,10 @@ def _state_deadline(state: Mapping[str, Any]) -> PipelineDeadline | None:
 
 
 def _usable_items(raw_items: Any) -> list[UsableItem]:
-    if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes)):
-        raise ValueError("Recipe state usable_items must be a sequence")
-    items: list[UsableItem] = []
-    for raw_item in raw_items:
-        if not isinstance(raw_item, Mapping):
-            raise ValueError("Recipe state usable_items must contain mappings")
-        item_id = _required_text(raw_item, "id")
-        name = _required_text(raw_item, "name")
-        unit = _required_text(raw_item, "unit")
-        quantity = raw_item.get("quantity")
-        parsed_quantity = _quantity(quantity)
-        if parsed_quantity <= 0:
-            raise ValueError("Usable inventory quantities must be greater than zero")
-        items.append(
-            {
-                "id": item_id,
-                "name": name,
-                "quantity": parsed_quantity,
-                "unit": unit,
-                "expiration_date": _expiration_date(raw_item.get("expiration_date")),
-                "days_until_expiration": _optional_int(
-                    raw_item.get("days_until_expiration")
-                ),
-                "is_expiring": bool(raw_item.get("is_expiring", False)),
-            }
-        )
-    return items
+    try:
+        return _USABLE_ITEMS.validate_python(raw_items)
+    except ValidationError as exc:
+        raise ValueError(f"Recipe state usable_items are invalid: {exc}") from exc
 
 
 def _generation_prompt(
@@ -400,15 +354,15 @@ def _generation_prompt(
             "as templates."
         ),
         (
-            "Use only the listed inventory, in the listed units and amounts. "
-            "Never add untracked staples, shopping-list ingredients, or hidden "
+            "Use only the listed inventory, within the listed amounts. Never "
+            "add untracked staples, shopping-list ingredients, or hidden "
             "garnishes."
         ),
         (
-            "For tracked ingredients, use the supplied inventory_item_id and "
-            "express use_amount in that item's own unit."
+            "Every ingredient must map to one listed inventory_item_id. Write "
+            "its use_amount in whichever of that food's listed units a cook "
+            "would use, such as cloves of garlic or tablespoons of oil."
         ),
-        "Every ingredient must map to one listed inventory_item_id.",
         (
             "Use the full batch ceiling when distinct grounded recipes are "
             "possible. Return fewer only when no additional grounded recipe "
@@ -417,12 +371,7 @@ def _generation_prompt(
         "",
         "Usable inventory:",
     ]
-    for item in usable_items:
-        urgency = "; expiring soon" if item["is_expiring"] else ""
-        lines.append(
-            f"- {item['id']}: {item['name']} - {item['quantity']} {item['unit']}"
-            f"{urgency}"
-        )
+    lines.extend(_inventory_line(item) for item in usable_items)
 
     lines.extend(("", "Retrieved recipe inspiration:"))
     retrieved_recipes = state.get("retrieved_recipes", [])
@@ -457,6 +406,7 @@ def _generation_prompt(
         lines.extend(("", "Do not repeat these shown titles:"))
         lines.append(", ".join(str(title) for title in exclude_titles) or "None")
 
+    lines.extend(_steering_lines(state.get("steering")))
     lines.extend(("", f"Maximum number of recipes: {ceiling}"))
     feedback = state.get("quality_feedback")
     if feedback:
@@ -464,19 +414,73 @@ def _generation_prompt(
     return "\n".join(lines)
 
 
+def _steering_lines(steering: RecipeSteering | None) -> list[str]:
+    if not steering or not (steering["more_like"] or steering["less_like"]):
+        return []
+    lines = [
+        "",
+        (
+            "Steering from the cook. Two recipes are alike when they share at "
+            "least two foods and the shared foods are at least half of all the "
+            "foods the two use."
+        ),
+    ]
+    if steering["more_like"]:
+        lines.append(
+            "The cook asked for more recipes like these. Make each recipe alike "
+            "to one of them, while still a different dish:"
+        )
+        lines.extend(_steering_example(example) for example in steering["more_like"])
+    if steering["less_like"]:
+        lines.append(
+            "The cook asked for fewer recipes like these. Do not write a recipe "
+            "alike to any of them:"
+        )
+        lines.extend(_steering_example(example) for example in steering["less_like"])
+    return lines
+
+
+def _steering_example(example: SteeringExample) -> str:
+    return f"- {example['title']} (uses {', '.join(example['foods'])})"
+
+
+def _inventory_line(item: UsableItem) -> str:
+    parts = [
+        f"- {item['id']}: {item['name']}",
+        f"{_amount_text(item['quantity'])} {item['unit']}",
+    ]
+    if item["lot_count"] > 1:
+        parts.append(f"{item['lot_count']} batches")
+    if item["expiration_date"] is not None:
+        urgency = ", expiring soon" if item["is_expiring"] else ""
+        parts.append(f"next expires {item['expiration_date'].isoformat()}{urgency}")
+    parts.append(f"units: {', '.join(item['units'])}")
+    return " | ".join(parts)
+
+
 def _quality_issues(
     recipe: Recipe,
     inventory_by_id: Mapping[str, UsableItem],
+    facts_by_id: Mapping[str, FoodFacts],
 ) -> list[str]:
+    """Return why ``recipe`` is not grounded in the usable inventory.
+
+    An ingredient must name a usable food, except unmapped water. A food's
+    ingredients fail together only when their exact conversions add up to
+    more than its available stock. ``Approximate``, ``Small`` and
+    ``AskAtCook`` amounts never reject a recipe, because the cook flow
+    confirms them.
+    """
     issues: list[str] = []
     grounded = False
-    requested_by_id: dict[str, Decimal] = {}
+    exact_by_id: dict[str, Decimal] = {}
     for ingredient in recipe.ingredients:
         if ingredient.inventory_item_id is None and is_water(ingredient.name):
             continue
-        if ingredient.use_amount is None:
+        amount = ingredient.use_amount
+        if amount is None:
             issues.append(f"ingredient '{ingredient.name}' is missing use_amount")
-        elif not math.isfinite(ingredient.use_amount) or ingredient.use_amount <= 0:
+        elif amount <= 0:
             issues.append(f"ingredient '{ingredient.name}' has an invalid use_amount")
 
         item_id = ingredient.inventory_item_id
@@ -491,41 +495,34 @@ def _quality_issues(
             )
             continue
         grounded = True
-        if normalize_query_term(ingredient.name) != normalize_query_term(item["name"]):
-            issues.append(
-                f"ingredient '{ingredient.name}' does not match inventory item "
-                f"name '{item['name']}'"
+        if amount is None or amount <= 0:
+            continue
+        conversion = to_stock(
+            Decimal(str(amount)),
+            ingredient.unit,
+            facts_by_id[item_id],
+        )
+        if isinstance(conversion, Exact):
+            exact_by_id[item_id] = (
+                exact_by_id.get(item_id, Decimal(0)) + conversion.amount
             )
-        if ingredient.unit.casefold() != item["unit"].casefold():
-            issues.append(
-                f"ingredient '{ingredient.name}' uses unit '{ingredient.unit}', "
-                f"but inventory item uses '{item['unit']}'"
-            )
-        if (
-            ingredient.use_amount is not None
-            and math.isfinite(ingredient.use_amount)
-            and ingredient.use_amount > item["quantity"]
-        ):
-            issues.append(
-                f"ingredient '{ingredient.name}' uses more than the available "
-                f"{item['quantity']}"
-            )
-        if ingredient.use_amount is not None and math.isfinite(
-            ingredient.use_amount
-        ):
-            requested_by_id[item_id] = requested_by_id.get(
-                item_id, Decimal("0")
-            ) + Decimal(str(ingredient.use_amount))
-    for item_id, requested in requested_by_id.items():
+    for item_id, needed in exact_by_id.items():
         item = inventory_by_id[item_id]
-        if requested > Decimal(str(item["quantity"])):
+        if needed > Decimal(str(item["quantity"])):
             issues.append(
-                f"ingredients mapped to inventory item '{item_id}' use {requested} "
-                f"in total, more than the available {item['quantity']}"
+                f"ingredients mapped to inventory item '{item_id}' need "
+                f"{_amount_text(needed)} {item['unit']} in total, more than the "
+                f"available {_amount_text(item['quantity'])} {item['unit']}"
             )
     if not grounded:
         issues.append("recipe has no grounded inventory ingredients")
     return issues
+
+
+def _amount_text(value: float | Decimal) -> str:
+    """Show an amount to at most three decimals, never in exponent form."""
+    rounded = Decimal(str(value)).quantize(Decimal("0.001"))
+    return f"{rounded.normalize():f}"
 
 
 def _batch_ceiling(state: Mapping[str, Any]) -> int:
@@ -537,8 +534,7 @@ def _batch_ceiling(state: Mapping[str, Any]) -> int:
         or value > MAX_BATCH_CEILING
     ):
         raise ValueError(
-            "Recipe batch_ceiling must be an integer between 0 and "
-            f"{MAX_BATCH_CEILING}"
+            f"Recipe batch_ceiling must be an integer between 0 and {MAX_BATCH_CEILING}"
         )
     return value
 
@@ -547,14 +543,6 @@ def _retry_count(state: Mapping[str, Any]) -> int:
     value = state.get("retry_count", 0)
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise ValueError("Recipe retry_count must be a non-negative integer")
-    return value
-
-
-def _optional_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError("Inventory days_until_expiration must be an integer")
     return value
 
 
