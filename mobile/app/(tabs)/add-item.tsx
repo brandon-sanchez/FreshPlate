@@ -4,7 +4,7 @@ import { useRouter } from "expo-router";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useIsFocused } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 import SegmentedControl from "@/components/SegmentedControl";
 import BarcodeScanner from "@/components/BarcodeScanner";
 import ItemForm from "@/components/ItemForm";

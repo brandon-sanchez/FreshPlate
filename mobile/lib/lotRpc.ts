@@ -1,4 +1,4 @@
-import type { ToastShowParams } from "react-native-toast-message";
+import type { ToastShowParams } from "@/lib/toast";
 import { supabase } from "@/lib/supabase";
 
 /**

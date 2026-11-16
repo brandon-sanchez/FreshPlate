@@ -3,7 +3,7 @@ import { ScrollView, Text, View } from "react-native";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 import EmptyState from "@/components/EmptyState";
 import ErrorState from "@/components/ErrorState";
 import ItemForm, { ItemFormDefaults } from "@/components/ItemForm";

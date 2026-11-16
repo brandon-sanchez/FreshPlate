@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 import { useTheme } from "@/hooks/useTheme";
 import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";

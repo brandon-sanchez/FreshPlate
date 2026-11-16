@@ -15,6 +15,22 @@ const ICONS = {
   recipes: "book-open",
   profile: "user",
 } as const;
+const BAR_HEIGHT = 72;
+
+function barBottom(bottomInset: number) {
+  return Math.max(bottomInset, 12);
+}
+
+/**
+ * Returns how far the top edge of {@link GlassTabBar} sits above the bottom of
+ * the screen, in points, so floating content such as toasts can clear it.
+ *
+ * @param bottomInset - The bottom safe-area inset in points.
+ */
+export function tabBarTop(bottomInset: number) {
+  return barBottom(bottomInset) + BAR_HEIGHT;
+}
+
 function iconForRoute(name: string) {
   switch (name) {
     case "index":
@@ -82,8 +98,8 @@ export default function GlassTabBar({
         position: "absolute",
         left: 16,
         right: 16,
-        bottom: Math.max(insets.bottom, 12),
-        height: 72,
+        bottom: barBottom(insets.bottom),
+        height: BAR_HEIGHT,
       }}
     >
       <GlassSurface radius={38} style={StyleSheet.absoluteFill} />

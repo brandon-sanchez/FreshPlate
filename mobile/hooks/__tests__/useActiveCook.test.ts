@@ -1,12 +1,12 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { act, renderHook } from "@testing-library/react-native";
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 import { useActiveCook } from "@/hooks/useActiveCook";
 import { useActiveCookStore } from "@/stores/activeCook";
 import { useAuthStore } from "@/stores/auth";
 
 jest.mock("@/lib/supabase", () => ({ supabase: {} }));
-jest.mock("react-native-toast-message", () => ({ show: jest.fn() }));
+jest.mock("@/lib/toast", () => ({ __esModule: true, default: { show: jest.fn() } }));
 jest.mock("expo-crypto", () => ({
   randomUUID: () => "11111111-1111-4111-8111-111111111111",
 }));

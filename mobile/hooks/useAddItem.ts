@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { ToastShowParams } from "react-native-toast-message";
+import type { ToastShowParams } from "@/lib/toast";
 import { ChangedElsewhereError } from "@/lib/lotRpc";
 import { supabase } from "@/lib/supabase";
 import { LotAmount, toAddLotArgs } from "@/lib/lotAmount";
