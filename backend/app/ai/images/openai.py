@@ -51,7 +51,7 @@ class OpenAIImageProvider:
             raise ValueError("Image prompt exceeds 8000 UTF-8 bytes")
         payload: dict[str, Any] = {"model": MODEL, "prompt": prompt, "n": 1}
         if kind == "recipe":
-            payload.update(size="1536x1024", quality="medium")
+            payload.update(size="1536x1024", quality="low")
         elif kind == "ingredient":
             payload.update(size="1024x1024", quality="low")
         else:

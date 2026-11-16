@@ -10,7 +10,7 @@ let deleteError: Error | null = null;
 type DeleteQuery = { eq: (column: string, value: unknown) => DeleteQuery; then: (resolve: (value: { error: Error | null }) => unknown) => unknown };
 const mockDeleteEq: jest.Mock<DeleteQuery, []> = jest.fn((): DeleteQuery => ({ eq: mockDeleteEq, then: (resolve) => resolve({ error: deleteError }) }));
 const mockDelete = jest.fn(() => ({ eq: mockDeleteEq }));
-const mockInsert = jest.fn(() => Promise.resolve({ error: null }));
+const mockInsert = jest.fn((): Promise<{ error: Error | null }> => Promise.resolve({ error: null }));
 const mockFrom = jest.fn((table: string) => ({ select: mockSelect, delete: mockDelete, insert: mockInsert, table }));
 const household = { current: "household-a" as string | null };
 const user = { current: { id: "user-a" } as { id: string } | null };
@@ -93,6 +93,32 @@ describe("useSavedRecipes", () => {
     deleteError = new Error("delete failed");
     await act(async () => { await expect(result.current.toggle({ recipe, saved: true })).rejects.toThrow("delete failed"); });
     await waitFor(() => expect(result.current.toggleError?.message).toBe("delete failed"));
+  });
+
+  it("flips savedIds before the insert resolves and restores them when it fails", async () => {
+    let settleInsert: ((value: { error: Error }) => void) | undefined;
+    mockInsert.mockImplementationOnce(() => new Promise((resolve) => { settleInsert = resolve; }));
+    const { result } = renderHook(() => useSavedRecipes(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    let request: Promise<void> | undefined;
+    await act(async () => { request = result.current.toggle({ recipe, saved: false }); });
+    await waitFor(() => expect(result.current.savedIds.has(recipe.recipe_id)).toBe(true));
+    await act(async () => {
+      settleInsert?.({ error: new Error("insert failed") });
+      await expect(request).rejects.toThrow("insert failed");
+    });
+    await waitFor(() => expect(result.current.savedIds.has(recipe.recipe_id)).toBe(false));
+  });
+
+  it("drops the pending save when the insert fails before the list ever loaded", async () => {
+    mockOrder.mockResolvedValue({ data: null, error: new Error("offline") });
+    mockInsert.mockResolvedValueOnce({ error: new Error("offline") });
+    const { result } = renderHook(() => useSavedRecipes(), { wrapper });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    await act(async () => {
+      await expect(result.current.toggle({ recipe, saved: false })).rejects.toThrow("offline");
+    });
+    expect(result.current.savedIds.has(recipe.recipe_id)).toBe(false);
   });
 
   it("coalesces duplicate toggles before React renders the pending state", async () => {

@@ -47,10 +47,14 @@ Open `http://localhost:8000/health` to check that the server is up. Recipe reque
 
 ## Reset the demo household
 
-The demo reset replaces one dedicated household's inventory with 20 curated items. Expiry dates are relative to the day of the reset.
+The demo reset replaces one dedicated household's foods and batches with a stocked kitchen across the fridge, freezer and pantry. Some batches expire within a few days, a few are already expired, and several are opened and partly used. Expiry dates are relative to the day of the reset, so every reset gives the same kitchen. The reset also deletes the household's cook history and `inventory_items` rows.
 
 1. Create a dedicated demo user and household in Supabase. The user must own the household.
-2. As an administrator, insert the household into `demo_households`. Ordinary users can't change this table.
+2. As an administrator, insert the household into `demo_households` in the SQL editor. Ordinary users can't change this table:
+
+	```sql
+	INSERT INTO public.demo_households (household_id) VALUES ('<household-uuid>');
+	```
 3. From `backend/`, set the IDs and a service role database URL, then run the reset:
 
 	```sh

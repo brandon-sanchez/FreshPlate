@@ -1,11 +1,12 @@
 import React from "react";
 import { Pressable, Text } from "react-native";
-import { act, fireEvent, render } from "@testing-library/react-native";
+import { act, fireEvent, render, within } from "@testing-library/react-native";
 import { State } from "react-native-gesture-handler";
 import {
   fireGestureHandler,
   getByGestureTestId,
 } from "react-native-gesture-handler/jest-utils";
+import { getAnimatedStyle } from "react-native-reanimated";
 import RecipeCarousel, {
   type RecipeCarouselItem,
 } from "@/components/recipe-carousel";
@@ -16,7 +17,7 @@ jest.mock("@/hooks/useReducedMotion", () => ({ useReducedMotion: () => true }));
 function recipe(id: string): RecipeCarouselItem {
   return {
     id,
-    isRecipe: true,
+    kind: "recipe",
     content: (
       <Pressable
         accessibilityRole="button"
@@ -38,6 +39,71 @@ const props = {
 };
 
 describe("RecipeCarousel", () => {
+  describe("with a trailing slot", () => {
+    const message: RecipeCarouselItem = {
+      id: "tail",
+      kind: "message",
+      content: <Text>{"That's all for now"}</Text>,
+    };
+    const loading: RecipeCarouselItem = {
+      id: "tail",
+      kind: "loading",
+      content: <Text>Finding more recipes</Text>,
+    };
+    const stageHeight = 510;
+
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => {
+      jest.runOnlyPendingTimers();
+      jest.useRealTimers();
+    });
+
+    function firstCardBottomAfterNext(tail: RecipeCarouselItem) {
+      const { getByRole, getByTestId } = render(
+        <RecipeCarousel {...props} items={[recipe("1"), tail]} />,
+      );
+      fireEvent(getByTestId("recipe-carousel-stage"), "layout", {
+        nativeEvent: {
+          layout: { x: 0, y: 0, width: 390, height: stageHeight },
+        },
+      });
+      fireEvent.press(getByRole("button", { name: "Next recipe" }));
+      act(() => jest.advanceTimersByTime(500));
+      const slot = getByTestId("recipe-carousel-slot-0", {
+        includeHiddenElements: true,
+      });
+      const [translate] = getAnimatedStyle(slot).transform as {
+        translateY: number;
+      }[];
+      const slotTop = (stageHeight - props.cardHeight) / 2;
+      return slotTop + translate.translateY + props.cardHeight;
+    }
+
+    it("moves the last recipe fully above the stage once the message is centered", () => {
+      expect(firstCardBottomAfterNext(message)).toBeLessThan(0);
+    });
+
+    it("keeps the last recipe stacked behind a loading card", () => {
+      expect(firstCardBottomAfterNext(loading)).toBeGreaterThan(0);
+    });
+
+    it("hides the message behind the last card and shows it once centered", () => {
+      const behind = render(
+        <RecipeCarousel {...props} items={[recipe("1"), message]} />,
+      );
+      expect(
+        behind.getByTestId("recipe-carousel-slot-1", {
+          includeHiddenElements: true,
+        }),
+      ).toHaveStyle({ opacity: 0 });
+      behind.unmount();
+      const alone = render(<RecipeCarousel {...props} items={[message]} />);
+      expect(alone.getByTestId("recipe-carousel-slot-0")).toHaveStyle({
+        opacity: 1,
+      });
+    });
+  });
+
   it("exposes only the centered recipe to accessibility and reports only that recipe as viewed", () => {
     const onActiveIndexChange = jest.fn();
     const { getByRole, queryByRole } = render(
@@ -82,7 +148,7 @@ describe("RecipeCarousel", () => {
   it("replaces a reached loading tail with the first new recipe without resetting position", () => {
     const tail: RecipeCarouselItem = {
       id: "tail",
-      isRecipe: false,
+      kind: "loading",
       content: <Text>Finding more recipes</Text>,
     };
     const { getByRole, getByText, queryByText, rerender } = render(
@@ -132,4 +198,30 @@ describe("RecipeCarousel", () => {
       expect(onActiveIndexChange).toHaveBeenLastCalledWith(2);
     },
   );
+
+  it("plays a sweep exit on the leaving slot only, dimming included", () => {
+    const items = recipes.slice(0, 3).map((item, index) =>
+      index === 1 ? { ...item, exitDelayMs: 0 } : item,
+    );
+    const screen = render(<RecipeCarousel {...props} items={items} />);
+
+    const [leaving] = screen.getAllByTestId("recipe-sweep-leaving", {
+      includeHiddenElements: true,
+    });
+    const slot = screen.getByTestId("recipe-carousel-slot-1", {
+      includeHiddenElements: true,
+    });
+    expect(
+      within(slot).getAllByTestId("recipe-sweep-leaving", {
+        includeHiddenElements: true,
+      }),
+    ).toEqual([leaving]);
+    expect(within(leaving).getByText("2", { includeHiddenElements: true })).toBeTruthy();
+    expect(
+      within(screen.getByTestId("recipe-carousel-slot-0")).queryAllByTestId(
+        "recipe-sweep-leaving",
+        { includeHiddenElements: true },
+      ),
+    ).toHaveLength(0);
+  });
 });

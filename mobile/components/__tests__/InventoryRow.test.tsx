@@ -22,6 +22,10 @@ function lot(overrides: Partial<InventoryItem>): InventoryItem {
     added_by: null,
     opened_at: null,
     created_at: "2026-11-01T12:00:00+00:00",
+    updated_at: "2026-11-01T12:00:00.123456+00:00",
+    initial_quantity: null,
+    is_estimate: false,
+    whole_units_only: false,
     category: { id: "c1", name: "Produce", icon: "leaf" },
     ...overrides,
   };
@@ -71,11 +75,21 @@ it("stacks batches into one total with a batch count and the next expiry", () =>
   expect(onPress).toHaveBeenCalledWith(row);
 });
 
-it("counts an expired batch hidden behind a fresh one", () => {
+it("reads a total as about when any batch's amount is an estimate", () => {
+  const [row] = stackLots([
+    milk("known", "2026-11-15"),
+    { ...milk("eyeballed", "2026-11-10"), quantity: 500, is_estimate: true },
+  ]);
+  const screen = render(<InventoryRow row={row} />);
+
+  expect(screen.getByText("about 1500 ml · 2 batches · Fridge")).toBeTruthy();
+});
+
+it("counts an expired batch hidden behind a fresh one, leaving it out of the total", () => {
   const [row] = stackLots([milk("old", "2026-11-05"), milk("new", "2026-11-12")]);
   const screen = render(<InventoryRow row={row} />);
 
-  expect(screen.getByText("2000 ml · 2 batches · Fridge · 1 expired")).toBeTruthy();
+  expect(screen.getByText("1000 ml · 2 batches · Fridge · 1 expired")).toBeTruthy();
   expect(screen.getByText("4 days")).toBeTruthy();
 });
 

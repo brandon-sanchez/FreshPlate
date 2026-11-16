@@ -2,12 +2,26 @@ import React from "react";
 import { Dimensions } from "react-native";
 import { act, fireEvent, render } from "@testing-library/react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import RecipeDetail from "@/components/recipe-detail";
 import type { RecipeSuggestion } from "@/types/recipes";
 
 jest.mock("@expo/vector-icons/Feather", () => () => null);
 jest.mock("@expo/vector-icons/FontAwesome", () => () => null);
 jest.mock("@/hooks/useReducedMotion", () => ({ useReducedMotion: () => true }));
+const mockFetchRecipeImage = jest.fn();
+jest.mock("@/lib/supabase", () => ({ supabase: {} }));
+jest.mock("@/lib/image-api", () => ({
+  fetchRecipeImage: (...args: unknown[]) => mockFetchRecipeImage(...args),
+}));
+
+const readyPhoto = {
+  status: "ready",
+  image_key: "recipe:photo",
+  url: "https://storage.test/photo.webp?token=1",
+  expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+  reason: null,
+};
 
 const recipe: RecipeSuggestion = {
   recipe_id: "10000000-0000-4000-8000-000000000001",
@@ -27,16 +41,52 @@ const recipe: RecipeSuggestion = {
   steps: ["Prep the greens\nRinse the spinach.", "Sauté and serve."],
   saves_expiring: ["Spinach"],
 };
+const cookProps = {
+  cooking: false,
+  cookPending: false,
+  onCook: jest.fn(),
+  onDoneCooking: jest.fn(),
+};
+const client = new QueryClient({
+  defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+});
 const wrapper = ({ children }: { children: React.ReactNode }) => (
-  <SafeAreaProvider
-    initialMetrics={{
-      frame: { x: 0, y: 0, width: 390, height: 844 },
-      insets: { top: 44, right: 0, bottom: 34, left: 0 },
-    }}
-  >
-    {children}
-  </SafeAreaProvider>
+  <QueryClientProvider client={client}>
+    <SafeAreaProvider
+      initialMetrics={{
+        frame: { x: 0, y: 0, width: 390, height: 844 },
+        insets: { top: 44, right: 0, bottom: 34, left: 0 },
+      }}
+    >
+      {children}
+    </SafeAreaProvider>
+  </QueryClientProvider>
 );
+
+beforeEach(() => {
+  client.clear();
+  mockFetchRecipeImage.mockReset();
+  mockFetchRecipeImage.mockReturnValue(new Promise(() => {}));
+});
+
+it("shows the recipe photo in the hero", async () => {
+  mockFetchRecipeImage.mockResolvedValue(readyPhoto);
+  const screen = render(
+    <RecipeDetail
+      recipe={recipe}
+      isSaved={false}
+      isSavePending={false}
+      onToggleSave={jest.fn()}
+      onClose={jest.fn()}
+      {...cookProps}
+    />,
+    { wrapper },
+  );
+  expect(
+    await screen.findByLabelText("Photo of Spinach skillet"),
+  ).toBeTruthy();
+  expect(mockFetchRecipeImage.mock.calls[0][0]).toBe(recipe.recipe_id);
+});
 
 it("renders the selected snapshot and sends its identity to the shared save action", () => {
   const onToggleSave = jest.fn();
@@ -48,6 +98,7 @@ it("renders the selected snapshot and sends its identity to the shared save acti
       isSavePending={false}
       onToggleSave={onToggleSave}
       onClose={onClose}
+      {...cookProps}
     />,
     { wrapper },
   );
@@ -64,20 +115,47 @@ it("renders the selected snapshot and sends its identity to the shared save acti
     "Sauté and serve.",
   );
   expect(screen.queryByText(recipe.recipe_id)).toBeNull();
-  fireEvent.press(screen.getByLabelText("Save recipe"));
+  fireEvent.press(
+    screen.getByLabelText("Save Spinach skillet to household cookbook"),
+  );
   expect(onToggleSave).toHaveBeenCalledWith(recipe, false);
   fireEvent.press(screen.getByLabelText("Close recipe details"));
   expect(onClose).toHaveBeenCalledTimes(1);
 });
 
+it("shows Time, then Serves, each value above its label, and no Match", () => {
+  const screen = render(
+    <RecipeDetail
+      recipe={recipe}
+      isSaved={false}
+      isSavePending={false}
+      onToggleSave={jest.fn()}
+      onClose={jest.fn()}
+      {...cookProps}
+    />,
+    { wrapper },
+  );
+  const stats = screen.getByTestId("recipe-stats");
+  expect(stats).toHaveTextContent("20 minTime2Serves");
+  expect(screen.queryByText("Match")).toBeNull();
+  expect(screen.getByLabelText("Time, 20 minutes")).toBeTruthy();
+  expect(screen.getByLabelText("Serves 2")).toBeTruthy();
+});
+
 it("uses updated saved state and blocks a second toggle while saving", () => {
   const onToggleSave = jest.fn();
-  const props = { recipe, onToggleSave, onClose: jest.fn(), isSaved: true };
+  const props = {
+    ...cookProps,
+    recipe,
+    onToggleSave,
+    onClose: jest.fn(),
+    isSaved: true,
+  };
   const screen = render(<RecipeDetail {...props} isSavePending />, { wrapper });
-  fireEvent.press(screen.getByLabelText("Remove recipe from saved recipes"));
+  fireEvent.press(screen.getByLabelText("Remove Spinach skillet from saved recipes"));
   expect(onToggleSave).not.toHaveBeenCalled();
   screen.rerender(<RecipeDetail {...props} isSavePending={false} />);
-  fireEvent.press(screen.getByLabelText("Remove recipe from saved recipes"));
+  fireEvent.press(screen.getByLabelText("Remove Spinach skillet from saved recipes"));
   expect(onToggleSave).toHaveBeenCalledWith(recipe, true);
 });
 
@@ -99,6 +177,7 @@ it("gives long ingredients the full row when text is enlarged", () => {
       isSavePending={false}
       onToggleSave={jest.fn()}
       onClose={jest.fn()}
+      {...cookProps}
     />,
     { wrapper },
   );
@@ -114,4 +193,34 @@ it("gives long ingredients the full row when text is enlarged", () => {
   expect(screen.getByTestId("recipe-detail-ingredient-0")).toBeTruthy();
   screen.unmount();
   Dimensions.set({ window: original, screen: original });
+});
+
+it("pins Cook this until the recipe is the active cook, then Done cooking", () => {
+  const onCook = jest.fn();
+  const onDoneCooking = jest.fn();
+  const props = {
+    recipe,
+    isSaved: false,
+    isSavePending: false,
+    onToggleSave: jest.fn(),
+    onClose: jest.fn(),
+    cookPending: false,
+    onCook,
+    onDoneCooking,
+  };
+  const screen = render(<RecipeDetail {...props} cooking={false} />, {
+    wrapper,
+  });
+  fireEvent.press(screen.getByText("Cook this"));
+  expect(onCook).toHaveBeenCalledWith(recipe);
+  expect(screen.queryByText("Done cooking")).toBeNull();
+
+  screen.rerender(<RecipeDetail {...props} cooking />);
+  fireEvent.press(screen.getByText("Done cooking"));
+  expect(onDoneCooking).toHaveBeenCalledTimes(1);
+  expect(onCook).toHaveBeenCalledTimes(1);
+
+  screen.rerender(<RecipeDetail {...props} cooking cookPending />);
+  fireEvent.press(screen.getByText("Done cooking"));
+  expect(onDoneCooking).toHaveBeenCalledTimes(1);
 });
