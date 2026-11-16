@@ -36,7 +36,7 @@ def database():
             *FOODS_MIGRATIONS,
             "20261108090000_add_food_profile_aliases.sql",
             SEED_MIGRATION,
-            "20261114140000_add_food_profile_estimates.sql",
+            "20261116120000_add_food_profile_estimates.sql",
         )
     )
 
