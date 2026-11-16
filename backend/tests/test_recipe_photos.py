@@ -60,7 +60,8 @@ def _assessment(count: int) -> dict[str, Any]:
                 "main_component": "vegetables",
                 "portion_reasoning": "complete meal",
                 "unlisted_foods": [],
-                "is_full_meal": True,
+                "dish_reasoning": "a meal on its own",
+                "is_requested_dish": True,
                 "realistic_portions": True,
                 "coherent_method": True,
             }

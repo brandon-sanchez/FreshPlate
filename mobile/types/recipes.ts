@@ -115,6 +115,12 @@ export type RecipeSuggestionsResponse = {
 };
 
 /**
+ * The kind of dish a feed session asks for. The backend decides it from the
+ * session's answers: a meal unless the cook asks for a snack or a dessert.
+ */
+export type RequestedDish = "meal" | "snack" | "dessert";
+
+/**
  * The `steering` field of `POST /api/recipes/sessions/{id}/pages`: the
  * session's "More like this" and "Less like this" picks, most recent last.
  * The backend accepts at most 3 and 10 ids.
@@ -143,5 +149,6 @@ export type RecipeFeedResponse = {
     has_more: boolean;
     ready_count: number;
     empty_reason: string | null;
+    requested_dish: RequestedDish;
   };
 };
