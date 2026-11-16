@@ -7,6 +7,11 @@ import {
   render as renderNative,
 } from "@testing-library/react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { State } from "react-native-gesture-handler";
+import {
+  fireGestureHandler,
+  getByGestureTestId,
+} from "react-native-gesture-handler/jest-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { RecipeSuggestion } from "@/types/recipes";
 
@@ -40,14 +45,14 @@ function render(ui: React.ReactElement) {
   return renderNative(ui, {
     wrapper: ({ children }) => (
       <QueryClientProvider client={client}>
-      <SafeAreaProvider
-        initialMetrics={{
-          frame: { x: 0, y: 0, width: 390, height: 844 },
-          insets: { top: 44, right: 0, bottom: 34, left: 0 },
-        }}
-      >
-        {children}
-      </SafeAreaProvider>
+        <SafeAreaProvider
+          initialMetrics={{
+            frame: { x: 0, y: 0, width: 390, height: 844 },
+            insets: { top: 44, right: 0, bottom: 34, left: 0 },
+          }}
+        >
+          {children}
+        </SafeAreaProvider>
       </QueryClientProvider>
     ),
   });
@@ -86,6 +91,7 @@ const defaultProps = {
   onRetryMore: jest.fn(),
   onAddItems: jest.fn(),
   onEditAnswers: jest.fn(),
+  onCook: jest.fn(),
 };
 
 describe("RecipeFeed", () => {
@@ -120,6 +126,38 @@ describe("RecipeFeed", () => {
     expect(screen.queryByLabelText("View full recipe")).toBeNull();
     fireEvent.press(screen.getByTestId("recipe-card-preview-recipe-1"));
     expect(screen.getByLabelText("View full recipe")).toBeTruthy();
+  });
+
+  it("starts cooking on a full right swipe and ignores a short one", () => {
+    const onCook = jest.fn();
+    render(
+      <RecipeFeed {...defaultProps} recipes={[baseRecipe]} onCook={onCook} />,
+    );
+    const swipe = getByGestureTestId("recipe-card-cook-swipe-recipe-1");
+    fireGestureHandler(swipe, [
+      { state: State.BEGAN, translationX: 0 },
+      { state: State.ACTIVE, translationX: 40 },
+      { state: State.END, translationX: 60 },
+    ]);
+    expect(onCook).not.toHaveBeenCalled();
+    fireGestureHandler(swipe, [
+      { state: State.BEGAN, translationX: 0 },
+      { state: State.ACTIVE, translationX: 80 },
+      { state: State.END, translationX: 140 },
+    ]);
+    expect(onCook).toHaveBeenCalledWith(baseRecipe);
+  });
+
+  it("closes the preview sheet when cooking starts from it", () => {
+    mockReducedMotion.mockReturnValue(true);
+    const onCook = jest.fn();
+    const screen = render(
+      <RecipeFeed {...defaultProps} recipes={[baseRecipe]} onCook={onCook} />,
+    );
+    fireEvent.press(screen.getByTestId("recipe-card-preview-recipe-1"));
+    fireEvent.press(screen.getByTestId("recipe-preview-cook"));
+    expect(onCook).toHaveBeenCalledWith(baseRecipe);
+    expect(screen.queryByTestId("recipe-preview-cook")).toBeNull();
   });
 
   it("does not count offscreen cards as consumed when the list nears its end", () => {
@@ -263,6 +301,26 @@ describe("RecipeFeed", () => {
     );
     fireEvent.press(getByTestId("recipe-card-ingredients-recipe-1"));
     expect(getByTestId("recipe-ingredients-list")).toBeTruthy();
+  });
+
+  it("shrinks the stacked card to fit a viewport shortened by the cooking banner", () => {
+    const { getByTestId } = render(
+      <RecipeFeed {...defaultProps} recipes={[baseRecipe]} />,
+    );
+    const layout = (height: number) =>
+      fireEvent(getByTestId("recipe-feed-viewport"), "layout", {
+        nativeEvent: { layout: { x: 0, y: 0, width: 390, height } },
+      });
+    const slotHeight = () =>
+      ReactNative.StyleSheet.flatten(
+        getByTestId("recipe-carousel-slot-0").props.style,
+      ).height;
+
+    layout(650);
+    expect(slotHeight()).toBe(420);
+    layout(490);
+    expect(getByTestId("recipe-carousel")).toBeTruthy();
+    expect(slotHeight()).toBe(406);
   });
 
   it("keeps a background refill issue secondary to visible cards", () => {

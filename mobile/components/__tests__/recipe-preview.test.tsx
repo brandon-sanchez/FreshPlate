@@ -42,7 +42,11 @@ function queryWrapper() {
     return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
   };
 }
-const renderSheet = (onOpenDetail = jest.fn(), onClose = jest.fn()) =>
+const renderSheet = (
+  onOpenDetail = jest.fn(),
+  onClose = jest.fn(),
+  onCook = jest.fn(),
+) =>
   render(
     <SafeAreaProvider
       initialMetrics={{
@@ -54,6 +58,7 @@ const renderSheet = (onOpenDetail = jest.fn(), onClose = jest.fn()) =>
         recipe={recipe}
         onClose={onClose}
         onOpenDetail={onOpenDetail}
+        onCook={onCook}
       />
     </SafeAreaProvider>,
     { wrapper: queryWrapper() },
@@ -85,8 +90,21 @@ describe("recipe preview sheet", () => {
     expect(screen.getByTestId("recipe-step-body-0").props.children).toBe(
       "Boil pasta",
     );
-    fireEvent.press(screen.getByLabelText("View full recipe"));
+    fireEvent(screen.getByLabelText("View full recipe"), "accessibilityAction", {
+      nativeEvent: { actionName: "activate" },
+    });
     expect(onOpen).toHaveBeenCalledWith(recipe);
+  });
+
+  it("closes and starts cooking the previewed recipe from its primary action", () => {
+    const onOpen = jest.fn();
+    const onClose = jest.fn();
+    const onCook = jest.fn();
+    const screen = renderSheet(onOpen, onClose, onCook);
+    fireEvent.press(screen.getByLabelText("Cook Pasta"));
+    expect(onClose).toHaveBeenCalled();
+    expect(onCook).toHaveBeenCalledWith(recipe);
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
   it("closes without changing the payload", () => {
@@ -112,7 +130,11 @@ describe("recipe preview sheet", () => {
           insets: { top: 44, right: 0, bottom: 34, left: 0 },
         }}
       >
-        <RecipeIngredientsSheet recipe={second} onClose={jest.fn()} />
+        <RecipeIngredientsSheet
+          recipe={second}
+          onClose={jest.fn()}
+          onCook={jest.fn()}
+        />
       </SafeAreaProvider>,
     );
     expect(screen.getByText("Rice")).toBeTruthy();
@@ -138,6 +160,7 @@ describe("recipe preview sheet", () => {
           recipe={null}
           onClose={jest.fn()}
           onOpenDetail={onOpen}
+          onCook={jest.fn()}
         />
       </SafeAreaProvider>,
       { wrapper: queryWrapper() },
@@ -154,6 +177,7 @@ describe("recipe preview sheet", () => {
           recipe={first}
           onClose={jest.fn()}
           onOpenDetail={onOpen}
+          onCook={jest.fn()}
         />
       </SafeAreaProvider>,
     );
@@ -177,6 +201,7 @@ describe("recipe preview sheet", () => {
           recipe={second}
           onClose={jest.fn()}
           onOpenDetail={onOpen}
+          onCook={jest.fn()}
         />
       </SafeAreaProvider>,
     );
