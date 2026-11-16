@@ -2,6 +2,7 @@ import { Pressable, Text, View } from "react-native";
 import { useTheme } from "@/hooks/useTheme";
 import UrgencyBar from "@/components/UrgencyBar";
 import type { DrawnLot } from "@/lib/foodRows";
+import { formatAmount } from "@/lib/amount";
 
 type BatchCardProps = {
   /** The batch to show, with its expiry and its place in draw order. */
@@ -17,7 +18,7 @@ type BatchCardProps = {
 function BatchCard({ batch, onPress }: BatchCardProps) {
   const { colors, fonts, card } = useTheme();
   const { lot, days, expired, useFirst } = batch;
-  const amount = `${formatQuantity(lot.quantity)} ${lot.unit}`;
+  const amount = formatAmount(lot.quantity, lot.unit, lot.is_estimate);
   const meta = [capitalize(lot.storage_location)];
   if (lot.opened_at !== null) meta.push("Opened");
   const expiry = expiryText(days);
@@ -125,10 +126,6 @@ function expiryText(days: number | null): string {
   if (days === 0) return "Expires today";
   if (days === 1) return "Expires tomorrow";
   return `Expires in ${days} days`;
-}
-
-function formatQuantity(q: number): string {
-  return Number.isInteger(q) ? String(q) : q.toFixed(1);
 }
 
 function capitalize(s: string): string {
