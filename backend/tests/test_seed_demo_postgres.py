@@ -27,7 +27,7 @@ pytestmark = pytest.mark.skipif(not DSN, reason="Requires disposable local Postg
 BACKEND = Path(__file__).parents[1]
 DEMO_MIGRATIONS = (
     "20260905130000_add_demo_household_reset.sql",
-    "20261115101300_reset_demo_household_into_foods_and_lots.sql",
+    "20261116100000_reset_demo_household_into_foods_and_lots.sql",
 )
 # Every column the app shows for a seeded food or batch. Ids and timestamps are
 # left out because each reset creates fresh rows.
