@@ -1,6 +1,7 @@
+import { useRef } from "react";
 import {
+  Animated,
   Modal,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -15,7 +16,11 @@ import { RecipePressable } from "@/components/recipe-motion";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
 import type { RecipeSuggestion } from "@/types/recipes";
+import RecipePhoto from "@/components/recipe-photo";
 import RecipeSteps from "@/components/recipe-steps";
+
+// Height of the hero photo below the status bar, in points.
+const HERO_HEIGHT = 240;
 
 const FOOTER_TOP_PADDING = 16;
 const COOK_BUTTON_HEIGHT = 54;
@@ -71,7 +76,8 @@ export default function RecipeDetail({ recipe, ...props }: RecipeDetailProps) {
     >
       {recipe && (
         <>
-          <RecipeView recipe={recipe} {...props} />
+          {/* Keyed so each recipe starts with a fresh scroll position. */}
+          <RecipeView key={recipe.recipe_id} recipe={recipe} {...props} />
           <ToastHost bottomInset={cookFooterTop(insets.bottom)} />
         </>
       )}
@@ -96,40 +102,31 @@ export function RecipeView({
   const { width, fontScale } = useWindowDimensions();
   const twoColumns = width >= 360 && fontScale < 1.6;
   const footerPadding = insets.bottom + FOOTER_BOTTOM_GAP;
+  const heroHeight = insets.top + HERO_HEIGHT;
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const statusBackdropOpacity = scrollY.interpolate({
+    inputRange: [HERO_HEIGHT - 24, HERO_HEIGHT],
+    outputRange: [0, 1],
+    extrapolate: "clamp",
+  });
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.bg }]}>
-      <View
-        style={{
-          height: insets.top + 60,
-          backgroundColor: colors.accentSoft,
-        }}
-      />
-      <ScrollView contentContainerStyle={{ paddingBottom: footerPadding + 96 }}>
-        <View
-          style={[
-            styles.hero,
-            {
-              height: 180,
-              backgroundColor: colors.accentSoft,
-            },
-          ]}
-        >
-          <FontAwesome name="cutlery" size={68} color={colors.accent} />
-        </View>
+      <Animated.ScrollView
+        contentContainerStyle={{ paddingBottom: footerPadding + 96 }}
+        scrollEventThrottle={16}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: true },
+        )}
+      >
+        <RecipePhoto
+          recipeId={recipe.recipe_id}
+          title={recipe.title}
+          variant="hero"
+          style={{ height: heroHeight }}
+        />
         <View style={styles.content}>
-          <View style={styles.generated}>
-            <Feather name="zap" size={14} color={colors.accent} />
-            <Text
-              style={{
-                color: colors.textMuted,
-                fontFamily: fonts.body,
-                fontSize: 12,
-              }}
-            >
-              Generated
-            </Text>
-          </View>
           <Text
             selectable
             style={[
@@ -140,12 +137,12 @@ export function RecipeView({
             {recipe.title}
           </Text>
           <View style={[styles.stats, { backgroundColor: colors.surfaceAlt }]}>
+            <Stat icon="users" label="Serves" value={`${recipe.servings}`} />
             <Stat
               icon="clock"
               label="Time"
               value={`${recipe.cook_time_minutes} min`}
             />
-            <Stat icon="users" label="Serves" value={`${recipe.servings}`} />
             <Stat icon="zap" label="Match" value={`${recipe.match_percent}%`} />
           </View>
           <Text
@@ -233,7 +230,18 @@ export function RecipeView({
           </Text>
           <RecipeSteps steps={recipe.steps} />
         </View>
-      </ScrollView>
+      </Animated.ScrollView>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.statusBackdrop,
+          {
+            height: insets.top,
+            backgroundColor: colors.bg,
+            opacity: statusBackdropOpacity,
+          },
+        ]}
+      />
       <RecipePressable
         onPress={onClose}
         accessibilityRole="button"
@@ -341,7 +349,7 @@ function Stat({
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  hero: { alignItems: "center", justifyContent: "center" },
+  statusBackdrop: { position: "absolute", top: 0, left: 0, right: 0 },
   heroButton: {
     position: "absolute",
     minWidth: 44,
@@ -352,8 +360,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.92)",
   },
   content: { padding: 20 },
-  generated: { flexDirection: "row", gap: 6, alignItems: "center" },
-  title: { fontSize: 26, lineHeight: 32, marginTop: 8 },
+  title: { fontSize: 26, lineHeight: 32 },
   stats: { flexDirection: "row", padding: 16, marginTop: 16, borderRadius: 14 },
   stat: { flex: 1, alignItems: "center", gap: 4 },
   heading: {

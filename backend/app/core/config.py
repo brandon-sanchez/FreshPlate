@@ -98,9 +98,9 @@ class Settings(BaseSettings):
     # Cap per requesting user per UTC month, so one account cannot use up the
     # global cap with made-up food names.
     image_generation_user_monthly_cap_microusd: int = Field(default=2_000_000, ge=0)
-    # Spend reserved per attempt: the published 1536x1024 medium output price
-    # ($0.041) or 1024x1024 low price ($0.006), plus headroom for prompt tokens.
-    recipe_image_cost_microusd: int = Field(default=60_000, gt=0)
+    # Spend reserved per attempt: the published low-quality output price for
+    # 1536x1024 ($0.005) or 1024x1024 ($0.006), plus headroom for prompt tokens.
+    recipe_image_cost_microusd: int = Field(default=12_000, gt=0)
     ingredient_image_cost_microusd: int = Field(default=12_000, gt=0)
     image_generation_max_attempts: int = Field(default=2, ge=1, le=5)
     image_generation_retry_after_seconds: int = Field(default=900, ge=0)
