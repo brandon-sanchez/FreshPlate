@@ -25,6 +25,10 @@ function lot(overrides: Partial<InventoryItem> & Pick<InventoryItem, "id" | "foo
     added_by: null,
     opened_at: null,
     created_at: "2026-11-01T12:00:00+00:00",
+    updated_at: "2026-11-01T12:00:00.123456+00:00",
+    initial_quantity: null,
+    is_estimate: false,
+    whole_units_only: false,
     category: null,
     ...overrides,
   };
@@ -80,6 +84,23 @@ describe("stackLots", () => {
     expect(row.days).toBe(5);
     expect(row.expiredLots).toBe(1);
     expect(row.lots.map((l) => l.id)).toEqual(["old", "new"]);
+  });
+
+  it("leaves expired batches out of the total while a batch is still good", () => {
+    const [row] = stackLots([
+      milk("old", -2, { quantity: 400, is_estimate: true }),
+      milk("new", 5, { quantity: 1000 }),
+    ]);
+
+    expect(row).toMatchObject({ total: 1000, isEstimate: false, expiredLots: 1 });
+    expect(row.countedLots.map((l) => l.id)).toEqual(["new"]);
+  });
+
+  it("totals the expired batches when every batch has expired", () => {
+    const [row] = stackLots([milk("a", -1, { quantity: 300 }), milk("b", -4, { quantity: 200 })]);
+
+    expect(row.total).toBe(500);
+    expect(row.countedLots.map((l) => l.id)).toEqual(["b", "a"]);
   });
 
   it("treats an undated batch as unexpired, so an expired one beside it does not mark the food expired", () => {

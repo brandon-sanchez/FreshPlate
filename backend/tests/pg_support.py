@@ -13,7 +13,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
@@ -158,3 +160,31 @@ def add_lot(
     if check:
         return db.json(sql, role=role, user=user)
     return db.run(sql, role=role, user=user, check=False)
+
+
+def while_holding(db: DB, hold_sql: str, action, *, role=None, user=None):
+    """Run action while another session holds hold_sql's locks in an open transaction.
+
+    Commits the holder only after action is seen waiting on a lock, so every
+    caller exercises real overlap, then returns action's result.
+    """
+    proc = subprocess.Popen(
+        [*PSQL, db.dsn],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    proc.stdin.write(session_prefix(role, user) + f"BEGIN; {hold_sql} SELECT 'holding';\n")
+    proc.stdin.flush()
+    while (line := proc.stdout.readline()) and line.strip() != "holding":
+        pass
+    assert line.strip() == "holding", proc.stderr.read()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(action)
+        deadline = time.monotonic() + 5
+        waiting = "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
+        while db.run(waiting) == "0":
+            assert time.monotonic() < deadline and not future.done(), "action never waited on the held lock"
+            time.sleep(0.05)
+        proc.stdin.write("COMMIT;\n")
+        proc.stdin.close()
+        assert proc.wait(timeout=10) == 0, proc.stderr.read()
+        return future.result(timeout=10)

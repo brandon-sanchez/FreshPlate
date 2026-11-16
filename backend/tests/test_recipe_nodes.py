@@ -16,66 +16,65 @@ from app.ai.llm.retry import PipelineDeadline
 from app.ai.rag.vector_store import RetrievedRecipe
 
 
-def test_analyze_inventory_filters_unusable_items_and_prioritizes_expiry() -> None:
+def _food(
+    food_id: str,
+    name: str,
+    available: float = 1,
+    *,
+    stock_base: str = "each",
+    each_label: str | None = "each",
+    **fields: Any,
+) -> dict[str, Any]:
+    return {
+        "id": food_id,
+        "name": name,
+        "available": available,
+        "stock_base": stock_base,
+        "each_label": each_label if stock_base == "each" else None,
+        **fields,
+    }
+
+
+def test_analyze_inventory_sends_one_line_per_food_with_its_units() -> None:
     state: dict[str, Any] = {
         "inventory": [
-            {
-                "id": "spinach",
-                "name": "  Baby   Spinach!! ",
-                "quantity": 1,
-                "unit": "bag",
-                "expiration_date": "2026-08-05",
-            },
-            {
-                "id": "expired",
-                "name": "Expired Yogurt",
-                "quantity": 1,
-                "unit": "cup",
-                "expiration_date": "2026-08-02",
-            },
-            {
-                "id": "depleted",
-                "name": "Used Flour",
-                "quantity": 0,
-                "unit": "bag",
-                "expiration_date": None,
-                "depleted_at": "2026-08-03T08:00:00Z",
-            },
-            {
-                "id": "tomatoes",
-                "name": "Tomatoes",
-                "quantity": 3,
-                "unit": "item",
-                "expiration_date": "2026-08-20",
-            },
-            {
-                "id": "duplicate-name",
-                "name": "baby spinach",
-                "quantity": 2,
-                "unit": "item",
-                "expiration_date": None,
-            },
+            _food(
+                "milk",
+                "Milk",
+                5400,
+                stock_base="ml",
+                next_expiry="2026-08-20",
+                lot_count=2,
+            ),
+            _food(
+                "garlic",
+                "Garlic",
+                1,
+                each_label="head",
+                profile_key="garlic",
+                profile_unit_grams={"clove": 3, "head": 40},
+                next_expiry="2026-08-05",
+            ),
+            _food("flour", "Flour", 0, stock_base="g"),
         ]
     }
 
     result = analyze_inventory(state, today=date(2026, 8, 3))
 
-    assert [item["id"] for item in result["usable_items"]] == [
-        "spinach",
-        "tomatoes",
-        "duplicate-name",
-    ]
-    assert result["usable_items"][0] == {
-        "id": "spinach",
-        "name": "  Baby   Spinach!! ",
-        "quantity": 1.0,
-        "unit": "bag",
-        "expiration_date": date(2026, 8, 5),
-        "days_until_expiration": 2,
-        "is_expiring": True,
-    }
-    assert result["usable_items"][1]["is_expiring"] is False
-    assert result["query_terms"] == ["baby spinach", "tomatoes"]
+    assert [item["id"] for item in result["usable_items"]] == ["garlic", "milk"]
+    garlic, milk = result["usable_items"]
+    assert garlic["units"] == [
+        "head", "clove", "g", "kg", "oz", "lb", "tsp", "tbsp", "pinch", "dash",
+    ]  # fmt: skip
+    assert (garlic["quantity"], garlic["unit"], garlic["is_expiring"]) == (
+        1,
+        "head",
+        True,
+    )
+    assert (milk["quantity"], milk["unit"], milk["lot_count"]) == (5400, "ml", 2)
+    assert milk["expiration_date"] == date(2026, 8, 20)
+    assert milk["is_expiring"] is False
+    assert result["query_terms"] == ["garlic", "milk"]
 
 
 @pytest.mark.parametrize(
@@ -88,22 +87,23 @@ def test_analyze_inventory_filters_unusable_items_and_prioritizes_expiry() -> No
         ),
         pytest.param(
             {"inventory": ["not-a-mapping"]},
-            "items must be mappings",
+            "Invalid recipe inventory line",
             id="non-mapping-item",
         ),
         pytest.param(
-            {"inventory": [{"id": "bad", "name": "Bad Item", "quantity": "many"}]},
-            "quantity must be numeric",
-            id="invalid-quantity",
+            {"inventory": [_food("bad", "Bad", "many")]},
+            "Invalid recipe inventory line",
+            id="invalid-available",
         ),
         pytest.param(
-            {
-                "inventory": [
-                    {"id": "bad", "name": "Bad Item", "expiration_date": "soon"}
-                ]
-            },
-            "expiration_date must be ISO formatted",
-            id="invalid-expiration-date",
+            {"inventory": [_food("bad", "Bad", next_expiry="soon")]},
+            "Invalid recipe inventory line",
+            id="invalid-next-expiry",
+        ),
+        pytest.param(
+            {"inventory": [_food("bad", "Bad", stock_base="each", each_label=None)]},
+            "Invalid recipe inventory line",
+            id="each-without-label",
         ),
     ],
 )
@@ -117,21 +117,9 @@ def test_analyze_inventory_rejects_malformed_input(
 def test_analyze_inventory_flags_the_five_day_boundary_and_today() -> None:
     state: dict[str, Any] = {
         "inventory": [
-            {
-                "id": "today",
-                "name": "Today Item",
-                "expiration_date": "2026-08-03",
-            },
-            {
-                "id": "boundary",
-                "name": "Boundary Item",
-                "expiration_date": "2026-08-08",
-            },
-            {
-                "id": "later",
-                "name": "Later Item",
-                "expiration_date": "2026-08-09",
-            },
+            _food("today", "Today Item", next_expiry="2026-08-03"),
+            _food("boundary", "Boundary Item", next_expiry="2026-08-08"),
+            _food("later", "Later Item", next_expiry="2026-08-09"),
         ]
     }
 
@@ -201,17 +189,20 @@ async def test_retrieve_recipes_returns_no_results_without_query_terms() -> None
 
 def test_retrieval_query_leads_with_expiring_and_main_items_and_stays_bounded() -> None:
     pantry = [
-        {"id": f"spice-{n}", "name": f"Spice {n}", "quantity": 1, "unit": "jar",
-         "category": "Condiments"}
+        _food(f"spice-{n}", f"Spice {n}", each_label="jar", category="Condiments")
         for n in range(RETRIEVAL_QUERY_TERM_LIMIT)
     ]
     inventory = [
         *pantry,
-        {"id": "salmon", "name": "Salmon", "quantity": 400, "unit": "g",
-         "category": "Meat & Seafood"},
-        {"id": "kale", "name": "Kale", "quantity": 1, "unit": "bunch",
-         "expiration_date": "2026-08-05", "category": "Produce"},
-        {"id": "rice", "name": "Rice", "quantity": 1, "unit": "kg"},
+        _food("salmon", "Salmon", 400, stock_base="g", category="Meat & Seafood"),
+        _food(
+            "kale",
+            "Kale",
+            each_label="bunch",
+            next_expiry="2026-08-05",
+            category="Produce",
+        ),
+        _food("rice", "Rice", 1000, stock_base="g"),
     ]
 
     result = analyze_inventory({"inventory": inventory}, today=date(2026, 8, 3))

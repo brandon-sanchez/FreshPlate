@@ -90,8 +90,23 @@ class Settings(BaseSettings):
     # Gemini (Phase 5)
     gemini_api_key: str = ""
     openai_api_key: SecretStr = SecretStr("")
+
+    # Generated recipe and ingredient photos
     image_generation_enabled: bool = False
-    image_generation_monthly_cap_microusd: int = Field(default=0, ge=0)
+    # Global cap for recipe and ingredient images combined, per UTC month.
+    image_generation_monthly_cap_microusd: int = Field(default=10_000_000, ge=0)
+    # Cap per requesting user per UTC month, so one account cannot use up the
+    # global cap with made-up food names.
+    image_generation_user_monthly_cap_microusd: int = Field(default=2_000_000, ge=0)
+    # Spend reserved per attempt: the published 1536x1024 medium output price
+    # ($0.041) or 1024x1024 low price ($0.006), plus headroom for prompt tokens.
+    recipe_image_cost_microusd: int = Field(default=60_000, gt=0)
+    ingredient_image_cost_microusd: int = Field(default=12_000, gt=0)
+    image_generation_max_attempts: int = Field(default=2, ge=1, le=5)
+    image_generation_retry_after_seconds: int = Field(default=900, ge=0)
+    image_generation_timeout_seconds: float = Field(default=120.0, gt=0, le=300)
+    image_signed_url_ttl_seconds: int = Field(default=86_400, ge=60)
+    image_store_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
 
     # LangSmith reads these environment variables directly when LangGraph
     # tracing is enabled. Declaring them here keeps the application settings
