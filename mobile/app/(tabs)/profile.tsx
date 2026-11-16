@@ -83,6 +83,12 @@ export default function ProfileScreen() {
         paddingTop: insets.top + 16,
         paddingBottom: tabBarHeight + 32,
       }}
+      // Insets the scroll view by the keyboard's height on iOS and scrolls the
+      // focused field, such as "Add a basic", above the keyboard.
+      automaticallyAdjustKeyboardInsets
+      // Lets the Add button take the first tap while the keyboard is open.
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="interactive"
     >
       <Text
         style={{
