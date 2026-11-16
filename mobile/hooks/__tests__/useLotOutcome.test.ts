@@ -1,7 +1,7 @@
 import React from "react";
 import { act, renderHook, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 
 const mockRpc = jest.fn();
 
@@ -12,7 +12,7 @@ jest.mock("@/stores/auth", () => ({
   useAuthStore: (selector: (s: { householdId: string }) => unknown) =>
     selector({ householdId: "household-1" }),
 }));
-jest.mock("react-native-toast-message", () => ({ __esModule: true, default: { show: jest.fn() } }));
+jest.mock("@/lib/toast", () => ({ __esModule: true, default: { show: jest.fn() } }));
 
 import { useLotOutcome } from "@/hooks/useLotOutcome";
 

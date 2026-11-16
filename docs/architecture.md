@@ -190,18 +190,30 @@ The function runs as `SECURITY DEFINER`, because members can't change lot quanti
 
 ## Image generation has a spending cap before it has images
 
-Recipe photos and ingredient thumbnails are not on any screen yet. The backend serves them from `POST /api/images/recipes/{recipe_id}` and `POST /api/images/foods/{food_id}`, and generation is off until `IMAGE_GENERATION_ENABLED` is true and an OpenAI key is set.
+The backend serves recipe photos and ingredient thumbnails from `POST /api/images/recipes/{recipe_id}` and `POST /api/images/foods/{food_id}`, and generation is off until `IMAGE_GENERATION_ENABLED` is true and an OpenAI key is set.
 
-- Each image is generated at most once. A recipe photo is keyed by a hash of the recipe's title, ingredients and steps, so the feed and saved copies share it. An ingredient thumbnail is keyed by its food profile, or by its normalized name when it has none, so every household's tomato shares one.
+- Each image is generated at most once. A recipe photo is keyed by a hash of the dish title and the set of ingredient names, both normalized for case, spacing and punctuation. Amounts, ingredient order and steps don't change the key, so the feed and saved copies share a photo, and so do households that get the same dish. Adding or swapping an ingredient, or renaming the dish, gives a new photo. The photo prompt is built from the same title and ingredient names, with no amounts or steps, so every recipe that shares a photo would have asked for the same picture. An ingredient thumbnail is keyed by its food profile, or by its normalized name when it has none, so every household's tomato shares one.
 - Before any provider call, `claim_image_asset` reserves an upper-bound cost against a global monthly cap ($10 by default, recipes and ingredients combined) and a per-user monthly cap. The backend then settles the claim with the stored image or releases it. A release refunds the reservation only when the provider returned an error response, which it does not bill.
 - A failed image is attempted again only by a later request, after a cooldown, and only up to a fixed number of possibly billed attempts. Requests never retry the provider themselves.
+- The feed generates photos inside the recipe pipeline. After the quality check, a photo step requests every valid recipe's photo at once. The batch is stored and returned only when those requests end, so each feed card carries its photo, or its placeholder result, in the feed response. The recipe steps stop 15 seconds before the request deadline to leave the photos time, and each photo must finish before the request does. A failed, over-budget or late photo never fails the batch. A photo that missed the deadline comes back as `unavailable` with reason `late`, and the app asks for it again when its card next shows, at most once a minute.
 - Only recipes from the caller's feed, which the backend writes, can start a generation. Saved recipes, which members write directly, get the matching feed photo or a placeholder.
 - Images are WebP files in the private `generated-images` Storage bucket. Responses carry a signed URL and a stable `image_key`. When there is no image, the response says `pending` or `unavailable` with a reason, so the screen shows its placeholder.
 - `OpenAIImageProvider` in `backend/app/ai/images/openai.py` makes one image request and checks that the result is a PNG no larger than 4096 pixels on a side.
+
+## The API is planned to run on AWS Lambda
+
+The API isn't deployed yet. [#36](https://github.com/brandon-sanchez/FreshPlate/issues/36) plans the deploy:
+
+- AWS Lambda runs the image that `backend/Dockerfile` builds. The Lambda Web Adapter lets FastAPI and uvicorn run unchanged. Each copy serves one request at a time, and the function scales to zero when idle.
+- The app calls the API through a Lambda Function URL over HTTPS. There is no API Gateway, because its limit of about 30 seconds per request is too short for recipe generation.
+- Amazon ECR stores the image. SSM Parameter Store holds the backend's keys as SecureString parameters, and CloudWatch Logs keeps the logs.
+- GitHub Actions deploys after CI passes on `main`. It signs in through OIDC to an IAM role, so no long-lived AWS key exists anywhere.
+- A small AWS CDK app, written in Python, defines these resources.
+
+Supabase, Gemini, OpenAI image generation, Open Food Facts, and LangSmith stay as they are.
 
 ## Where to go next
 
 - [Evaluation reference](evals.md) describes the eval dataset, metrics, and latest scorecards.
 - [Run the evals](run-evals.md) shows how to run them.
-- [Deploy the API](deployment.md) covers Cloud Run.
 - [CI/CD](ci-cd.md) explains what runs on each push.
