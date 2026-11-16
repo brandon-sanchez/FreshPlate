@@ -110,6 +110,7 @@ export default function InventoryScreen() {
   const activeFilterCount = countActiveFilters(filters);
   const allRows = useMemo(() => stackLots(items), [items]);
   const expiredCount = allRows.filter((r) => r.expiredLots > 0).length;
+  const openReview = () => router.push("/review-expired");
 
   if (inventory.isPending) {
     return (
@@ -179,7 +180,16 @@ export default function InventoryScreen() {
           <View style={{ paddingTop: 4 }}>
             <TopBar
               title="Inventory"
-              subtitle={`${allRows.length} item${allRows.length === 1 ? "" : "s"} · ${expiredCount} expired`}
+              subtitle={
+                <>
+                  {`${allRows.length} item${allRows.length === 1 ? "" : "s"} · `}
+                  <Text style={expiredCount > 0 ? { color: colors.crit } : undefined}>
+                    {`${expiredCount} expired`}
+                  </Text>
+                </>
+              }
+              onSubtitlePress={expiredCount > 0 ? openReview : undefined}
+              subtitleLabel={`${expiredCount} expired. Review expired batches`}
               colors={colors}
               fonts={fonts}
               padded={false}
@@ -404,11 +414,24 @@ export default function InventoryScreen() {
               >
                 {sections.find((x) => x.key === s.key)?.data.length ?? 0}
               </Text>
+              {groupBy === "Urgency" && s.key === "expired" ? (
+                <Pressable
+                  onPress={openReview}
+                  hitSlop={12}
+                  accessibilityRole="link"
+                  accessibilityLabel="Review expired batches"
+                  style={({ pressed }) => ({ marginLeft: "auto", opacity: pressed ? 0.6 : 1 })}
+                >
+                  <Text style={{ fontFamily: fonts.bodyStrong, fontSize: 12, color: colors.accent }}>
+                    Review
+                  </Text>
+                </Pressable>
+              ) : null}
             </Pressable>
           );
         }}
         renderItem={({ item: row }) => (
-          <LotOutcomeSwipe lotIds={row.lots.map((lot) => lot.id)} name={row.name}>
+          <LotOutcomeSwipe lotIds={row.countedLots.map((lot) => lot.id)} name={row.name}>
             <InventoryRow
               row={row}
               highlight={highlightId !== null && holdsLot(row, highlightId)}
@@ -449,16 +472,33 @@ export default function InventoryScreen() {
 function TopBar({
   title,
   subtitle,
+  onSubtitlePress,
+  subtitleLabel,
   colors,
   fonts,
   padded = true,
 }: {
   title: string;
-  subtitle?: string;
+  subtitle?: React.ReactNode;
+  /** Makes the subtitle a link, with a chevron after it. */
+  onSubtitlePress?: () => void;
+  /** The subtitle link's screen-reader label. */
+  subtitleLabel?: string;
   colors: ReturnType<typeof useTheme>["colors"];
   fonts: ReturnType<typeof useTheme>["fonts"];
   padded?: boolean;
 }) {
+  const subtitleText = subtitle ? (
+    <Text
+      style={{
+        fontFamily: fonts.body,
+        fontSize: 13,
+        color: colors.textMuted,
+      }}
+    >
+      {subtitle}
+    </Text>
+  ) : null;
   return (
     <View
       style={{
@@ -476,17 +516,26 @@ function TopBar({
       >
         {title}
       </Text>
-      {subtitle ? (
-        <Text
-          style={{
-            fontFamily: fonts.body,
-            fontSize: 13,
-            color: colors.textMuted,
+      {subtitleText && onSubtitlePress ? (
+        <Pressable
+          onPress={onSubtitlePress}
+          hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+          accessibilityRole="link"
+          accessibilityLabel={subtitleLabel}
+          style={({ pressed }) => ({
+            flexDirection: "row",
+            alignItems: "center",
+            alignSelf: "flex-start",
+            gap: 5,
             marginTop: 2,
-          }}
+            opacity: pressed ? 0.6 : 1,
+          })}
         >
-          {subtitle}
-        </Text>
+          {subtitleText}
+          <FontAwesome name="angle-right" size={13} color={colors.crit} />
+        </Pressable>
+      ) : subtitleText ? (
+        <View style={{ marginTop: 2 }}>{subtitleText}</View>
       ) : null}
     </View>
   );

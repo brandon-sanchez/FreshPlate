@@ -41,12 +41,28 @@ type RecipeFeedProps = {
   isSavePending?: boolean;
   header?: ReactNode;
   onOpenDetail?: (recipe: RecipeSuggestion) => void;
+  /** Starts a cook of the recipe from a right swipe on its card or from the preview sheet. */
+  onCook: (recipe: RecipeSuggestion) => void;
 };
+
+// Viewport points the stacked carousel keeps beside its card: the 44 pt
+// pager, plus 40 pt split above and below the centered card so the next
+// card's 20 pt peek still shows.
+const STACK_CHROME_HEIGHT = 84;
+
+// Smallest compact card, in points, that fits the photo, a two-line title,
+// the Time and Serves block, one ingredient line with "Uses up", and the
+// feedback row without clipping.
+const COMPACT_CARD_MIN_HEIGHT = 408;
 
 const replacementTransition = LinearTransition.duration(360).easing(
   Easing.inOut(Easing.cubic),
 );
 
+/**
+ * The vertical feed of generated recipe cards with prefetch, dismiss, save and
+ * cook actions. A right swipe on a card starts a cook through `onCook`.
+ */
 export default function RecipeFeed({
   recipes,
   itemCount,
@@ -68,20 +84,28 @@ export default function RecipeFeed({
   isSavePending = false,
   header,
   onOpenDetail,
+  onCook,
 }: RecipeFeedProps) {
   const { colors } = useTheme();
   const { width, height, fontScale } = useWindowDimensions();
   const reducedMotion = useReducedMotion();
+  const largeTextExtra = Math.max(0, fontScale - 1) * 240;
   const fullCardHeight = Math.round(
-    Math.min(530, Math.max(480, height * 0.53)) +
-      Math.max(0, fontScale - 1) * 240,
+    Math.min(530, Math.max(480, height * 0.53)) + largeTextExtra,
   );
   const [listHeight, setListHeight] = useState(0);
+  // Headers above the feed, such as the Cooking banner, shorten the viewport,
+  // so the stacked card shrinks to the space left, down to the height its
+  // content needs.
   const stackCardHeight = Math.round(
-    Math.min(440, Math.max(420, height * 0.45)) +
-      Math.max(0, fontScale - 1) * 240,
+    Math.min(
+      Math.min(440, Math.max(420, height * 0.45)) + largeTextExtra,
+      listHeight - STACK_CHROME_HEIGHT,
+    ),
   );
-  const stackEnabled = fontScale <= 1.2 && listHeight >= stackCardHeight + 100;
+  const stackEnabled =
+    fontScale <= 1.2 &&
+    stackCardHeight >= COMPACT_CARD_MIN_HEIGHT + largeTextExtra;
   const cardHeight = stackEnabled ? stackCardHeight : fullCardHeight;
   const stride = cardHeight + 20;
   const listRef = useRef<FlatList<RecipeSuggestion>>(null);
@@ -160,6 +184,7 @@ export default function RecipeFeed({
         onDismiss={dismissRecipe}
         onPreview={setPreviewRecipe}
         onMoreLikeThis={onMoreLikeThis}
+        onCook={onCook}
         saved={savedIds.has(item.recipe_id)}
         onToggleSave={onToggleSave}
         isSavePending={isSavePending}
@@ -179,6 +204,7 @@ export default function RecipeFeed({
       onToggleSave,
       savedIds,
       isSavePending,
+      onCook,
     ],
   );
   const footer = isPrefetching ? (
@@ -299,6 +325,7 @@ export default function RecipeFeed({
         recipe={previewRecipe}
         onClose={() => setPreviewRecipe(null)}
         onOpenDetail={onOpenDetail}
+        onCook={onCook}
       />
     </View>
   );
