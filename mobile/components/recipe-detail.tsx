@@ -9,7 +9,7 @@ import {
 } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import Ionicons from "@expo/vector-icons/Ionicons";
-import Toast from "react-native-toast-message";
+import { ToastHost } from "@/components/toastConfig";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RecipePressable } from "@/components/recipe-motion";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
@@ -22,6 +22,20 @@ import RecipeSteps from "@/components/recipe-steps";
 
 // Height of the hero photo below the status bar, in points.
 const HERO_HEIGHT = 240;
+
+const FOOTER_TOP_PADDING = 16;
+const COOK_BUTTON_HEIGHT = 54;
+const FOOTER_BOTTOM_GAP = 14;
+
+/**
+ * Returns how far the top edge of {@link RecipeView}'s pinned cook footer sits
+ * above the bottom of the screen, in points, so toasts can clear it.
+ *
+ * @param bottomInset - The bottom safe-area inset in points.
+ */
+export function cookFooterTop(bottomInset: number) {
+  return bottomInset + FOOTER_BOTTOM_GAP + COOK_BUTTON_HEIGHT + FOOTER_TOP_PADDING;
+}
 
 type RecipeViewProps = {
   /** The recipe to show. */
@@ -65,7 +79,7 @@ export default function RecipeDetail({ recipe, ...props }: RecipeDetailProps) {
         <>
           {/* Keyed so each recipe starts with a fresh scroll position. */}
           <RecipeView key={recipe.recipe_id} recipe={recipe} {...props} />
-          <Toast topOffset={insets.top + 60} />
+          <ToastHost bottomInset={cookFooterTop(insets.bottom)} />
         </>
       )}
     </Modal>
@@ -88,7 +102,7 @@ export function RecipeView({
   const insets = useSafeAreaInsets();
   const { width, fontScale } = useWindowDimensions();
   const twoColumns = width >= 360 && fontScale < 1.6;
-  const footerPadding = insets.bottom + 14;
+  const footerPadding = insets.bottom + FOOTER_BOTTOM_GAP;
   const heroHeight = insets.top + HERO_HEIGHT;
   const scrollY = useRef(new Animated.Value(0)).current;
   const statusBackdropOpacity = scrollY.interpolate({
@@ -323,12 +337,12 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    paddingTop: 16,
+    paddingTop: FOOTER_TOP_PADDING,
     paddingHorizontal: 16,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   cookButton: {
-    minHeight: 54,
+    minHeight: COOK_BUTTON_HEIGHT,
     borderRadius: 16,
     flexDirection: "row",
     alignItems: "center",
