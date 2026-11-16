@@ -23,3 +23,25 @@ export async function fetchRecipeImage(
   );
   return response.data;
 }
+
+/**
+ * Returns the thumbnail for a food in one of the caller's households,
+ * calling `POST /api/images/foods/{foodId}` with the session JWT.
+ *
+ * Foods with the same profile or normalized name share one thumbnail, so
+ * only the first request for an ingredient may start a paid generation and
+ * wait for it. Aborting the call does not cancel that generation.
+ *
+ * @throws {@link ApiError} with status 404 when the food is not in the
+ * caller's households, and 503 when the image service is unreachable.
+ */
+export async function fetchFoodImage(
+  foodId: string,
+  signal?: AbortSignal,
+): Promise<ImageResult> {
+  const response = await apiFetch<ImageResponse>(
+    `/api/images/foods/${encodeURIComponent(foodId)}`,
+    { method: "POST", signal },
+  );
+  return response.data;
+}
