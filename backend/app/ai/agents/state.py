@@ -10,6 +10,7 @@ from typing import Any, NotRequired
 # Python 3.11 it accepts only typing_extensions TypedDicts.
 from typing_extensions import TypedDict
 
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.models import Recipe
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.rag.vector_store import RetrievedRecipe
@@ -44,7 +45,7 @@ class InventoryAnalysis(TypedDict):
 
     usable_items: list[UsableItem]
     query_terms: list[str]
-    kitchen_basics: list[str]
+    kitchen_basics: KitchenBasics
 
 
 class RetrievalResult(TypedDict):
@@ -95,9 +96,10 @@ class RecipeState(TypedDict, total=False):
     """The shared state carried through the recipe graph.
 
     ``inventory`` holds one ``FoodLine`` mapping per household food.
-    ``kitchen_basics`` names the ingredients recipes may use without
-    inventory, such as salt; ``analyze_inventory`` drops any the kitchen also
-    tracks as a food.
+    ``kitchen_basics`` holds the ingredients recipes may use without
+    inventory, such as salt. Every graph needs it. ``analyze_inventory``
+    replaces it with the basics the kitchen doesn't also track as a food,
+    and a feed refill passes the session's.
     ``recipe_photos`` maps each valid recipe's photo cache key
     (``ImageService.recipe_key``) to its photo. Only graphs built with a
     photo source set it. ``steering`` is absent when the cook hasn't picked
@@ -105,7 +107,7 @@ class RecipeState(TypedDict, total=False):
     """
 
     inventory: list[Mapping[str, Any]]
-    kitchen_basics: list[str]
+    kitchen_basics: KitchenBasics
     preferences: Mapping[str, Any]
     exclude_titles: list[str]
     batch_ceiling: int

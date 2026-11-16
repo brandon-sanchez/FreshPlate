@@ -8,7 +8,9 @@ from typing import Any
 
 import pytest
 
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.nodes import analyze_inventory, check_quality, generate_recipes
+from tests.recipe_fakes import NO_BASICS
 
 RICE_ID = "4f7c1a52-2a8e-4b8e-9d0c-1f2e3a4b5c6d"
 SPINACH_ID = "9b1d6e04-7c3f-4a21-8e5d-6a7b8c9d0e1f"
@@ -44,8 +46,11 @@ _FOOD_LINE = re.compile(r"^- (?P<label>\S+): (?P<name>[^|]+?) \|", re.MULTILINE)
 
 
 def _state(**overrides: Any) -> dict[str, Any]:
-    analysis = analyze_inventory({"inventory": FOODS}, today=date(2026, 8, 3))
+    analysis = analyze_inventory(
+        {"kitchen_basics": NO_BASICS, "inventory": FOODS}, today=date(2026, 8, 3)
+    )
     return {
+        "kitchen_basics": NO_BASICS,
         "usable_items": analysis["usable_items"],
         "retrieved_recipes": [],
         "preferences": {},
@@ -177,13 +182,13 @@ class SaltingProvider:
 
 
 @pytest.mark.asyncio
-async def test_a_basic_label_becomes_the_basic_with_no_food_id() -> None:
-    state = _state(batch_ceiling=1, kitchen_basics=["Salt", "Olive oil"])
+async def test_a_basic_label_keeps_the_models_name_with_no_food_id() -> None:
+    state = _state(batch_ceiling=1, kitchen_basics=KitchenBasics(["Salt", "Olive oil"]))
 
     result = await generate_recipes(state, SaltingProvider())
 
     [recipe] = result["generated_recipes"]
     salt = recipe.ingredients[-1]
-    assert (salt.name, salt.inventory_item_id) == ("Salt", None)
+    assert (salt.name, salt.inventory_item_id) == ("Flaky sea salt", None)
     assert recipe.steps[1].uses == [SPINACH_ID, RICE_ID]
     assert check_quality({**state, **result})["quality_feedback"] is None

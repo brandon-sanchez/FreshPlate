@@ -4,12 +4,22 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Annotated, Any, Protocol
 from uuid import UUID
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    PlainValidator,
+    TypeAdapter,
+    ValidationError,
+    WithJsonSchema,
+)
 
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.core.config import settings, validate_supabase_url
 from app.models.recipes import RecipeSuggestion
 
@@ -21,11 +31,30 @@ class RecipeFeedStoreError(RuntimeError):
     """Raised when a feed session cannot be read or persisted."""
 
 
+_BASIC_NAMES = TypeAdapter(list[str])
+
+
+def _kitchen_basics(value: object) -> KitchenBasics:
+    if isinstance(value, KitchenBasics):
+        return value
+    return KitchenBasics(_BASIC_NAMES.validate_python(value))
+
+
+_StoredKitchenBasics = Annotated[
+    KitchenBasics,
+    PlainValidator(_kitchen_basics),
+    PlainSerializer(lambda basics: list(basics.names), return_type=list[str]),
+    WithJsonSchema({"type": "array", "items": {"type": "string"}}),
+]
+
+
 class RecipeFeedSession(BaseModel):
     """The server-owned state needed to refill one feed.
 
     ``kitchen_basics`` holds the household's basics, minus any it tracks as a
     food, when the session started, so every refill follows the same rules.
+    Empty means refills use no basics, which is what the column's empty
+    default gives a session row stored without basics.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -38,7 +67,9 @@ class RecipeFeedSession(BaseModel):
     retrieved_recipes: list[dict[str, Any]] = Field(default_factory=list)
     retrieval_cursor: int = Field(default=0, ge=0)
     exclude_titles: list[str] = Field(default_factory=list)
-    kitchen_basics: list[str] = Field(default_factory=list)
+    kitchen_basics: _StoredKitchenBasics = Field(
+        default_factory=lambda: KitchenBasics(())
+    )
     candidate_count: int = Field(default=0, ge=0)
     generation_runs: int = Field(default=0, ge=0)
     has_more: bool = True

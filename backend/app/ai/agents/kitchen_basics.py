@@ -3,66 +3,71 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, field
 
-# Mirrors the defaults seed_kitchen_basics() gives every household in
-# supabase/migrations/20261116140000_add_kitchen_basics.sql.
-DEFAULT_KITCHEN_BASICS = ("Salt", "Black pepper", "Neutral oil", "Olive oil", "Water")
+from app.ai.agents.models import RecipeIngredient
+from app.inventory.food_names import food_name_key
 
-
-def basic_key(name: str) -> str:
-    """Return the identity of a basic or food name.
-
-    Mirrors ``public.food_name_key``: case-insensitive, with surrounding
-    whitespace trimmed and inner runs collapsed, so " salt " is "Salt".
-    """
-    return " ".join(name.casefold().split())
+_BASIC_UNITS = ("pinch", "tsp", "tbsp", "cup", "ml")
 
 
-@dataclass(frozen=True)
 class KitchenBasics:
     """Ingredients a household always has, which recipes may use untracked.
 
+    Construction trims each name, drops blank ones, and keeps the first of
+    names that share a ``food_name_key``, so every instance holds distinct
+    basics.
+
     Attributes:
-        names: Each basic's display name, trimmed, in the household's order,
-            one per ``basic_key``.
+        names: Each basic's display name, trimmed, in the household's order.
     """
 
+    __slots__ = ("_keys", "names")
+
     names: tuple[str, ...]
-    _keys: frozenset[str] = field(init=False, repr=False, compare=False)
+    _keys: frozenset[str]
 
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "_keys", frozenset(map(basic_key, self.names)))
-
-    @classmethod
-    def parse(cls, raw: object) -> KitchenBasics:
-        """Return the basics in ``raw``, a list of names, without duplicates.
-
-        ``None`` means the household has no basics. Blank names are dropped.
-
-        Raises:
-            ValueError: When ``raw`` is not a list of strings.
-        """
-        if raw is None:
-            raw = []
-        if not isinstance(raw, (list, tuple)) or not all(
-            isinstance(name, str) for name in raw
-        ):
-            raise ValueError("Kitchen basics must be a list of names")
-        names: list[str] = []
-        seen: set[str] = set()
-        for name in raw:
-            key = basic_key(name)
-            if key and key not in seen:
-                seen.add(key)
-                names.append(name.strip())
-        return cls(tuple(names))
-
-    def __contains__(self, name: object) -> bool:
-        return isinstance(name, str) and basic_key(name) in self._keys
+    def __init__(self, names: Iterable[str]) -> None:
+        """Hold ``names``, one basic per ``food_name_key``, in their order."""
+        by_key: dict[str, str] = {}
+        for name in names:
+            key = food_name_key(name)
+            if key:
+                by_key.setdefault(key, name.strip())
+        self.names = tuple(by_key.values())
+        self._keys = frozenset(by_key)
 
     def __bool__(self) -> bool:
         return bool(self.names)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, KitchenBasics):
+            return NotImplemented
+        return self.names == other.names
+
+    def __hash__(self) -> int:
+        return hash(self.names)
+
+    def __repr__(self) -> str:
+        return f"KitchenBasics({list(self.names)!r})"
+
+    @property
+    def units(self) -> tuple[str, ...]:
+        """Return the units a recipe may measure these basics in, or ``()``."""
+        return _BASIC_UNITS if self else ()
+
+    def supplies(self, ingredient: RecipeIngredient) -> bool:
+        """Return whether ``ingredient`` is a free basic, never deducted.
+
+        An ingredient has no inventory id only when the model labeled it with
+        a basic's ``k`` label: the generation schema requires a string id,
+        and ``FoodLabels.resolve`` clears it only for those labels. A
+        household with no basics supplies nothing.
+        """
+        return bool(self) and ingredient.inventory_item_id is None
+
+    def has_name(self, name: str) -> bool:
+        """Return whether ``name`` is one of these basics, by ``food_name_key``."""
+        return food_name_key(name) in self._keys
 
     def without(self, tracked: Iterable[str]) -> KitchenBasics:
         """Return these basics minus any named in ``tracked``, the kitchen's foods.
@@ -70,7 +75,7 @@ class KitchenBasics:
         A food the household tracks is mapped and deducted like any other, so
         it can't also be a free basic.
         """
-        tracked_keys = {basic_key(name) for name in tracked}
+        tracked_keys = {food_name_key(name) for name in tracked}
         return KitchenBasics(
-            tuple(name for name in self.names if basic_key(name) not in tracked_keys)
+            name for name in self.names if food_name_key(name) not in tracked_keys
         )

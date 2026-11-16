@@ -39,7 +39,10 @@ export type RecipeFeedSessionRequest = {
 export type RecipeIngredient = {
   /** The ingredient as the cook calls it, such as "Garlic". */
   name: string;
-  /** The food the ingredient draws on, or `null` for water. */
+  /**
+   * The food the ingredient draws on, or `null` for a kitchen basic, which
+   * is always on hand and never deducted.
+   */
   inventory_item_id: string | null;
   /** The amount in `unit`, which the cook flow deducts from the food. */
   use_amount: number;

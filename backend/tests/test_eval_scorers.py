@@ -14,6 +14,7 @@ from app.ai.eval.scorers import (
     mapping_validity_percent,
 )
 from app.ai.llm.providers import FakeProvider
+from tests.recipe_fakes import NO_BASICS
 
 
 def recipe() -> Recipe:
@@ -39,7 +40,7 @@ async def test_scorers_and_curated_dataset_contract():
     assert set(CASE_COVERAGE).issubset({case["name"] for case in cases})
     assert all(all("name" in item and "available" in item and "stock_base" in item for item in case["inventory"]) for case in cases)
     for case in cases:
-        usable = analyze_inventory({"inventory": case["inventory"]})["usable_items"]
+        usable = analyze_inventory({"kitchen_basics": NO_BASICS, "inventory": case["inventory"]})["usable_items"]
         mapped = [RecipeIngredient(name=item["name"], inventory_item_id=item["id"], use_amount=1, unit=item["unit"]) for item in usable]
         ingredients = [*mapped, RecipeIngredient(name="olive oil", unit="tablespoon")] if case["name"] in CASE_COVERAGE else mapped
         generated = recipe().model_copy(update={"ingredients": ingredients})
