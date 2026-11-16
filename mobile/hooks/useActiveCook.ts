@@ -1,4 +1,4 @@
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 import { useActiveCookStore } from "@/stores/activeCook";
 import { useAuthStore } from "@/stores/auth";
 import type { RecipeSuggestion } from "@/types/recipes";
