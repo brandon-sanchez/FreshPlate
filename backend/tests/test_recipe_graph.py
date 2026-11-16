@@ -130,7 +130,7 @@ async def test_generate_recipes_preserves_provider_amounts_for_quality_validatio
                     _recipe(
                         _ingredient(
                             "Tomatoes",
-                            inventory_item_id="tomatoes",
+                            inventory_item_id="f1",
                             use_amount=8,
                             unit="each",
                         )
@@ -250,11 +250,11 @@ async def test_generation_lists_one_line_per_food_with_its_units() -> None:
 
     prompt = provider.calls[0]["prompt"]
     assert (
-        "- tomatoes: Tomatoes | 3 each | next expires 2026-08-08, expiring soon "
+        "- f1: Tomatoes | 3 each | next expires 2026-08-08, expiring soon "
         "| units: each, tsp, tbsp, pinch, dash"
     ) in prompt
     assert (
-        "- milk: Milk | 5400 ml | 2 batches | next expires 2026-08-08, expiring "
+        "- f2: Milk | 5400 ml | 2 batches | next expires 2026-08-08, expiring "
         "soon | units: ml, oz, l, tsp, tbsp, cup, fl oz, pinch, dash"
     ) in prompt
     assert "own unit" not in prompt
@@ -393,10 +393,10 @@ def test_check_quality_converts_amounts_before_comparing_with_stock() -> None:
 
     assert result["valid_recipes"] == [fits]
     assert (
-        "Recipe 'Forty Clove Chicken': ingredients mapped to inventory item "
-        "'garlic' need 1.2 head in total, more than the available 1 head"
+        "Recipe 'Forty Clove Chicken': ingredients using Garlic need 1.2 head "
+        "in total, more than the available 1 head"
     ) in result["quality_feedback"]
-    assert "'milk' need 709.765 ml in total" in result["quality_feedback"]
+    assert "using Milk need 709.765 ml in total" in result["quality_feedback"]
 
 
 def test_check_quality_leaves_estimated_and_unconvertible_amounts_to_the_cook() -> None:
@@ -543,7 +543,7 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
             _recipe(
                 _ingredient(
                     "Tomatoes",
-                    inventory_item_id="tomatoes",
+                    inventory_item_id="f1",
                     use_amount=2,
                     unit="each",
                 ),
@@ -593,7 +593,7 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
     assert [recipe.title for recipe in result["valid_recipes"]] == ["Second attempt"]
     assert result["retry_count"] == 1
     assert len(provider.calls) == 5
-    assert "missing" in provider.calls[2]["prompt"]
+    assert "missing inventory id 'missing'" in provider.calls[2]["prompt"]
     assert all(
         _ends_before_meal_review(call["deadline"], deadline)
         for call in provider.calls[:4]
@@ -807,7 +807,7 @@ async def test_graph_accepts_a_recipe_measured_in_a_smaller_unit_than_stock() ->
                     _recipe(
                         _ingredient(
                             "Basmati rice",
-                            inventory_item_id="rice",
+                            inventory_item_id="f1",
                             use_amount=300,
                             unit="g",
                         ),
@@ -913,7 +913,7 @@ def test_check_quality_rejects_overuse_after_unit_conversion() -> None:
 
     assert result["valid_recipes"] == []
     assert (
-        "'tomatoes' need 2500 g in total, more than the available 2000 g"
+        "using Tomatoes need 2500 g in total, more than the available 2000 g"
         in result["quality_feedback"]
     )
 

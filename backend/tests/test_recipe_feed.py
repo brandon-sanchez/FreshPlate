@@ -28,7 +28,7 @@ from app.services.recipe_feed_store import RecipeFeedSession, RecipeFeedStoreErr
 from tests.conftest import HOUSEHOLD_ID, FakeFoodLineSource, SigningKey
 from tests.image_fakes import POLICY, FakeStore
 from tests.image_fakes import FakeProvider as FakeImageProvider
-from tests.recipe_fakes import batch_responses
+from tests.recipe_fakes import batch_responses, model_answer
 
 
 def _auth_headers(signing_key: SigningKey) -> dict[str, str]:
@@ -57,7 +57,7 @@ def _inventory() -> list[dict[str, Any]]:
 
 
 def _recipe(title: str) -> dict[str, Any]:
-    return {
+    recipe = {
         "title": title,
         "cook_time_minutes": 20,
         "servings": 2,
@@ -71,6 +71,7 @@ def _recipe(title: str) -> dict[str, Any]:
         ],
         "steps": ["Cook the vegetables."],
     }
+    return model_answer(recipe, _inventory())
 
 
 def _assessment(count: int) -> dict[str, Any]:

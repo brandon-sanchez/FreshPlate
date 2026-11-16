@@ -270,12 +270,13 @@ def _recipe_schema(units_by_food: Mapping[str, Sequence[str]]) -> dict[str, Any]
     holds one ingredient shape whatever the number of foods. Gemini answers
     ``400 INVALID_ARGUMENT`` when the schema lists the food ids, whether as
     one enum or as an ``anyOf`` with a variant for each food, so
-    ``inventory_item_id`` is a plain string and ``check_quality`` rejects an
-    id the kitchen does not have. ``unit`` is limited to the units of all the
+    ``inventory_item_id`` is a plain string holding the food's prompt label
+    from ``FoodLabels``, and ``check_quality`` rejects an ingredient whose
+    label names no food. ``unit`` is limited to the units of all the
     foods together. A unit that belongs to a different food is left to the
     cook flow, which asks for the amount. A step's ``uses`` is a list of
     plain strings for the same reason as the id, and ``check_quality`` keeps
-    only the ids the recipe lists. Text that may be absent,
+    only the foods the recipe lists. Text that may be absent,
     such as ``prep``, ``why`` and a step's ``phase``, is a plain string the
     model leaves empty, and validation reads it as None. ``steps`` has no
     ``maxItems``, because the dish decides how many steps it needs.

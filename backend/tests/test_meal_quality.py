@@ -14,6 +14,7 @@ from app.ai.llm.errors import ProviderError
 from app.ai.llm.providers import FakeProvider
 from app.ai.llm.retry import PipelineDeadline
 from app.inventory.units import table_unit
+from tests.recipe_fakes import model_answer
 
 CASES = json.loads(
     (Path(__file__).parents[1] / "app/ai/eval/meal_fixtures.json").read_text()
@@ -110,8 +111,8 @@ async def test_curated_meal_decisions_control_returned_recipes(case):
 async def test_both_graphs_regenerate_rejected_meals_under_one_deadline(refill):
     token, substantial = [case["recipe"] for case in CASES[:2]]
     provider = RecordingProvider([
-        {"recipes": [token]}, assessment("insufficient"),
-        {"recipes": [substantial]}, assessment("eligible"),
+        {"recipes": [model_answer(token, inventory())]}, assessment("insufficient"),
+        {"recipes": [model_answer(substantial, inventory())]}, assessment("eligible"),
     ])
     state = {
         "inventory": inventory(),
@@ -146,7 +147,7 @@ async def test_both_graphs_regenerate_rejected_meals_under_one_deadline(refill):
 
 @pytest.mark.asyncio
 async def test_semantically_rejected_meals_exhaust_existing_retry_and_return_empty():
-    recipe = CASES[0]["recipe"]
+    recipe = model_answer(CASES[0]["recipe"], inventory())
     provider = RecordingProvider([
         {"recipes": [recipe]}, assessment("insufficient"),
         {"recipes": [recipe]}, assessment("incoherent"),
