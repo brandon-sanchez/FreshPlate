@@ -157,7 +157,7 @@ A session stops after six generation runs. The app then offers to add items or c
 
 ## Cook confirmation deducts inventory in one transaction
 
-When a user finishes cooking, they confirm how much of each food they used, in the food's stock base (grams, millilitres or a count). `POST /api/cook/confirm` passes that list to the `cook_recipe_v2` Postgres function, which draws each amount from the food's batches (lots) in one transaction.
+When a user finishes cooking, they confirm how much of each food they used, in the food's stock base (grams, millilitres or a count). The request also carries one line per recipe ingredient matched to a food: the recipe's amount and unit, the converted amount, and the mode (`draw` when it converted, `small` for a seasoning-sized amount that is never drawn, `ask` when the user was asked). `POST /api/cook/confirm` passes both lists to the `cook_recipe_v2` Postgres function, which draws each amount from the food's batches (lots) and records the lines in one transaction.
 
 ```mermaid
 sequenceDiagram
@@ -165,13 +165,14 @@ sequenceDiagram
 	participant API as FastAPI
 	participant DB as cook_recipe_v2()
 
-	App->>API: POST /api/cook/confirm<br/>household_id, operation_id, deductions
+	App->>API: POST /api/cook/confirm<br/>household_id, operation_id, deductions, lines
 	API->>DB: rpc/cook_recipe_v2 with the user's JWT
 	DB->>DB: Return the saved result if operation_id was already used
 	DB->>DB: Map each id to its live food, lock the foods in sorted order
 	DB->>DB: Draw from each food's lots in draw order
-	DB->>DB: Insert cook_events row
-	DB-->>API: Draws per lot, committed amounts
+	DB->>DB: Split each food's draws across its lines
+	DB->>DB: Insert cook_events row with the lines
+	DB-->>API: Draws per lot, committed amounts, lines
 	API-->>App: 200, or 409 if rejected
 ```
 
@@ -182,16 +183,21 @@ The function guarantees these properties:
 - **Old recipes still cook.** A recipe's `inventory_item_id` holds a food id. Recipes saved before foods existed hold a lot id there, and the function draws from that lot's food. Merged foods are followed to the food they were merged into.
 - **Safe to retry.** The app creates an `operation_id` when the cook starts and stores it with the active cook. A lock on household plus operation id serializes repeats, so a repeated confirmation returns the first result and deducts nothing twice. A repeat with a different payload is rejected.
 - **Safe under concurrency.** Every function that changes a food's stock takes a per-food advisory lock, in sorted food id order, before it touches any lot. Two phones cooking the same foods wait for each other instead of deadlocking, and a batch added during a cook lands wholly before or after it. When stock runs short, the deduction stops at zero. The event then records both what the user said they used (`confirmed_amount`) and what was actually drawn (`committed_amount`, and `draws` per lot).
+- **Lines for Cook Again.** Each line in `cook_events.lines` keeps the recipe's amount and unit next to the live food, its stock base, the batches it drew from and its shortfall. A food used by several lines splits its draws across them in recipe order: each line takes its converted amount, and the last takes the rest, such as a can rounded up. Cook Again can then re-plan the recipe's own units against current stock instead of comparing bare numbers in different units. Every deduction needs a line that draws from it, and every drawing line needs a deduction.
 - **No hard deletes.** A lot that reaches zero gets `depleted_at`. The function never deletes a row.
 
 The function runs as `SECURITY DEFINER`, because members can't change lot quantities directly. It checks household membership first and reads only foods and lots of that household. The cook screens that call the endpoint are in progress in [#27](https://github.com/brandon-sanchez/FreshPlate/issues/27) and [#30](https://github.com/brandon-sanchez/FreshPlate/issues/30).
 
 ## Image generation has a spending cap before it has images
 
-Recipe photos are not live yet. Two pieces exist so that photo generation can't overspend once it ships:
+Recipe photos and ingredient thumbnails are not on any screen yet. The backend serves them from `POST /api/images/recipes/{recipe_id}` and `POST /api/images/foods/{food_id}`, and generation is off until `IMAGE_GENERATION_ENABLED` is true and an OpenAI key is set.
 
-- The `image_assets` table and the `reserve_image_asset` function deduplicate images by kind and cache key. They reserve an upper-bound cost against a global monthly cap before any provider call. A missing or zero cap turns reservations off.
-- `OpenAIImageProvider` in `backend/app/ai/images/openai.py` makes one image request and checks that the result is a PNG no larger than 4096 pixels on a side. It never retries, so one reservation pays for at most one call.
+- Each image is generated at most once. A recipe photo is keyed by a hash of the recipe's title, ingredients and steps, so the feed and saved copies share it. An ingredient thumbnail is keyed by its food profile, or by its normalized name when it has none, so every household's tomato shares one.
+- Before any provider call, `claim_image_asset` reserves an upper-bound cost against a global monthly cap ($10 by default, recipes and ingredients combined) and a per-user monthly cap. The backend then settles the claim with the stored image or releases it. A release refunds the reservation only when the provider returned an error response, which it does not bill.
+- A failed image is attempted again only by a later request, after a cooldown, and only up to a fixed number of possibly billed attempts. Requests never retry the provider themselves.
+- Only recipes from the caller's feed, which the backend writes, can start a generation. Saved recipes, which members write directly, get the matching feed photo or a placeholder.
+- Images are WebP files in the private `generated-images` Storage bucket. Responses carry a signed URL and a stable `image_key`. When there is no image, the response says `pending` or `unavailable` with a reason, so the screen shows its placeholder.
+- `OpenAIImageProvider` in `backend/app/ai/images/openai.py` makes one image request and checks that the result is a PNG no larger than 4096 pixels on a side.
 
 ## Where to go next
 
