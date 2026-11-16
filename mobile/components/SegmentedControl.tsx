@@ -1,5 +1,20 @@
-import { Text, View, Pressable } from "react-native";
+import { useEffect } from "react";
+import { View } from "react-native";
+import Animated, {
+  interpolateColor,
+  ReduceMotion,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  type SharedValue,
+} from "react-native-reanimated";
+import PressableScale from "@/components/PressableScale";
 import { useTheme } from "@/hooks/useTheme";
+import { TAB_SPRING } from "@/lib/motion";
+
+const PADDING = 4;
+const GAP = 6;
+const SPRING = { ...TAB_SPRING, reduceMotion: ReduceMotion.System };
 
 type SegmentedControlProps<T extends string> = {
   /** The segments, left to right; each is also its label. */
@@ -15,7 +30,12 @@ type SegmentedControlProps<T extends string> = {
   role?: "radio" | "tab";
 };
 
-/** A row of mutually exclusive segments with the selected one filled in the accent color. */
+/**
+ * A row of mutually exclusive segments. An accent indicator slides to the
+ * selected segment with the tab bar's spring, and each label takes the
+ * accent ink as the indicator passes under it. With Reduce Motion on, the
+ * indicator moves at once.
+ */
 function SegmentedControl<T extends string>({
   options,
   selected,
@@ -23,22 +43,57 @@ function SegmentedControl<T extends string>({
   role = "radio",
 }: SegmentedControlProps<T>) {
   const { colors } = useTheme();
+  const count = options.length;
+  const selectedIndex = Math.max(0, options.indexOf(selected));
+  const position = useSharedValue(selectedIndex);
+  const width = useSharedValue(0);
+
+  useEffect(() => {
+    position.value = withSpring(selectedIndex, SPRING);
+  }, [position, selectedIndex]);
+
+  const indicatorStyle = useAnimatedStyle(() => {
+    const segment = (width.value - PADDING * 2 - GAP * (count - 1)) / count;
+    return {
+      opacity: segment > 0 ? 1 : 0,
+      width: Math.max(0, segment),
+      transform: [{ translateX: position.value * (segment + GAP) }],
+    };
+  });
 
   return (
     <View
       accessibilityRole={role === "tab" ? "tablist" : "radiogroup"}
+      onLayout={(event) => {
+        width.value = event.nativeEvent.layout.width;
+      }}
       style={{
         flexDirection: "row",
         backgroundColor: colors.surfaceAlt,
-        padding: 4,
+        padding: PADDING,
         borderRadius: 12,
-        gap: 6,
+        gap: GAP,
       }}
     >
-      {options.map((option) => {
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          {
+            position: "absolute",
+            top: PADDING,
+            bottom: PADDING,
+            left: PADDING,
+            borderRadius: 9,
+            backgroundColor: colors.accent,
+            boxShadow: "0 1px 3px rgba(0, 0, 0, 0.08)",
+          },
+          indicatorStyle,
+        ]}
+      />
+      {options.map((option, index) => {
         const isSelected = option === selected;
         return (
-          <Pressable
+          <PressableScale
             key={option}
             onPress={() => onSelect(option)}
             accessibilityRole={role}
@@ -50,28 +105,45 @@ function SegmentedControl<T extends string>({
               borderRadius: 9,
               alignItems: "center",
               justifyContent: "center",
-              backgroundColor: isSelected ? colors.accent : "transparent",
-              shadowColor: "#000",
-              shadowOffset: { width: 0, height: 1 },
-              shadowOpacity: isSelected ? 0.06 : 0,
-              shadowRadius: 3,
-              elevation: isSelected ? 1 : 0,
             }}
           >
-            <Text
-              style={{
-                color: isSelected ? colors.accentInk : colors.textMuted,
-                fontWeight: "600",
-                fontSize: 13,
-                letterSpacing: -0.1,
-              }}
-            >
-              {option}
-            </Text>
-          </Pressable>
+            <SegmentLabel
+              label={option}
+              index={index}
+              position={position}
+              on={colors.accentInk}
+              off={colors.textMuted}
+            />
+          </PressableScale>
         );
       })}
     </View>
+  );
+}
+
+function SegmentLabel({
+  label,
+  index,
+  position,
+  on,
+  off,
+}: {
+  label: string;
+  index: number;
+  position: SharedValue<number>;
+  on: string;
+  off: string;
+}) {
+  const colorStyle = useAnimatedStyle(() => ({
+    color: interpolateColor(Math.min(1, Math.abs(position.value - index)), [0, 1], [on, off]),
+  }));
+  return (
+    <Animated.Text
+      numberOfLines={1}
+      style={[{ fontWeight: "600", fontSize: 13, letterSpacing: -0.1 }, colorStyle]}
+    >
+      {label}
+    </Animated.Text>
   );
 }
 
