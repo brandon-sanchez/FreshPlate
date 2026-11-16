@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 # Mirrors the defaults seed_kitchen_basics() gives every household in
-# supabase/migrations/20261114170000_add_kitchen_basics.sql.
+# supabase/migrations/20261116110000_add_kitchen_basics.sql.
 DEFAULT_KITCHEN_BASICS = ("Salt", "Black pepper", "Neutral oil", "Olive oil", "Water")
 
 
