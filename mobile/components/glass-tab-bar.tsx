@@ -7,6 +7,7 @@ import GlassSurface from "@/components/glass-surface";
 import { RecipePressable } from "@/components/recipe-motion";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
+import { TAB_SPRING } from "@/lib/motion";
 
 const ICONS = {
   index: "home",
@@ -81,9 +82,7 @@ export default function GlassTabBar({
     else
       Animated.spring(position, {
         toValue: state.index,
-        stiffness: 320,
-        damping: 30,
-        mass: 0.7,
+        ...TAB_SPRING,
         useNativeDriver: true,
         isInteraction: false,
       }).start();
