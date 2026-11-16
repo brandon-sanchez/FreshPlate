@@ -266,6 +266,19 @@ describe("RecipeFeed", () => {
     expect(onEditAnswers).toHaveBeenCalledTimes(1);
   });
 
+  it("says the kitchen can't make a full meal and suggests what to add", () => {
+    const { getByText } = render(
+      <RecipeFeed {...defaultProps} isExhausted recipes={[]} />,
+    );
+
+    expect(getByText("Not enough for a full meal")).toBeTruthy();
+    expect(
+      getByText(
+        "Add a main to build a meal around, such as a protein, pasta or rice, or change your answers.",
+      ),
+    ).toBeTruthy();
+  });
+
   it("uses the latest low-water callback after the feed grows", () => {
     const firstNearEnd = jest.fn();
     const latestNearEnd = jest.fn();

@@ -755,7 +755,7 @@ function RecipeFeedTerminator({
           textAlign: "center",
         }}
       >
-        {hasRecipes ? "That's all for now" : "A little more to work with"}
+        {hasRecipes ? "That's all for now" : "Not enough for a full meal"}
       </Text>
       <Text
         style={[
@@ -765,7 +765,7 @@ function RecipeFeedTerminator({
       >
         {hasRecipes
           ? "You've explored this set of recipe ideas. Add ingredients or edit your answers for a fresh set."
-          : "Your inventory can't support a coherent recipe yet. Add an ingredient or change your answers."}
+          : "Add a main to build a meal around, such as a protein, pasta or rice, or change your answers."}
       </Text>
       <RecipeActionButton
         label="Add items"
