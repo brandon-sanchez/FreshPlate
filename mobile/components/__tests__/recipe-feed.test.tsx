@@ -5,6 +5,7 @@ import {
   cleanup,
   fireEvent,
   render as renderNative,
+  within,
 } from "@testing-library/react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { State } from "react-native-gesture-handler";
@@ -37,6 +38,7 @@ jest.mock("@expo/vector-icons/FontAwesome", () => {
 });
 
 import RecipeFeed from "@/components/recipe-feed";
+import { motionDuration, motionStagger } from "@/constants/motion";
 
 function render(ui: React.ReactElement) {
   const client = new QueryClient({
@@ -77,6 +79,47 @@ const baseRecipe: RecipeSuggestion = {
   saves_expiring: ["Baby Spinach"],
 };
 
+function withFoods(recipeId: string, foods: string[]): RecipeSuggestion {
+  return {
+    ...baseRecipe,
+    recipe_id: recipeId,
+    title: recipeId,
+    ingredients: foods.map((food) => ({
+      name: food,
+      inventory_item_id: food,
+      use_amount: 1,
+      unit: "each",
+    })),
+  };
+}
+
+const sweepFeed = [
+  withFoods("alike-above", ["salmon", "rice", "lemon"]),
+  withFoods("chosen", ["salmon", "rice", "lemon", "peas"]),
+  withFoods("unalike", ["chickpeas", "tomatoes", "carrots"]),
+  withFoods("alike", ["salmon", "rice", "lemon", "garlic"]),
+  withFoods("unalike-too", ["eggs", "spaghetti", "parmesan"]),
+];
+
+function expectRenderedLeaving(
+  screen: ReturnType<typeof render>,
+  ids: string[],
+) {
+  const leaving = screen
+    .queryAllByTestId("recipe-sweep-leaving", { includeHiddenElements: true })
+    .map((wrapper) =>
+      within(wrapper)
+        .getAllByTestId(/^recipe-card-open-/, { includeHiddenElements: true })
+        .map((card) =>
+          String(card.props.testID).replace("recipe-card-open-", ""),
+        ),
+    )
+    .flat();
+  expect(leaving).toEqual(ids);
+}
+
+const SWEEP_OF_TWO_MS = motionStagger.sweep + motionDuration.fast;
+
 const defaultProps = {
   itemCount: 4,
   preferences: {},
@@ -87,7 +130,7 @@ const defaultProps = {
   bottomInset: 24,
   onAsk: jest.fn(),
   onDismiss: jest.fn(),
-  onMoreLikeThis: jest.fn(),
+  onSteer: jest.fn(),
   onNearEnd: jest.fn(),
   onRetryMore: jest.fn(),
   onAddItems: jest.fn(),
@@ -118,7 +161,11 @@ describe("RecipeFeed", () => {
     mockReducedMotion.mockReturnValue(true);
     const onToggleSave = jest.fn();
     const screen = render(
-      <RecipeFeed {...defaultProps} recipes={[baseRecipe]} onToggleSave={onToggleSave} />,
+      <RecipeFeed
+        {...defaultProps}
+        recipes={[baseRecipe]}
+        onToggleSave={onToggleSave}
+      />,
     );
     fireEvent.press(screen.getByTestId("recipe-card-save-recipe-1"));
     expect(onToggleSave).toHaveBeenCalledWith(baseRecipe, false);
@@ -187,18 +234,108 @@ describe("RecipeFeed", () => {
     expect(getByTestId("recipe-card-recipe-1")).toHaveStyle({ opacity: 0.45 });
   });
 
-  it("dismisses immediately with reduced motion enabled", () => {
+  it("sweeps with a short plain fade when Reduce Motion is on", () => {
     mockReducedMotion.mockReturnValue(true);
     const onDismiss = jest.fn();
-    const { getByTestId } = render(
+    const screen = render(
       <RecipeFeed
         {...defaultProps}
         onDismiss={onDismiss}
-        recipes={[baseRecipe]}
+        recipes={sweepFeed}
       />,
     );
-    fireEvent.press(getByTestId("recipe-card-less-like-this-recipe-1"));
-    expect(onDismiss).toHaveBeenCalledWith("recipe-1");
+
+    fireEvent.press(screen.getByTestId("recipe-card-more-like-this-chosen"));
+    expectRenderedLeaving(screen, ["unalike"]);
+    const [wrapper] = screen.getAllByTestId("recipe-sweep-leaving", {
+      includeHiddenElements: true,
+    });
+    expect(wrapper).toHaveStyle({ transform: [] });
+    act(() => jest.advanceTimersByTime(79));
+    expect(onDismiss).not.toHaveBeenCalled();
+    act(() => jest.advanceTimersByTime(1));
+
+    expect(onDismiss).toHaveBeenCalledWith(["unalike", "unalike-too"]);
+  });
+
+  it("sweeps unalike cards below for More like this and keeps alike ones", () => {
+    const onDismiss = jest.fn();
+    const onSteer = jest.fn();
+    const screen = render(
+      <RecipeFeed
+        {...defaultProps}
+        onDismiss={onDismiss}
+        onSteer={onSteer}
+        recipes={sweepFeed}
+      />,
+    );
+
+    fireEvent.press(screen.getByTestId("recipe-card-more-like-this-chosen"));
+
+    expect(onSteer).toHaveBeenCalledWith("more", sweepFeed[1]);
+    expectRenderedLeaving(screen, ["unalike"]);
+    act(() => jest.advanceTimersByTime(SWEEP_OF_TWO_MS - 1));
+    expect(onDismiss).not.toHaveBeenCalled();
+    act(() => jest.advanceTimersByTime(1));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(onDismiss).toHaveBeenCalledWith(["unalike", "unalike-too"]);
+  });
+
+  it("sweeps the card and alike cards below for Less like this", () => {
+    const onDismiss = jest.fn();
+    const onSteer = jest.fn();
+    const screen = render(
+      <RecipeFeed
+        {...defaultProps}
+        onDismiss={onDismiss}
+        onSteer={onSteer}
+        recipes={sweepFeed}
+      />,
+    );
+
+    fireEvent.press(screen.getByTestId("recipe-card-less-like-this-chosen"));
+    expectRenderedLeaving(screen, ["chosen", "alike"]);
+    act(() => jest.advanceTimersByTime(SWEEP_OF_TWO_MS));
+
+    expect(onSteer).toHaveBeenCalledWith("less", sweepFeed[1]);
+    expect(onDismiss).toHaveBeenCalledWith(["chosen", "alike"]);
+  });
+
+  it("keeps the cards below when no steered batch can load", () => {
+    const onDismiss = jest.fn();
+    const onSteer = jest.fn();
+    const screen = render(
+      <RecipeFeed
+        {...defaultProps}
+        isExhausted
+        onDismiss={onDismiss}
+        onSteer={onSteer}
+        recipes={sweepFeed}
+      />,
+    );
+
+    fireEvent.press(screen.getByTestId("recipe-card-more-like-this-chosen"));
+    act(() => jest.runOnlyPendingTimers());
+
+    expect(onSteer).toHaveBeenCalledWith("more", sweepFeed[1]);
+    expectRenderedLeaving(screen, []);
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it("commits a running sweep when the feed unmounts", () => {
+    const onDismiss = jest.fn();
+    const { getByTestId, unmount } = render(
+      <RecipeFeed
+        {...defaultProps}
+        onDismiss={onDismiss}
+        recipes={sweepFeed}
+      />,
+    );
+
+    fireEvent.press(getByTestId("recipe-card-less-like-this-chosen"));
+    unmount();
+
+    expect(onDismiss).toHaveBeenCalledWith(["chosen", "alike"]);
   });
   it("shows an honest loading tail while existing recipes stay scrollable", () => {
     const { getByTestId, getByText, queryByText } = render(
@@ -214,9 +351,7 @@ describe("RecipeFeed", () => {
     );
 
     expect(getByText("Spinach Pasta")).toBeTruthy();
-    expect(getByTestId("recipe-stats")).toHaveTextContent(
-      "24 minTime2Serves",
-    );
+    expect(getByTestId("recipe-stats")).toHaveTextContent("24 minTime2Serves");
     expect(getByLabelText("Less like this: Spinach Pasta")).toBeTruthy();
     expect(getByLabelText("More like this: Spinach Pasta")).toBeTruthy();
     fireEvent(getByTestId("recipe-card-teaser-recipe-1"), "layout", {
@@ -265,18 +400,19 @@ describe("RecipeFeed", () => {
 
   it("sends More like this to its handler without opening or removing the card", () => {
     mockReducedMotion.mockReturnValue(true);
-    const onMoreLikeThis = jest.fn();
+    const onSteer = jest.fn();
     const onDismiss = jest.fn();
     const screen = render(
       <RecipeFeed
         {...defaultProps}
-        onMoreLikeThis={onMoreLikeThis}
+        onSteer={onSteer}
         onDismiss={onDismiss}
         recipes={[baseRecipe]}
       />,
     );
     fireEvent.press(screen.getByTestId("recipe-card-more-like-this-recipe-1"));
-    expect(onMoreLikeThis).toHaveBeenCalledWith(baseRecipe);
+    act(() => jest.runOnlyPendingTimers());
+    expect(onSteer).toHaveBeenCalledWith("more", baseRecipe);
     expect(onDismiss).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("View full recipe")).toBeNull();
   });
@@ -438,22 +574,6 @@ describe("RecipeFeed", () => {
     expect(getByTestId("recipe-feed-error")).not.toHaveStyle({
       backgroundColor: expect.anything(),
     });
-  });
-
-  it("dismisses a card after the slide-up animation", () => {
-    const onDismiss = jest.fn();
-    const { getByTestId } = render(
-      <RecipeFeed
-        {...defaultProps}
-        onDismiss={onDismiss}
-        recipes={[baseRecipe]}
-      />,
-    );
-
-    fireEvent.press(getByTestId("recipe-card-less-like-this-recipe-1"));
-    act(() => jest.advanceTimersByTime(260));
-
-    expect(onDismiss).toHaveBeenCalledWith("recipe-1");
   });
 
   it("shows the ingredients on the card and all amounts in the sheet", () => {

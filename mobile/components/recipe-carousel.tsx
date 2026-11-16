@@ -19,6 +19,7 @@ import Animated, {
 } from "react-native-reanimated";
 import Feather from "@expo/vector-icons/Feather";
 import { RecipePressable } from "@/components/recipe-motion";
+import RecipeSweepExit from "@/components/recipe-sweep-exit";
 import { useTheme } from "@/hooks/useTheme";
 
 /** One slot in {@link RecipeCarousel}. */
@@ -32,6 +33,11 @@ export type RecipeCarouselItem = {
    * above the stage while it shows.
    */
   kind: "recipe" | "loading" | "message";
+  /**
+   * Set while the slot's card leaves in a sweep: its exit delay in
+   * milliseconds.
+   */
+  exitDelayMs?: number;
 };
 
 const transition = { duration: 360, easing: Easing.inOut(Easing.cubic) };
@@ -180,6 +186,7 @@ export default function RecipeCarousel({
                 active={index === activeIndex}
                 isCard={item.kind !== "message"}
                 messageIndex={messageIndex}
+                exitDelayMs={item.exitDelayMs}
               >
                 {item.content}
               </CarouselSlot>
@@ -244,6 +251,7 @@ function CarouselSlot({
   active,
   isCard,
   messageIndex,
+  exitDelayMs,
 }: {
   children: ReactNode;
   index: number;
@@ -256,6 +264,7 @@ function CarouselSlot({
   active: boolean;
   isCard: boolean;
   messageIndex: number | null;
+  exitDelayMs: number | undefined;
 }) {
   const slotIndex = useSharedValue(index);
   useLayoutEffect(() => {
@@ -308,31 +317,38 @@ function CarouselSlot({
         style,
       ]}
     >
-      {children}
-      {isCard && (
-        <Animated.View
-          pointerEvents="none"
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-          style={[
-            {
-              position: "absolute",
-              top: 0,
-              bottom: 0,
-              left: 24,
-              right: 24,
-              borderRadius: 24,
-              backgroundColor: dimColor,
-            },
-            dimStyle,
-          ]}
-        />
-      )}
+      <RecipeSweepExit
+        exitDelayMs={exitDelayMs}
+        reducedMotion={reducedMotion}
+        style={styles.slotContent}
+      >
+        {children}
+        {isCard && (
+          <Animated.View
+            pointerEvents="none"
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            style={[
+              {
+                position: "absolute",
+                top: 0,
+                bottom: 0,
+                left: 24,
+                right: 24,
+                borderRadius: 24,
+                backgroundColor: dimColor,
+              },
+              dimStyle,
+            ]}
+          />
+        )}
+      </RecipeSweepExit>
     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
+  slotContent: { flex: 1 },
   navigation: {
     minHeight: 44,
     flexDirection: "row",

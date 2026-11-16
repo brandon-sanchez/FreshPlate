@@ -11,11 +11,14 @@ import RecipeCard, { RecipeSkeletonCard } from "@/components/recipe-card";
 import RecipeCarousel from "@/components/recipe-carousel";
 import RecipeFeedMessage from "@/components/recipe-feed-message";
 import RecipeIngredientsSheet from "@/components/recipe-ingredients-sheet";
+import RecipeSweepExit from "@/components/recipe-sweep-exit";
 import {
   RecipeContextBar,
   RecipeScreenHeader,
 } from "@/components/recipe-screen-header";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
+import { useRecipeSweep } from "@/hooks/useRecipeSweep";
+import type { SteerDirection } from "@/lib/recipe-steering";
 import { useTheme } from "@/hooks/useTheme";
 import type { RecipePreferences, RecipeSuggestion } from "@/types/recipes";
 
@@ -29,9 +32,13 @@ type RecipeFeedProps = {
   topInset: number;
   bottomInset: number;
   onAsk: () => void;
-  onDismiss: (recipeId: string) => void;
-  /** Called by a card's "More like this" button with that card's recipe. */
-  onMoreLikeThis: (recipe: RecipeSuggestion) => void;
+  /** Removes the cards a sweep took out, once their exits finish. */
+  onDismiss: (recipeIds: readonly string[]) => void;
+  /**
+   * Called by a card's "More like this" or "Less like this" button with that
+   * card's recipe, before the sweep's cards leave.
+   */
+  onSteer: (direction: SteerDirection, recipe: RecipeSuggestion) => void;
   onNearEnd: (lastVisibleIndex: number) => void;
   onRetryMore: () => void;
   onAddItems: () => void;
@@ -74,7 +81,7 @@ export default function RecipeFeed({
   bottomInset,
   onAsk,
   onDismiss,
-  onMoreLikeThis,
+  onSteer,
   onNearEnd,
   onRetryMore,
   onAddItems,
@@ -158,17 +165,22 @@ export default function RecipeFeed({
     },
     [onNearEnd, recipes.length],
   );
-  const dismissRecipe = useCallback(
-    (recipeId: string) => {
-      const index = recipesRef.current.findIndex(
-        (recipe) => recipe.recipe_id === recipeId,
-      );
-      onDismiss(recipeId);
-      onNearEndRef.current(index);
-    },
-    [onDismiss],
+  const { steer, exitDelayMs } = useRecipeSweep({
+    recipes,
+    reducedMotion,
+    canLoadMore: !isExhausted && prefetchError === null,
+    onSteer,
+    onDismiss,
+  });
+  const lessLikeThis = useCallback(
+    (recipe: RecipeSuggestion) => steer("less", recipe),
+    [steer],
   );
-  const renderItem = useCallback(
+  const moreLikeThis = useCallback(
+    (recipe: RecipeSuggestion) => steer("more", recipe),
+    [steer],
+  );
+  const renderCard = useCallback(
     ({ item }: { item: RecipeSuggestion; index: number }) => (
       <RecipeCard
         recipe={item}
@@ -181,9 +193,9 @@ export default function RecipeFeed({
         compact={stackEnabled}
         revealed={stackEnabled || revealedIds.has(item.recipe_id)}
         animatedIds={animatedIds}
-        onDismiss={dismissRecipe}
+        onLessLikeThis={lessLikeThis}
         onPreview={setPreviewRecipe}
-        onMoreLikeThis={onMoreLikeThis}
+        onMoreLikeThis={moreLikeThis}
         onCook={onCook}
         saved={savedIds.has(item.recipe_id)}
         onToggleSave={onToggleSave}
@@ -193,19 +205,30 @@ export default function RecipeFeed({
     [
       animatedIds,
       cardHeight,
-      dismissRecipe,
+      lessLikeThis,
+      moreLikeThis,
       stackEnabled,
       fontScale,
       reducedMotion,
       revealedIds,
       stride,
       width,
-      onMoreLikeThis,
       onToggleSave,
       savedIds,
       isSavePending,
       onCook,
     ],
+  );
+  const renderItem = useCallback(
+    (info: { item: RecipeSuggestion; index: number }) => (
+      <RecipeSweepExit
+        exitDelayMs={exitDelayMs(info.item.recipe_id)}
+        reducedMotion={reducedMotion}
+      >
+        {renderCard(info)}
+      </RecipeSweepExit>
+    ),
+    [exitDelayMs, reducedMotion, renderCard],
   );
   const footer = isPrefetching ? (
     <RecipeSkeletonCard
@@ -264,7 +287,8 @@ export default function RecipeFeed({
               ...recipes.map((recipe, index) => ({
                 id: recipe.recipe_id,
                 kind: "recipe" as const,
-                content: renderItem({ item: recipe, index }),
+                exitDelayMs: exitDelayMs(recipe.recipe_id),
+                content: renderCard({ item: recipe, index }),
               })),
               ...(footer
                 ? [
