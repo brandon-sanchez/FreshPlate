@@ -39,6 +39,7 @@ MIGRATIONS = (
     *FOODS_MIGRATIONS,
     "20261113120000_add_cook_recipe_v2.sql",
     "20261113130000_add_cook_event_lines.sql",
+    "20261115180000_restrict_cook_event_writes.sql",
 )
 
 
@@ -260,6 +261,49 @@ def test_replay_returns_the_first_result_and_a_changed_payload_fails(database):
     assert "different payload" in changed.stderr and "different payload" in other_snapshot.stderr
     assert lot_state(database, own)["quantity"] == 150
     assert database.run(f"SELECT count(*) FROM cook_events WHERE operation_id = {q(operation)}") == "1"
+
+
+def test_members_cannot_write_cook_events_directly(database):
+    home = household(database)
+    food, _ = lot(database, home, "Oats", "g", 500, "pantry")
+    result = cook(database, home, [{"inventory_item_id": food, "confirmed_amount": 50}])
+    real = result["cook_event_id"]
+    recipe = str(uuid4())
+    fake = (
+        "INSERT INTO cook_events(household_id, user_id, recipe_id, operation_id, recipe_snapshot, deductions, request_deductions)"
+        f" VALUES ({q(home)}, {q(USER)}, {q(recipe)}, {q(uuid4())}, {j({'recipe_id': recipe})}, '[]', '[]');"
+    )
+    writes = [
+        fake,
+        f"UPDATE cook_events SET deductions = '[]' WHERE id = {q(real)};",
+        f"DELETE FROM cook_events WHERE id = {q(real)};",
+        "TRUNCATE cook_events;",
+    ]
+
+    for role, user in [("authenticated", USER), ("anon", None)]:
+        for sql in writes:
+            assert "permission denied for table cook_events" in database.run(sql, role=role, user=user, check=False).stderr
+    assert database.run(f"SELECT count(*) FROM cook_events WHERE household_id = {q(home)}") == "1"
+    assert database.json(f"SELECT deductions FROM cook_events WHERE id = {q(real)}") == result["deductions"]
+
+
+def test_members_read_only_their_own_households_cook_events(database):
+    home = household(database)
+    food, _ = lot(database, home, "Tea", "g", 200, "pantry")
+    event = cook(database, home, [{"inventory_item_id": food, "confirmed_amount": 5}])["cook_event_id"]
+    select = f"SELECT count(*) FROM cook_events WHERE id = {q(event)}"
+
+    assert database.run(select, role="authenticated", user=USER) == "1"
+    assert database.run(select, role="authenticated", user=OTHER) == "0"
+    assert "permission denied for table cook_events" in database.run(select, role="anon", user=None, check=False).stderr
+
+
+def test_cook_recipe_is_not_callable(database):
+    home = household(database)
+    recipe = str(uuid4())
+    sql = f"SELECT public.cook_recipe({q(home)}, {q(uuid4())}, {q(recipe)}, {j({'recipe_id': recipe})}, '[]');"
+
+    assert "permission denied for function cook_recipe" in database.run(sql, role="authenticated", user=USER, check=False).stderr
 
 
 def test_snapshot_must_name_the_recipe(database):

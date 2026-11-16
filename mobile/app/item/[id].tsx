@@ -16,10 +16,15 @@ import { useTheme } from "@/hooks/useTheme";
 import SegmentedControl from "@/components/SegmentedControl";
 import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";
+import LotRemainingControl from "@/components/LotRemainingControl";
+import CutLotControl from "@/components/CutLotControl";
+import SectionLabel from "@/components/SectionLabel";
 import { InventoryItem, useInventoryItems } from "@/hooks/useInventoryItems";
-import { daysUntilExpiration } from "@/lib/expiry";
+import { dateInDays, daysUntilExpiration } from "@/lib/expiry";
+import { formatAmount } from "@/lib/amount";
 import { FoodNameTakenError, useUpdateItem } from "@/hooks/useUpdateItem";
 import { useDeleteItem } from "@/hooks/useDeleteItem";
+import { ChangedElsewhereError } from "@/lib/lotRpc";
 import { useAuthStore } from "@/stores/auth";
 import { getUrgency } from "@/constants/theme";
 
@@ -89,14 +94,7 @@ export default function ItemDetailScreen() {
 
   const trimmedName = name.trim();
   const isValid = trimmedName.length > 0;
-  /* Local-calendar math; UTC slicing rounds evening adds in negative-UTC
-   * zones to the next day. */
-  const expirationISO = (() => {
-    if (expDays === null) return null;
-    const now = new Date();
-    const t = new Date(now.getFullYear(), now.getMonth(), now.getDate() + expDays);
-    return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
-  })();
+  const expirationISO = expDays === null ? null : dateInDays(expDays);
   const urgency = expDays === null ? null : getUrgency(expDays);
   const urgencyColor =
     urgency?.level === "crit"
@@ -151,7 +149,14 @@ export default function ItemDetailScreen() {
           onPress: () =>
             deleteItem.mutate(
               { id: item.id, name: item.name },
-              { onSuccess: () => router.back() },
+              {
+                onSuccess: () => router.back(),
+                // The refetch that follows drops the batch, so staying would
+                // leave the editor on "Item not found" under the toast.
+                onError: (error) => {
+                  if (error instanceof ChangedElsewhereError) router.back();
+                },
+              },
             ),
         },
       ],
@@ -226,10 +231,13 @@ export default function ItemDetailScreen() {
                 marginTop: 2,
               }}
             >
-              {`${item.category?.name ?? "Uncategorized"} · ${formatQuantity(item.quantity)} ${item.unit}`}
+              {`${item.category?.name ?? "Uncategorized"} · ${formatAmount(item.quantity, item.unit, item.is_estimate)}`}
             </Text>
           </View>
         </View>
+
+        <LotRemainingControl lot={item} />
+        <CutLotControl lot={item} onCut={() => router.back()} />
 
         <SectionLabel text="Name" />
         <TextInput
@@ -388,29 +396,6 @@ export default function ItemDetailScreen() {
       </View>
     </View>
   );
-}
-
-function SectionLabel({ text, inline }: { text: string; inline?: boolean }) {
-  const { colors, fonts } = useTheme();
-  return (
-    <Text
-      style={{
-        fontFamily: fonts.bodyStrong,
-        fontSize: 11,
-        color: colors.textMuted,
-        textTransform: "uppercase",
-        letterSpacing: 0.8,
-        marginTop: inline ? 0 : 8,
-        marginBottom: inline ? 0 : -8,
-      }}
-    >
-      {text}
-    </Text>
-  );
-}
-
-function formatQuantity(q: number): string {
-  return Number.isInteger(q) ? String(q) : q.toFixed(1);
 }
 
 function capitalize(s: string): string {
