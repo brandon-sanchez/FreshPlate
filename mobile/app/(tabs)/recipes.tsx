@@ -18,6 +18,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { useInventoryItems } from "@/hooks/useInventoryItems";
 import { useRecipeFeed } from "@/hooks/useRecipeFeed";
 import { useSavedRecipes } from "@/hooks/useSavedRecipes";
+import { useActiveCook } from "@/hooks/useActiveCook";
 import { useAuthStore } from "@/stores/auth";
 import {
   buildRecipeFeedSessionRequest,
@@ -47,6 +48,7 @@ export default function RecipesScreen() {
   const householdId = useAuthStore((s) => s.householdId);
   const feed = useRecipeFeed();
   const saved = useSavedRecipes();
+  const cook = useActiveCook();
   const [tab, setTab] = useState<"for-you" | "saved">("for-you");
   const [preferences, setPreferences] = useState<RecipePreferences>({});
   const [flowOpen, setFlowOpen] = useState(false);
@@ -79,6 +81,9 @@ export default function RecipesScreen() {
       });
     });
   };
+  const startCook = async (recipe: RecipeSuggestion) => {
+    if (await cook.start(recipe)) setDetailRecipe(recipe);
+  };
   const detail = (
     <RecipeDetail
       recipe={detailRecipe}
@@ -86,6 +91,15 @@ export default function RecipesScreen() {
       isSavePending={saved.isToggling}
       onToggleSave={toggleSave}
       onClose={() => setDetailRecipe(null)}
+      cooking={
+        detailRecipe !== null &&
+        cook.activeCook?.recipe.recipe_id === detailRecipe.recipe_id
+      }
+      cookPending={cook.pending}
+      onCook={(recipe) => void startCook(recipe)}
+      onDoneCooking={async () => {
+        if (await cook.finish()) setDetailRecipe(null);
+      }}
     />
   );
 
@@ -94,7 +108,7 @@ export default function RecipesScreen() {
       <RecipeScreenHeader subtitle="Your household cookbook" />
       <RecipeTabs tab={tab} onChange={setTab} />
       <SavedRecipesContent saved={saved} onOpen={setPreviewRecipe} />
-      <RecipeIngredientsSheet recipe={previewRecipe} onClose={() => setPreviewRecipe(null)} onOpenDetail={setDetailRecipe} />
+      <RecipeIngredientsSheet recipe={previewRecipe} onClose={() => setPreviewRecipe(null)} onOpenDetail={setDetailRecipe} onCook={(recipe) => void startCook(recipe)} />
       {detail}
     </View>;
   }
@@ -250,6 +264,7 @@ export default function RecipesScreen() {
         onToggleSave={toggleSave}
         isSavePending={saved.isToggling}
         onOpenDetail={setDetailRecipe}
+        onCook={(recipe) => void startCook(recipe)}
       />
       {detail}
       </>
