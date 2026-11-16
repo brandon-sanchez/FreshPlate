@@ -14,7 +14,7 @@ def test_load_prompt_reads_the_versioned_generate_recipes_prompt() -> None:
     prompt = load_prompt("generate_recipes")
 
     assert prompt.name == "generate_recipes"
-    assert prompt.version == 6
+    assert prompt.version == 7
     assert prompt.model == "gemini-3.6-flash"
     assert prompt.thinking == "minimal"
     assert "inventory" in prompt.system.lower()
@@ -62,7 +62,6 @@ def test_generate_prompt_splits_steps_at_checkpoints_with_no_fixed_count() -> No
     assert "split any step that would need two doneness cues" in system
     assert "let each dish decide its own count" in system
     assert "never merge stages to keep a recipe short" in system
-    assert "should not share a step count" in system
     assert "too crammed" in system
 
 
@@ -131,7 +130,7 @@ def test_trace_config_contains_prompt_and_request_metadata() -> None:
     assert set(config) == {"metadata"}
     assert config["metadata"] == {
         "prompt_name": "generate_recipes",
-        "prompt_version": 6,
+        "prompt_version": 7,
         "request_id": "request-123",
     }
 

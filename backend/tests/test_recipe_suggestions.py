@@ -25,6 +25,7 @@ from app.api.recipes import (
 from app.main import create_app
 from app.services.food_lines import FoodLinesError
 from tests.conftest import HOUSEHOLD_ID, FakeFoodLineSource, SigningKey
+from tests.recipe_fakes import batch_responses
 
 
 def _auth_headers(signing_key: SigningKey) -> dict[str, str]:
@@ -135,7 +136,7 @@ def test_authenticated_suggestion_returns_identity_match_and_expiry_badge(
         recipe_app,
         FakeProvider(
             [
-                {"recipes": [_recipe()]},
+                *batch_responses(_recipe()),
                 {
                     "checks": [_eligible()]
                 },
@@ -174,7 +175,7 @@ def test_same_title_regeneration_gets_a_new_recipe_id(
     _install_graph_dependencies(recipe_app, None)
     recipe_app.dependency_overrides[get_recipe_provider] = lambda: FakeProvider(
         [
-            {"recipes": [_recipe()]},
+            *batch_responses(_recipe()),
             {
                 "checks": [_eligible()]
             },
@@ -227,13 +228,9 @@ def test_suggestion_honors_exclusions_and_batch_ceiling(
     patch_jwks([signing_key])
     provider = FakeProvider(
         [
-            {
-                "recipes": [
-                    _recipe("First Recipe"),
-                    _recipe("Excluded Recipe"),
-                    _recipe("Third Recipe"),
-                ]
-            },
+            *batch_responses(
+                _recipe("First Recipe"), _recipe("Excluded Recipe"), calls=2
+            ),
             {"checks": [
                 _eligible(),
                 _eligible(1),
@@ -407,7 +404,7 @@ def test_suggestion_reads_the_requested_households_foods(
     foods = FakeFoodLineSource(_inventory())
     _install_graph_dependencies(
         recipe_app,
-        FakeProvider([{"recipes": [_recipe()]}, {"checks": [_eligible()]}]),
+        FakeProvider([*batch_responses(_recipe()), {"checks": [_eligible()]}]),
         foods=foods,
     )
 

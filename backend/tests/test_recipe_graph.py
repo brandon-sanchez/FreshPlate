@@ -9,7 +9,12 @@ import pytest
 
 from app.ai.agents.graph import build_recipe_graph
 from app.ai.agents.models import Recipe, RecipeGenerationResponse
-from app.ai.agents.nodes import analyze_inventory, check_quality, generate_recipes
+from app.ai.agents.nodes import (
+    MEAL_REVIEW_RESERVE_SECONDS,
+    analyze_inventory,
+    check_quality,
+    generate_recipes,
+)
 from app.ai.llm.providers import FakeProvider
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.prompts.loader import load_prompt
@@ -73,6 +78,13 @@ TOMATOES = {
     "stock_base": "each",
     "each_label": "each",
 }
+
+
+def _ends_before_meal_review(
+    call_deadline: PipelineDeadline, pipeline_deadline: PipelineDeadline
+) -> bool:
+    expected = pipeline_deadline.remaining_seconds - MEAL_REVIEW_RESERVE_SECONDS
+    return abs(call_deadline.remaining_seconds - expected) < 0.5
 
 
 class RecordingProvider:
@@ -542,7 +554,9 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
     provider = RecordingProvider(
         [
             bad_response,
+            {"recipes": []},
             good_response,
+            {"recipes": []},
             {
                 "checks": [
                     {
@@ -578,12 +592,16 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
 
     assert [recipe.title for recipe in result["valid_recipes"]] == ["Second attempt"]
     assert result["retry_count"] == 1
-    assert len(provider.calls) == 3
-    assert "missing" in provider.calls[1]["prompt"]
-    assert all(call["deadline"] is deadline for call in provider.calls)
+    assert len(provider.calls) == 5
+    assert "missing" in provider.calls[2]["prompt"]
+    assert all(
+        _ends_before_meal_review(call["deadline"], deadline)
+        for call in provider.calls[:4]
+    )
+    assert provider.calls[4]["deadline"] is deadline
     assert retriever.calls[0]["deadline"] is deadline
     assert result["metadata"]["prompt_name"] == "generate_recipes"
-    assert result["metadata"]["prompt_version"] == 6
+    assert result["metadata"]["prompt_version"] == 7
     assert result["metadata"]["request_id"] == "request-123"
 
 
@@ -618,7 +636,9 @@ async def test_graph_fail_softs_after_one_quality_retry() -> None:
     assert result["valid_recipes"] == []
     assert result["retry_count"] == 1
     assert len(provider.calls) == 2
-    assert all(call["deadline"] is deadline for call in provider.calls)
+    assert all(
+        _ends_before_meal_review(call["deadline"], deadline) for call in provider.calls
+    )
 
 
 @pytest.mark.asyncio
@@ -702,25 +722,26 @@ async def test_graph_skips_quality_retry_below_the_20s_budget_floor() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generation_runs_at_minimal_thinking_with_a_capped_open_batch() -> None:
-    provider = RecordingProvider([{"recipes": []}])
+async def test_generation_runs_at_minimal_thinking_one_open_recipe_per_call() -> None:
+    provider = RecordingProvider([{"recipes": []}] * 3)
     await generate_recipes(
         {"usable_items": [_usable_item()], "batch_ceiling": 3}, provider
     )
 
-    call = provider.calls[0]
-    assert call["thinking"] == "minimal"
-    schema = call["response_model"].model_json_schema()["properties"]["recipes"]
-    assert schema["maxItems"] == 3
-    assert "minItems" not in schema
-    assert "Maximum number of recipes: 3" in call["prompt"]
-    assert "every recipe may use the full listed inventory" in call["prompt"]
-    assert "return an empty list" in call["prompt"]
+    assert len(provider.calls) == 3
+    for call in provider.calls:
+        assert call["thinking"] == "minimal"
+        schema = call["response_model"].model_json_schema()["properties"]["recipes"]
+        assert schema["maxItems"] == 1
+        assert "minItems" not in schema
+        assert "Suggest one meal" in call["prompt"]
+        assert "may use the full listed inventory" in call["prompt"]
+        assert "return an empty list" in call["prompt"]
 
 
 @pytest.mark.asyncio
 async def test_generation_prompt_says_water_is_the_only_free_ingredient() -> None:
-    provider = RecordingProvider([{"recipes": []}])
+    provider = RecordingProvider([{"recipes": []}] * 5)
     await generate_recipes({"usable_items": [_usable_item()]}, provider)
     prompt = provider.calls[0]["prompt"]
     assert "Water is always available" in prompt
@@ -764,7 +785,7 @@ def test_check_quality_allows_unmapped_water_but_no_other_unmapped_staple() -> N
 
 @pytest.mark.asyncio
 async def test_honest_empty_batch_finishes_without_a_quality_retry() -> None:
-    provider = RecordingProvider([{"recipes": []}])
+    provider = RecordingProvider([{"recipes": []}] * 5)
     result = await build_recipe_graph(provider, RecordingRetriever()).ainvoke(
         {
             "inventory": [
@@ -774,7 +795,7 @@ async def test_honest_empty_batch_finishes_without_a_quality_retry() -> None:
     )
     assert result["valid_recipes"] == []
     assert result["retry_count"] == 0
-    assert len(provider.calls) == 1
+    assert len(provider.calls) == 5
 
 
 @pytest.mark.asyncio

@@ -10,7 +10,7 @@ import pytest
 
 from app.ai.agents.graph import build_recipe_generation_graph, build_recipe_graph
 from app.ai.agents.models import Recipe
-from app.ai.agents.nodes import analyze_inventory
+from app.ai.agents.nodes import MEAL_REVIEW_RESERVE_SECONDS, analyze_inventory
 from app.ai.agents.photos import PHOTO_RESERVE_SECONDS, add_recipe_photos
 from app.ai.llm.providers import GEMINI_MIN_DEADLINE_SECONDS, FakeProvider
 from app.ai.llm.retry import PipelineDeadline
@@ -20,6 +20,7 @@ from app.models.images import ImageResult
 from app.services.image_service import ImageService, RequesterRecipePhotos
 from tests.image_fakes import POLICY, FakeStore
 from tests.image_fakes import FakeProvider as FakeImageProvider
+from tests.recipe_fakes import batch_responses
 
 pytestmark = pytest.mark.asyncio
 
@@ -142,13 +143,11 @@ async def test_refill_photographs_every_valid_recipe_concurrently():
     photos = RecordingPhotos()
     provider = FakeProvider(
         [
-            {
-                "recipes": [
-                    _recipe("Roast tomatoes"),
-                    _recipe("Saffron rice", grounded=False),
-                    _recipe("Tomato soup"),
-                ]
-            },
+            *batch_responses(
+                _recipe("Roast tomatoes"),
+                _recipe("Saffron rice", grounded=False),
+                _recipe("Tomato soup"),
+            ),
             _assessment(2),
         ]
     )
@@ -166,7 +165,9 @@ async def test_refill_photographs_every_valid_recipe_concurrently():
 async def test_first_session_graph_also_ends_with_photos():
     photos = RecordingPhotos()
     retriever = _Retriever()
-    provider = FakeProvider([{"recipes": [_recipe("Roast tomatoes")]}, _assessment(1)])
+    provider = FakeProvider(
+        [*batch_responses(_recipe("Roast tomatoes")), _assessment(1)]
+    )
     graph = build_recipe_graph(provider, retriever, photos=photos)
 
     result = await graph.ainvoke(
@@ -185,7 +186,7 @@ async def test_a_failed_photo_ships_its_recipe_with_a_placeholder():
     photos = RecordingPhotos(fail={"Tomato soup"})
     provider = FakeProvider(
         [
-            {"recipes": [_recipe("Roast tomatoes"), _recipe("Tomato soup")]},
+            *batch_responses(_recipe("Roast tomatoes"), _recipe("Tomato soup")),
             _assessment(2),
         ]
     )
@@ -205,7 +206,9 @@ async def test_a_failed_photo_ships_its_recipe_with_a_placeholder():
 async def test_an_exhausted_budget_ships_recipes_with_placeholders():
     images = ImageService(FakeStore(spent=100), FakeImageProvider(), POLICY)
     photos = RequesterRecipePhotos(images, USER)
-    provider = FakeProvider([{"recipes": [_recipe("Roast tomatoes")]}, _assessment(1)])
+    provider = FakeProvider(
+        [*batch_responses(_recipe("Roast tomatoes")), _assessment(1)]
+    )
     graph = build_recipe_generation_graph(provider, photos=photos)
 
     result = await graph.ainvoke(_refill_state(PipelineDeadline(45)))
@@ -218,7 +221,9 @@ async def test_a_store_outage_ships_recipes_with_placeholders():
     store = FakeStore()
     store.fail_upload = True
     images = ImageService(store, FakeImageProvider(), POLICY)
-    provider = FakeProvider([{"recipes": [_recipe("Roast tomatoes")]}, _assessment(1)])
+    provider = FakeProvider(
+        [*batch_responses(_recipe("Roast tomatoes")), _assessment(1)]
+    )
     graph = build_recipe_generation_graph(
         provider, photos=RequesterRecipePhotos(images, USER)
     )
@@ -233,15 +238,19 @@ async def test_recipe_steps_leave_the_photo_reserve_untouched():
     clock = Clock()
     photos = RecordingPhotos(delay=0)
     provider = ClockedProvider(
-        [{"recipes": [_recipe("Roast tomatoes")]}, _assessment(1)],
+        [*batch_responses(_recipe("Roast tomatoes")), _assessment(1)],
         clock,
-        durations=[20, 0],
+        # The fake answers calls one at a time, so only the batch's last
+        # call moves the clock, as if all five overlapped for 20 seconds.
+        durations=[0, 0, 0, 0, 20],
     )
     graph = build_recipe_generation_graph(provider, photos=photos)
 
     await graph.ainvoke(_refill_state(PipelineDeadline(45, clock=clock)))
 
-    assert provider.remaining_at_call[0] == pytest.approx(45 - PHOTO_RESERVE_SECONDS)
+    assert provider.remaining_at_call[0] == pytest.approx(
+        45 - PHOTO_RESERVE_SECONDS - MEAL_REVIEW_RESERVE_SECONDS
+    )
     generation = 20
     two_store_calls = 2 * settings.recipe_feed_store_timeout_seconds + 1
     assert photos.timeouts == [pytest.approx(45 - generation - two_store_calls)]
@@ -264,7 +273,7 @@ async def test_titles_the_feed_already_showed_get_no_photo():
     photos = RecordingPhotos(delay=0)
     provider = FakeProvider(
         [
-            {"recipes": [_recipe("Roast tomatoes"), _recipe("tomato  SOUP")]},
+            *batch_responses(_recipe("Roast tomatoes"), _recipe("tomato  SOUP")),
             _assessment(2),
         ]
     )
@@ -279,13 +288,15 @@ async def test_titles_the_feed_already_showed_get_no_photo():
 async def test_graphs_without_a_photo_source_keep_their_full_deadline():
     clock = Clock()
     provider = ClockedProvider(
-        [{"recipes": [_recipe("Roast tomatoes")]}, _assessment(1)], clock, []
+        [*batch_responses(_recipe("Roast tomatoes")), _assessment(1)], clock, []
     )
     graph = build_recipe_generation_graph(provider)
 
     result = await graph.ainvoke(_refill_state(PipelineDeadline(45, clock=clock)))
 
-    assert provider.remaining_at_call[0] == pytest.approx(45)
+    assert provider.remaining_at_call[0] == pytest.approx(
+        45 - MEAL_REVIEW_RESERVE_SECONDS
+    )
     assert "recipe_photos" not in result
 
 
