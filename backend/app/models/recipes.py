@@ -77,13 +77,45 @@ class RecipeFeedSessionRequest(BaseModel):
     preferences: dict[str, Any] = Field(default_factory=dict)
 
 
+_MAX_STEERING_MORE_LIKE = 3
+_MAX_STEERING_LESS_LIKE = 10
+
+
+class RecipeFeedSteering(BaseModel):
+    """The cook's "More like this" and "Less like this" picks in one feed.
+
+    Ids that aren't in the session's pool are ignored.
+
+    Attributes:
+        more_like: Recipes to make more of, most recent last.
+        less_like: Recipes to make fewer of, most recent last.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    more_like: list[UUID] = Field(
+        default_factory=list, max_length=_MAX_STEERING_MORE_LIKE
+    )
+    less_like: list[UUID] = Field(
+        default_factory=list, max_length=_MAX_STEERING_LESS_LIKE
+    )
+
+
 class RecipeFeedPageRequest(BaseModel):
-    """Cursor and page-size contract for one feed continuation request."""
+    """Cursor, page size and steering for one feed continuation request.
+
+    Attributes:
+        cursor: The pool position the page starts at.
+        limit: The most cards the page returns.
+        steering: Steers the batch this page generates, if it generates one.
+            A page served from the stored pool ignores it.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     cursor: str = Field(default="0", min_length=1, max_length=32)
     limit: StrictInt = Field(default=5, ge=1, le=5)
+    steering: RecipeFeedSteering = Field(default_factory=RecipeFeedSteering)
 
 
 class RecipeFeedCard(RecipeSuggestion):
