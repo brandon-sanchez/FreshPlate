@@ -38,6 +38,7 @@ jest.mock("expo-router", () => ({
   useLocalSearchParams: () => mockParams.current,
 }));
 jest.mock("@expo/vector-icons/FontAwesome", () => () => null);
+jest.mock("@expo/vector-icons/Feather", () => () => null);
 const mockFocused = { current: true };
 jest.mock("@react-navigation/native", () => ({
   ...jest.requireActual("@react-navigation/native"),
@@ -220,4 +221,63 @@ it("offers a retry when the inventory fails to load", async () => {
 
   expect(await screen.findByText("Something went wrong")).toBeTruthy();
   expect(screen.queryByText("Item not found")).toBeNull();
+});
+
+it("combines the picked batches into the one cooking draws first", async () => {
+  renderScreen();
+
+  fireEvent.press(await screen.findByRole("button", { name: "Combine" }));
+  fireEvent.press(screen.getByLabelText("1000 ml, Fridge, Expires in 2 days"));
+  fireEvent.press(screen.getByLabelText("500 ml, Freezer, Opened, Expires in 6 days, use first"));
+  fireEvent.press(screen.getByRole("button", { name: "Combine 2 batches" }));
+
+  await waitFor(() =>
+    expect(mockRpc).toHaveBeenCalledWith("combine_lots", {
+      p_household_id: "household-1",
+      p_into_lot_id: "milk-opened",
+      p_lot_ids: ["milk-sealed"],
+    }),
+  );
+  expect(mockPush).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Combine" })).toBeTruthy());
+});
+
+it("checks the picked batches and says which one holds the mix", async () => {
+  renderScreen();
+
+  fireEvent.press(await screen.findByRole("button", { name: "Combine" }));
+  expect(screen.getByText("Pick 2 or more batches")).toBeTruthy();
+
+  const sealed = screen.getByLabelText("1000 ml, Fridge, Expires in 2 days");
+  fireEvent.press(sealed);
+  fireEvent.press(screen.getByLabelText("500 ml, Freezer, Opened, Expires in 6 days, use first"));
+
+  expect(sealed.props.accessibilityRole).toBe("checkbox");
+  expect(sealed.props.accessibilityState).toEqual({ checked: true });
+  const openedDay = new Date("2026-11-05T08:00:00+00:00").toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  expect(screen.getByText(`Into the 500 ml opened ${openedDay}`)).toBeTruthy();
+});
+
+it("needs two picked batches to combine, and cancels without changes", async () => {
+  renderScreen();
+
+  fireEvent.press(await screen.findByRole("button", { name: "Combine" }));
+  fireEvent.press(screen.getByLabelText("1000 ml, Fridge, Expires in 2 days"));
+  fireEvent.press(screen.getByRole("button", { name: "Combine 1 batch" }));
+  fireEvent.press(screen.getByRole("button", { name: "Cancel" }));
+
+  expect(mockRpc).not.toHaveBeenCalled();
+  expect(screen.getAllByTestId("swipe-row")).toHaveLength(3);
+});
+
+it("offers no combine for a food with one batch", async () => {
+  mockLots.current = [lotRow("milk-last", 3)];
+  renderScreen();
+
+  await screen.findByText("Milk");
+
+  expect(screen.queryByRole("button", { name: "Combine" })).toBeNull();
 });
