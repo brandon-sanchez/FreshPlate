@@ -27,6 +27,12 @@ const recipe: RecipeSuggestion = {
   steps: ["Prep the greens\nRinse the spinach.", "Sauté and serve."],
   saves_expiring: ["Spinach"],
 };
+const cookProps = {
+  cooking: false,
+  cookPending: false,
+  onCook: jest.fn(),
+  onDoneCooking: jest.fn(),
+};
 const wrapper = ({ children }: { children: React.ReactNode }) => (
   <SafeAreaProvider
     initialMetrics={{
@@ -48,6 +54,7 @@ it("renders the selected snapshot and sends its identity to the shared save acti
       isSavePending={false}
       onToggleSave={onToggleSave}
       onClose={onClose}
+      {...cookProps}
     />,
     { wrapper },
   );
@@ -71,7 +78,13 @@ it("renders the selected snapshot and sends its identity to the shared save acti
 
 it("uses updated saved state and blocks a second toggle while saving", () => {
   const onToggleSave = jest.fn();
-  const props = { recipe, onToggleSave, onClose: jest.fn(), isSaved: true };
+  const props = {
+    ...cookProps,
+    recipe,
+    onToggleSave,
+    onClose: jest.fn(),
+    isSaved: true,
+  };
   const screen = render(<RecipeDetail {...props} isSavePending />, { wrapper });
   fireEvent.press(screen.getByLabelText("Remove recipe from saved recipes"));
   expect(onToggleSave).not.toHaveBeenCalled();
@@ -98,6 +111,7 @@ it("gives long ingredients the full row when text is enlarged", () => {
       isSavePending={false}
       onToggleSave={jest.fn()}
       onClose={jest.fn()}
+      {...cookProps}
     />,
     { wrapper },
   );
@@ -113,4 +127,34 @@ it("gives long ingredients the full row when text is enlarged", () => {
   expect(screen.getByTestId("recipe-detail-ingredient-0")).toBeTruthy();
   screen.unmount();
   Dimensions.set({ window: original, screen: original });
+});
+
+it("pins Cook this until the recipe is the active cook, then Done cooking", () => {
+  const onCook = jest.fn();
+  const onDoneCooking = jest.fn();
+  const props = {
+    recipe,
+    isSaved: false,
+    isSavePending: false,
+    onToggleSave: jest.fn(),
+    onClose: jest.fn(),
+    cookPending: false,
+    onCook,
+    onDoneCooking,
+  };
+  const screen = render(<RecipeDetail {...props} cooking={false} />, {
+    wrapper,
+  });
+  fireEvent.press(screen.getByText("Cook this"));
+  expect(onCook).toHaveBeenCalledWith(recipe);
+  expect(screen.queryByText("Done cooking")).toBeNull();
+
+  screen.rerender(<RecipeDetail {...props} cooking />);
+  fireEvent.press(screen.getByText("Done cooking"));
+  expect(onDoneCooking).toHaveBeenCalledTimes(1);
+  expect(onCook).toHaveBeenCalledTimes(1);
+
+  screen.rerender(<RecipeDetail {...props} cooking cookPending />);
+  fireEvent.press(screen.getByText("Done cooking"));
+  expect(onDoneCooking).toHaveBeenCalledTimes(1);
 });

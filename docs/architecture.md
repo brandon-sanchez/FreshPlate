@@ -199,9 +199,20 @@ Recipe photos and ingredient thumbnails are not on any screen yet. The backend s
 - Images are WebP files in the private `generated-images` Storage bucket. Responses carry a signed URL and a stable `image_key`. When there is no image, the response says `pending` or `unavailable` with a reason, so the screen shows its placeholder.
 - `OpenAIImageProvider` in `backend/app/ai/images/openai.py` makes one image request and checks that the result is a PNG no larger than 4096 pixels on a side.
 
+## The API is planned to run on AWS Lambda
+
+The API isn't deployed yet. [#36](https://github.com/brandon-sanchez/FreshPlate/issues/36) plans the deploy:
+
+- AWS Lambda runs the image that `backend/Dockerfile` builds. The Lambda Web Adapter lets FastAPI and uvicorn run unchanged. Each copy serves one request at a time, and the function scales to zero when idle.
+- The app calls the API through a Lambda Function URL over HTTPS. There is no API Gateway, because its limit of about 30 seconds per request is too short for recipe generation.
+- Amazon ECR stores the image. SSM Parameter Store holds the backend's keys as SecureString parameters, and CloudWatch Logs keeps the logs.
+- GitHub Actions deploys after CI passes on `main`. It signs in through OIDC to an IAM role, so no long-lived AWS key exists anywhere.
+- A small AWS CDK app, written in Python, defines these resources.
+
+Supabase, Gemini, OpenAI image generation, Open Food Facts, and LangSmith stay as they are.
+
 ## Where to go next
 
 - [Evaluation reference](evals.md) describes the eval dataset, metrics, and latest scorecards.
 - [Run the evals](run-evals.md) shows how to run them.
-- [Deploy the API](deployment.md) covers Cloud Run.
 - [CI/CD](ci-cd.md) explains what runs on each push.
