@@ -1,9 +1,9 @@
 import { useEffect } from "react";
 import { useRouter } from "expo-router";
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { RecipeView } from "@/components/recipe-detail";
-import { toastConfig } from "@/components/toastConfig";
+import { RecipeView, cookFooterTop } from "@/components/recipe-detail";
+import { ToastHost } from "@/components/toastConfig";
 import { useActiveCook } from "@/hooks/useActiveCook";
 import { useSavedRecipes } from "@/hooks/useSavedRecipes";
 import type { RecipeSuggestion } from "@/types/recipes";
@@ -49,7 +49,7 @@ export default function CookScreen() {
         onCook={() => undefined}
         onDoneCooking={() => void cook.finish()}
       />
-      <Toast config={toastConfig} topOffset={insets.top + 60} />
+      <ToastHost bottomInset={cookFooterTop(insets.bottom)} />
     </>
   );
 }

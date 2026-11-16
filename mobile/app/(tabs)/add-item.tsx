@@ -4,7 +4,7 @@ import { useRouter } from "expo-router";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useIsFocused } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 import SegmentedControl from "@/components/SegmentedControl";
 import BarcodeScanner from "@/components/BarcodeScanner";
 import ItemForm from "@/components/ItemForm";
@@ -78,28 +78,31 @@ function ManualForm({ tabBarHeight }: ManualFormProps) {
 
   return (
     <ItemForm
+      key={resetKey}
       categories={categories}
       existingLots={lots}
-      resetKey={resetKey}
       submitLabel="Add to inventory"
       submittingLabel="Adding…"
       isSubmitting={addItem.isPending}
       contentContainerStyle={{ paddingBottom: tabBarHeight + 24 }}
       onSubmit={(input) => {
         const addedName = input.name;
-        addItem.mutate(input, {
-          onSuccess: (result) => {
-            setResetKey((k) => k + 1);
-            Toast.show(addItemSuccessToast(result, addedName));
-            router.push({
-              pathname: "/(tabs)/inventory",
-              params: { added: result.id },
-            });
+        addItem.mutate(
+          { ...input, notes: null },
+          {
+            onSuccess: (result) => {
+              setResetKey((k) => k + 1);
+              Toast.show(addItemSuccessToast(result, addedName));
+              router.push({
+                pathname: "/(tabs)/inventory",
+                params: { added: result.id },
+              });
+            },
+            onError: (error) => {
+              Toast.show(addItemErrorToast(error, addedName));
+            },
           },
-          onError: (error) => {
-            Toast.show(addItemErrorToast(error, addedName));
-          },
-        });
+        );
       }}
     />
   );

@@ -11,7 +11,7 @@ import { useRouter } from "expo-router";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 import { useAuthStore, firstNameFromMetadata } from "@/stores/auth";
 import { useTheme } from "@/hooks/useTheme";
 import { firstNameFromProfile, useProfile } from "@/hooks/useProfile";
