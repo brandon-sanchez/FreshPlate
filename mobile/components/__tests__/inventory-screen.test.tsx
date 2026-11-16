@@ -281,17 +281,25 @@ it("opens on Location, with the tabs in Location, Category, Urgency order", asyn
   expect(screen.getByRole("tab", { name: "Location", selected: true })).toBeTruthy();
 });
 
-it("sorts the rows inside each section from the sort menu, showing the current sort", async () => {
+async function openMenu() {
+  fireEvent.press(screen.getByRole("button", { name: "Sort and filter" }));
+  await screen.findByRole("button", { name: "Done" });
+}
+
+it("sorts the rows inside each section from the menu, flipping the direction on a second tap", async () => {
   renderScreen();
   await screen.findByText("2 items · 1 expired");
   expect(rowNames()).toEqual(["Eggs", "Milk", "Milk"]);
+  expect(screen.getByText("Expiry date, soonest first · all 2 items")).toBeTruthy();
 
-  fireEvent.press(screen.getByRole("button", { name: "Sort, Expiry: soonest first" }));
-  expect(screen.getByRole("radio", { name: "Expiry: soonest first", checked: true })).toBeTruthy();
-  fireEvent.press(screen.getByRole("radio", { name: "Name: Z to A" }));
+  await openMenu();
+  expect(screen.getByRole("radio", { name: "Expiry date", checked: true })).toBeTruthy();
+  fireEvent.press(screen.getByRole("radio", { name: "Name" }));
+  fireEvent.press(screen.getByRole("radio", { name: "Name" }));
 
-  await waitFor(() => expect(rowNames()).toEqual(["Milk", "Eggs", "Milk"]));
-  expect(screen.getByRole("button", { name: "Sort, Name: Z to A" })).toBeTruthy();
+  expect(rowNames()).toEqual(["Milk", "Eggs", "Milk"]);
+  expect(screen.getByRole("radio", { name: "Name", checked: true })).toBeTruthy();
+  expect(screen.getByText("Name, Z to A · all 2 items")).toBeTruthy();
   expect(screen.getAllByText(/^(Fridge|Freezer)$/).map((node) => node.props.children)).toEqual([
     "Fridge",
     "Freezer",
@@ -302,8 +310,8 @@ it("reopens with the grouping and sort chosen last time", async () => {
   const first = renderScreen();
   await screen.findByText("2 items · 1 expired");
   fireEvent.press(screen.getByRole("tab", { name: "Category" }));
-  fireEvent.press(screen.getByRole("button", { name: "Sort, Expiry: soonest first" }));
-  fireEvent.press(screen.getByRole("radio", { name: "Amount: high to low" }));
+  await openMenu();
+  fireEvent.press(screen.getByRole("radio", { name: "Amount" }));
   await waitFor(async () => expect(await AsyncStorage.getItem("freshplate.inventory-view")).toContain("amount-desc"));
   first.unmount();
 
@@ -311,17 +319,58 @@ it("reopens with the grouping and sort chosen last time", async () => {
   await screen.findByText("2 items · 1 expired");
 
   expect(screen.getByRole("tab", { name: "Category", selected: true })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Sort, Amount: high to low" })).toBeTruthy();
+  expect(screen.getByText("Amount, most first · all 2 items")).toBeTruthy();
 });
 
-it("keeps the current sort when the sort sheet is dismissed without a pick", async () => {
+it("filters by place from the menu as each option is checked, and clears from the summary line", async () => {
   renderScreen();
   await screen.findByText("2 items · 1 expired");
 
-  fireEvent.press(screen.getByRole("button", { name: "Sort, Expiry: soonest first" }));
-  fireEvent.press(screen.getByLabelText("Close sort options", { includeHiddenElements: true }));
+  await openMenu();
+  expect(screen.queryByRole("checkbox", { name: "Freezer" })).toBeNull();
+  fireEvent.press(screen.getByRole("button", { name: "Location" }));
+  fireEvent.press(screen.getByRole("checkbox", { name: "Freezer" }));
 
-  expect(screen.queryByRole("radio")).toBeNull();
+  expect(rowNames()).toEqual(["Milk"]);
+  expect(screen.getByText("1000 ml · Freezer")).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "Freezer", checked: true })).toBeTruthy();
+  expect(screen.getByText("Expiry date, soonest first · Freezer")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Sort and filter" }).props.accessibilityValue).toEqual({
+    text: "1 filter on",
+  });
+
+  fireEvent.press(screen.getByRole("button", { name: "Done" }));
+  await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Freezer" })).toBeNull());
+  fireEvent.press(screen.getByRole("button", { name: "Clear filters" }));
+
   expect(rowNames()).toEqual(["Eggs", "Milk", "Milk"]);
-  expect(screen.getByRole("button", { name: "Sort, Expiry: soonest first" })).toBeTruthy();
+  expect(screen.getByText("Expiry date, soonest first · all 2 items")).toBeTruthy();
+});
+
+it("says nothing matches when a switch leaves no rows, offering to clear the filters", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+
+  await openMenu();
+  fireEvent.press(screen.getByRole("switch", { name: "Leftovers only" }));
+
+  expect(screen.getByRole("switch", { name: "Leftovers only", checked: true })).toBeTruthy();
+  expect(screen.queryByText("Milk")).toBeNull();
+  expect(screen.getByText("No matches.")).toBeTruthy();
+
+  fireEvent.press(screen.getByRole("button", { name: "Done" }));
+  await waitFor(() => expect(screen.queryByRole("switch")).toBeNull());
+  fireEvent.press(screen.getByText("Clear filters"));
+  expect(rowNames()).toEqual(["Eggs", "Milk", "Milk"]);
+});
+
+it("closes the menu when tapped outside, keeping the current sort", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+
+  await openMenu();
+  fireEvent(screen.getByLabelText("Close sort and filter", { includeHiddenElements: true }), "pressIn");
+
+  await waitFor(() => expect(screen.queryByRole("radio")).toBeNull());
+  expect(rowNames()).toEqual(["Eggs", "Milk", "Milk"]);
 });

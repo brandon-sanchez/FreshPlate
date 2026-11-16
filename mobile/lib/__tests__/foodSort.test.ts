@@ -1,6 +1,13 @@
 import type { InventoryItem } from "@/hooks/useInventoryItems";
 import { groupFoodRows, type FoodSection, type GroupBy } from "@/lib/foodRows";
-import { sortSections, type SortBy } from "@/lib/foodSort";
+import {
+  nextSort,
+  SORT_FAMILIES,
+  sortDirection,
+  sortSections,
+  sortSummary,
+  type SortBy,
+} from "@/lib/foodSort";
 
 const TODAY = new Date(2026, 10, 8, 12);
 
@@ -162,5 +169,35 @@ describe("sortSections", () => {
     const rows = section(sorted([sour("Ham", -9), sour("Kefir", -1), sour("Brie", -4)], "Urgency", "expiry-latest"), "expired").data;
 
     expect(rows.map((r) => r.name)).toEqual(["Kefir", "Brie", "Ham"]);
+  });
+});
+
+describe("sort families", () => {
+  it("picks a family's first direction, then flips between its directions", () => {
+    expect(nextSort("name", "expiry-soonest")).toBe("name-asc");
+    expect(nextSort("name", "name-asc")).toBe("name-desc");
+    expect(nextSort("name", "name-desc")).toBe("name-asc");
+    expect(nextSort("amount", "recent")).toBe("amount-desc");
+  });
+
+  it("keeps a one-direction sort when its family is tapped again", () => {
+    expect(nextSort("recent", "recent")).toBe("recent");
+  });
+
+  it("names the selected family's direction and summarizes the sort", () => {
+    expect(sortDirection("expiry-latest")).toEqual({ family: "expiry", label: "Latest first", reversed: true });
+    expect(sortDirection("amount-desc")).toEqual({ family: "amount", label: "Most first", reversed: false });
+    expect(sortSummary("expiry-soonest")).toBe("Expiry date, soonest first");
+    expect(sortSummary("name-desc")).toBe("Name, Z to A");
+    expect(sortSummary("recent")).toBe("Recently added, newest first");
+  });
+
+  it("lists the families in menu order", () => {
+    expect(SORT_FAMILIES.map((family) => family.label)).toEqual([
+      "Expiry date",
+      "Name",
+      "Amount",
+      "Recently added",
+    ]);
   });
 });

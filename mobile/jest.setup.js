@@ -37,3 +37,9 @@ jest.mock("react-native-gesture-handler/ReanimatedSwipeable", () => {
   });
   return { __esModule: true, default: MockSwipeable };
 });
+
+// React Native's View mock stubs measureInWindow without calling back, so a
+// menu anchored to a measured trigger would never open.
+require("react-native/jest/MockNativeMethods").default.measureInWindow.mockImplementation(
+  (callback) => callback(0, 0, 0, 0),
+);
