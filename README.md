@@ -22,7 +22,7 @@ These features are in progress:
 
 - Cooking a recipe and deducting what you used from inventory. The backend endpoint and database function exist. The app screens are in [#27](https://github.com/brandon-sanchez/FreshPlate/issues/27) and [#30](https://github.com/brandon-sanchez/FreshPlate/issues/30).
 - Recipe and ingredient photos, in [#56](https://github.com/brandon-sanchez/FreshPlate/issues/56).
-- Automatic deploys of the API to Cloud Run, in [PR #49](https://github.com/brandon-sanchez/FreshPlate/pull/49).
+- Automatic deploys of the API to AWS Lambda, in [#36](https://github.com/brandon-sanchez/FreshPlate/issues/36). The API isn't deployed yet.
 
 ## How it works
 
