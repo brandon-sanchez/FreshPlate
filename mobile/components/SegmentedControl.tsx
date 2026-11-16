@@ -1,21 +1,32 @@
 import { Text, View, Pressable } from "react-native";
 import { useTheme } from "@/hooks/useTheme";
 
-type SegmentedControlProps = {
-  options: string[];
-  selected: string;
-  onSelect: (option: string) => void;
+type SegmentedControlProps<T extends string> = {
+  /** The segments, left to right; each is also its label. */
+  options: readonly T[];
+  /** The segment drawn as selected. */
+  selected: T;
+  /** Called with the tapped segment. */
+  onSelect: (option: T) => void;
+  /**
+   * How screen readers announce the segments: `radio` (the default) for a
+   * form choice, `tab` when the segments switch between views of one list.
+   */
+  role?: "radio" | "tab";
 };
 
-function SegmentedControl({
+/** A row of mutually exclusive segments with the selected one filled in the accent color. */
+function SegmentedControl<T extends string>({
   options,
   selected,
   onSelect,
-}: SegmentedControlProps) {
+  role = "radio",
+}: SegmentedControlProps<T>) {
   const { colors } = useTheme();
 
   return (
     <View
+      accessibilityRole={role === "tab" ? "tablist" : "radiogroup"}
       style={{
         flexDirection: "row",
         backgroundColor: colors.surfaceAlt,
@@ -30,6 +41,9 @@ function SegmentedControl({
           <Pressable
             key={option}
             onPress={() => onSelect(option)}
+            accessibilityRole={role}
+            accessibilityLabel={option}
+            accessibilityState={role === "tab" ? { selected: isSelected } : { checked: isSelected }}
             style={{
               flex: 1,
               paddingVertical: 10,

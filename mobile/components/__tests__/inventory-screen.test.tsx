@@ -2,6 +2,7 @@ import React from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const mockLots = { current: [] as unknown[] };
 const mockRpc = jest.fn();
@@ -83,7 +84,8 @@ function renderScreen() {
   );
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await AsyncStorage.clear();
   mockPush.mockClear();
   mockRpc.mockReset();
   mockRpc.mockResolvedValue({ error: null });
@@ -99,6 +101,7 @@ it("shows one row per food with its batches stacked, counting foods in the subti
   renderScreen();
 
   expect(await screen.findByText("2 items · 1 expired")).toBeTruthy();
+  fireEvent.press(screen.getByRole("tab", { name: "Urgency" }));
   expect(screen.getAllByText("Milk")).toHaveLength(1);
   expect(screen.getByText("2000 ml · 2 batches · Fridge, Freezer")).toBeTruthy();
   expect(screen.getByText("6 egg · Fridge")).toBeTruthy();
@@ -110,6 +113,7 @@ it("shows one row per food with its batches stacked, counting foods in the subti
 it("records every batch a row stacks when its swipe action is tapped", async () => {
   renderScreen();
   await screen.findByText("2 items · 1 expired");
+  fireEvent.press(screen.getByRole("tab", { name: "Category" }));
   const milkRow = screen.getAllByTestId("swipe-row").find((row) => within(row).queryByText("Milk"));
 
   fireEvent.press(within(milkRow!).getByLabelText("Toss"));
@@ -142,6 +146,7 @@ it("takes taps again after a record fails", async () => {
   mockRpc.mockResolvedValueOnce({ error: { message: "Failed to fetch" } });
   renderScreen();
   await screen.findByText("2 items · 1 expired");
+  fireEvent.press(screen.getByRole("tab", { name: "Category" }));
   const milkRow = screen.getAllByTestId("swipe-row").find((row) => within(row).queryByText("Milk"));
 
   fireEvent.press(within(milkRow!).getByLabelText("Used up"));
@@ -168,11 +173,9 @@ it("narrows rows by search", async () => {
   expect(screen.getByText("Eggs")).toBeTruthy();
 });
 
-it("splits a food across places in the Location view", async () => {
+it("splits a food across places in the Location view it opens on", async () => {
   renderScreen();
   await screen.findByText("2 items · 1 expired");
-
-  fireEvent.press(screen.getByText("Location"));
 
   expect(screen.getAllByText("Milk")).toHaveLength(2);
   expect(screen.getByText("1000 ml · Fridge")).toBeTruthy();
@@ -200,7 +203,7 @@ it("opens Review expired from the subtitle in any view, even when the expired ba
   renderScreen();
   await screen.findByText("1 item · 1 expired");
 
-  fireEvent.press(screen.getByText("Location"));
+  fireEvent.press(screen.getByRole("tab", { name: "Category" }));
   fireEvent.press(screen.getByLabelText("1 expired. Review expired batches"));
 
   expect(mockPush).toHaveBeenCalledWith("/review-expired");
@@ -209,6 +212,7 @@ it("opens Review expired from the subtitle in any view, even when the expired ba
 it("opens Review expired from the Expired section header", async () => {
   renderScreen();
   await screen.findByText("2 items · 1 expired");
+  fireEvent.press(screen.getByRole("tab", { name: "Urgency" }));
 
   fireEvent.press(screen.getByText("Review"));
 
@@ -247,6 +251,7 @@ it("opens the collapsed Fresh section to show a just-added batch", async () => {
   const butter = { id: "food-butter", name: "Butter", stock_base: "g", each_label: null };
   mockLots.current = [...mockLots.current, lotRow("butter-1", butter, 30, "fridge", 250)];
   mockParams.current = { added: "butter-1" };
+  await AsyncStorage.setItem("freshplate.inventory-view", JSON.stringify({ groupBy: "Urgency" }));
   renderScreen();
 
   expect(await screen.findByText("Butter")).toBeTruthy();
@@ -257,6 +262,66 @@ it("keeps Fresh collapsed when nothing was just added", async () => {
   mockLots.current = [...mockLots.current, lotRow("butter-1", butter, 30, "fridge", 250)];
   renderScreen();
   await screen.findByText("3 items · 1 expired");
+  fireEvent.press(screen.getByRole("tab", { name: "Urgency" }));
 
   expect(screen.queryByText("Butter")).toBeNull();
+});
+
+const rowNames = () => screen.getAllByText(/^(Eggs|Milk)$/).map((node) => node.props.children);
+
+it("opens on Location, with the tabs in Location, Category, Urgency order", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+
+  expect(screen.getAllByRole("tab").map((tab) => tab.props.accessibilityLabel)).toEqual([
+    "Location",
+    "Category",
+    "Urgency",
+  ]);
+  expect(screen.getByRole("tab", { name: "Location", selected: true })).toBeTruthy();
+});
+
+it("sorts the rows inside each section from the sort menu, showing the current sort", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+  expect(rowNames()).toEqual(["Eggs", "Milk", "Milk"]);
+
+  fireEvent.press(screen.getByRole("button", { name: "Sort, Expiry: soonest first" }));
+  expect(screen.getByRole("radio", { name: "Expiry: soonest first", checked: true })).toBeTruthy();
+  fireEvent.press(screen.getByRole("radio", { name: "Name: Z to A" }));
+
+  await waitFor(() => expect(rowNames()).toEqual(["Milk", "Eggs", "Milk"]));
+  expect(screen.getByRole("button", { name: "Sort, Name: Z to A" })).toBeTruthy();
+  expect(screen.getAllByText(/^(Fridge|Freezer)$/).map((node) => node.props.children)).toEqual([
+    "Fridge",
+    "Freezer",
+  ]);
+});
+
+it("reopens with the grouping and sort chosen last time", async () => {
+  const first = renderScreen();
+  await screen.findByText("2 items · 1 expired");
+  fireEvent.press(screen.getByRole("tab", { name: "Category" }));
+  fireEvent.press(screen.getByRole("button", { name: "Sort, Expiry: soonest first" }));
+  fireEvent.press(screen.getByRole("radio", { name: "Amount: high to low" }));
+  await waitFor(async () => expect(await AsyncStorage.getItem("freshplate.inventory-view")).toContain("amount-desc"));
+  first.unmount();
+
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+
+  expect(screen.getByRole("tab", { name: "Category", selected: true })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Sort, Amount: high to low" })).toBeTruthy();
+});
+
+it("keeps the current sort when the sort sheet is dismissed without a pick", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+
+  fireEvent.press(screen.getByRole("button", { name: "Sort, Expiry: soonest first" }));
+  fireEvent.press(screen.getByLabelText("Close sort options", { includeHiddenElements: true }));
+
+  expect(screen.queryByRole("radio")).toBeNull();
+  expect(rowNames()).toEqual(["Eggs", "Milk", "Milk"]);
+  expect(screen.getByRole("button", { name: "Sort, Expiry: soonest first" })).toBeTruthy();
 });
