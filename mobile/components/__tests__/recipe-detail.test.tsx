@@ -36,6 +36,7 @@ const recipe: RecipeSuggestion = {
       use_amount: 100,
       unit: "g",
     },
+    { name: "Garlic", inventory_item_id: "garlic", use_amount: 0.25, unit: "head" },
     { name: "Salt", inventory_item_id: null, use_amount: 1, unit: "tsp" },
   ],
   steps: ["Prep the greens\nRinse the spinach.", "Sauté and serve."],
@@ -104,6 +105,7 @@ it("renders the selected snapshot and sends its identity to the shared save acti
   );
   expect(screen.getByText("Spinach skillet")).toBeTruthy();
   expect(screen.getByText("100 g")).toBeTruthy();
+  expect(screen.getByText("¼ head")).toBeTruthy();
   expect(screen.queryByText("In fridge")).toBeNull();
   expect(screen.queryByText("Buy")).toBeNull();
   expect(screen.getByText("Prep the greens")).toBeTruthy();
@@ -134,8 +136,11 @@ it("marks an ingredient with no food as a kitchen basic", () => {
     />,
     { wrapper },
   );
-  expect(screen.getByTestId("recipe-detail-ingredient-1")).toHaveTextContent(
+  expect(screen.getByTestId("recipe-detail-ingredient-2")).toHaveTextContent(
     "•1 tsp Salt · kitchen basic",
+  );
+  expect(screen.getByTestId("recipe-detail-ingredient-1")).toHaveTextContent(
+    "•¼ head Garlic",
   );
   expect(screen.getByTestId("recipe-detail-ingredient-0")).toHaveTextContent(
     "•100 g Spinach",

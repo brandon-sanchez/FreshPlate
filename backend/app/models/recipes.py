@@ -16,6 +16,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.ai.agents.dish import RequestedDish
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING, MAX_BATCH_CEILING
 from app.ai.agents.models import Recipe
 from app.models.images import ImageResult
@@ -140,6 +141,10 @@ class RecipeFeedData(BaseModel):
     has_more: bool
     ready_count: int = Field(default=0, ge=0)
     empty_reason: str | None = None
+    requested_dish: RequestedDish = Field(
+        description="The kind of dish the session's answers ask for: meal, snack "
+        "or dessert. Lets the app say which dish an empty feed couldn't make.",
+    )
 
 
 class RecipeFeedResponse(BaseModel):

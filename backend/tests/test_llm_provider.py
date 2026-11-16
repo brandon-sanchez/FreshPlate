@@ -307,6 +307,7 @@ def _usage_response(text: str) -> SimpleNamespace:
         text=text,
         usage_metadata=SimpleNamespace(
             prompt_token_count=1200,
+            cached_content_token_count=1024,
             candidates_token_count=340,
             thoughts_token_count=None,
         ),
@@ -343,6 +344,7 @@ async def test_gemini_provider_logs_one_structured_record_per_call(
     assert call["response_model"] == "Greeting"
     assert call["outcome"] == "ok"
     assert call["prompt_tokens"] == 1200
+    assert call["cached_tokens"] == 1024
     assert call["output_tokens"] == 340
     assert call["thinking_tokens"] == 0
     assert call["latency_ms"] >= 0

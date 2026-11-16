@@ -19,6 +19,7 @@ import RecipePhoto from "@/components/recipe-photo";
 import RecipeSaveButton from "@/components/recipe-save-button";
 import RecipeStats from "@/components/recipe-stats";
 import RecipeSteps from "@/components/recipe-steps";
+import { formatIngredientAmount } from "@/lib/recipe-format";
 import { isKitchenBasic } from "@/lib/recipes";
 
 // Height of the hero photo below the status bar, in points.
@@ -204,7 +205,7 @@ export function RecipeView({
                         }}
                       >
                         <Text style={{ fontFamily: fonts.bodyStrong }}>
-                          {Number(item.use_amount.toFixed(2))} {item.unit}
+                          {formatIngredientAmount(item)}
                         </Text>{" "}
                         {item.name}
                         {isKitchenBasic(item) ? (

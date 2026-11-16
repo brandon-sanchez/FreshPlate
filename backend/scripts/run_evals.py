@@ -9,10 +9,12 @@ import math
 from pathlib import Path
 from typing import Any
 
+from app.ai.agents.food_labels import FoodLabels
 from app.ai.agents.graph import build_recipe_graph
 from app.ai.agents.kitchen_basics import DEFAULT_KITCHEN_BASICS, KitchenBasics
 from app.ai.agents.meal_quality import MealChecklist
-from app.ai.agents.models import Recipe, RecipeIngredient
+from app.ai.agents.models import Recipe, RecipeIngredient, RecipeStep
+from app.ai.agents.nodes import analyze_inventory
 from app.ai.eval.judge import JudgeResult, judge_recipe
 from app.ai.eval.scorers import completeness_percent, ingredient_coverage_percent
 from app.ai.llm.providers import FakeProvider, GeminiProvider
@@ -25,20 +27,36 @@ _DEFAULT_BASICS = KitchenBasics(DEFAULT_KITCHEN_BASICS)
 
 
 def _fixture_recipe(case: dict[str, Any]) -> Recipe:
-    item = FoodLine.model_validate(case["inventory"][0])
+    """Return the offline model's answer: a recipe of the first usable food."""
+    usable = analyze_inventory({"inventory": case["inventory"]})["usable_items"]
+    item = FoodLine.model_validate(usable[0]["food"])
+    food_label = FoodLabels(food["id"] for food in usable).label(item.id)
     return Recipe(
         title=case["name"].title(),
+        headnote="A deterministic offline fixture built from the first usable food.",
         cook_time_minutes=20,
         servings=2,
+        active_minutes=10,
+        total_minutes=20,
+        equipment=["large skillet"],
         ingredients=[
             RecipeIngredient(
                 name=item.name,
-                inventory_item_id=item.id,
+                inventory_item_id=food_label,
                 use_amount=1,
                 unit=item.stock_unit,
+                display_amount="1",
             ),
         ],
-        steps=["Prepare the ingredients.", "Cook until tender.", "Serve warm."],
+        steps=[
+            RecipeStep(instruction="Prepare the ingredients", uses=[food_label]),
+            RecipeStep(
+                instruction="Cook\nCook over medium heat.",
+                doneness_cue="Ready when tender.",
+                minutes=10,
+            ),
+            RecipeStep(instruction="Serve warm."),
+        ],
     )
 
 
@@ -74,7 +92,8 @@ async def run(mode: str, experiment: str) -> dict[str, float | int | str]:
                         "main_component": "Grounded offline fixture",
                         "portion_reasoning": "Deterministic offline fixture",
                         "unlisted_foods": [],
-                        "is_full_meal": not rejected,
+                        "dish_reasoning": "Deterministic offline fixture",
+                        "is_requested_dish": not rejected,
                         "realistic_portions": True,
                         "coherent_method": True,
                     }

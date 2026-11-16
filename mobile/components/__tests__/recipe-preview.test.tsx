@@ -89,6 +89,8 @@ describe("recipe preview sheet", () => {
       "20 minTime2Serves",
     );
     expect(screen.getByText("Tomato")).toBeTruthy();
+    expect(screen.getAllByText("2")).not.toHaveLength(0);
+    expect(screen.queryByText("2 each")).toBeNull();
     expect(screen.getByText("1")).toBeTruthy();
     expect(screen.getByTestId("recipe-step-body-0").props.children).toBe(
       "Boil pasta",

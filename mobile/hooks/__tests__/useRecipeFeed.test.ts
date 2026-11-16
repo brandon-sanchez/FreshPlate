@@ -6,6 +6,7 @@ import {
 import { act, cleanupAsync, renderHook, waitFor } from "@testing-library/react-native";
 import type { ImageResult } from "@/types/images";
 import type {
+  RequestedDish,
   RecipeFeedCard,
   RecipeFeedResponse,
   RecipeFeedSessionRequest,
@@ -56,6 +57,7 @@ function page(
   nextCursor: string | null,
   hasMore: boolean,
   readyCount = recipes.length,
+  requestedDish: RequestedDish = "meal",
 ): RecipeFeedResponse {
   return {
     data: {
@@ -65,6 +67,7 @@ function page(
       has_more: hasMore,
       ready_count: readyCount,
       empty_reason: null,
+      requested_dish: requestedDish,
     },
   };
 }
@@ -447,6 +450,30 @@ describe("useRecipeFeed", () => {
     act(() => result.current.retryPrefetch());
     await waitFor(() => expect(result.current.recipes).toHaveLength(2));
     expect(mockFetchPage).toHaveBeenCalledTimes(3);
+  });
+
+  it("reports the dish the session asked for", async () => {
+    mockCreateSession.mockResolvedValueOnce(page([], null, false, 0, "dessert"));
+    const { result } = renderHook(() => useRecipeFeed(), { wrapper });
+    act(() => result.current.start(request));
+
+    await waitFor(() => expect(result.current.isExhausted).toBe(true));
+    expect(result.current.ending).toEqual({ kind: "empty", dish: "dessert" });
+  });
+
+  it("tells a feed the cook dismissed apart from one that found nothing", async () => {
+    mockCreateSession.mockResolvedValueOnce(
+      page([recipe("a", "Dish A"), recipe("b", "Dish B")], null, false),
+    );
+    const { result } = renderHook(() => useRecipeFeed(), { wrapper });
+    act(() => result.current.start(request));
+    await waitFor(() => expect(result.current.recipes).toHaveLength(2));
+
+    expect(result.current.ending).toEqual({ kind: "showing" });
+    act(() => result.current.dismiss(["a", "b"]));
+
+    expect(result.current.recipes).toHaveLength(0);
+    expect(result.current.ending).toEqual({ kind: "dismissed" });
   });
 
   it("surfaces a tail page the server answered as out of time without retrying it", async () => {

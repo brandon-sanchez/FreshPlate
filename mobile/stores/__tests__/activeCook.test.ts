@@ -52,6 +52,19 @@ it("persists and recovers an active cook", async () => {
   expect(useActiveCookStore.getState().activeCook).toEqual(cook);
 });
 
+it("recovers an active cook whose recipe has structured steps", async () => {
+  const structured = {
+    ...recipe,
+    headnote: "Quick tomato pasta.",
+    steps: [{ instruction: "Cook", doneness_cue: "Ready when soft.", uses: ["i1"] }],
+  };
+  await useActiveCookStore.getState().hydrate("u1", "h1");
+  const cook = await useActiveCookStore.getState().start("u1", "h1", structured);
+  const restored = createActiveCookStore();
+  await restored.getState().hydrate("u1", "h1");
+  expect(restored.getState().activeCook).toEqual(cook);
+});
+
 it("clears corrupt persistence and reports storage failures", async () => {
   storage.getItem.mockResolvedValueOnce("not-json");
   await useActiveCookStore.getState().hydrate("u1", "h1");
@@ -269,6 +282,7 @@ it.each([
   { ...recipe, match_percent: 101 },
   { ...recipe, servings: 0 },
   { ...recipe, steps: [null] },
+  { ...recipe, steps: [{ instruction: " " }] },
 ])("discards malformed saved recipe content", async (invalidRecipe) => {
   disk.set(
     "freshplate.active-cook.u1.h1",
