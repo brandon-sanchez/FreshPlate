@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   FlatList,
   Keyboard,
@@ -6,7 +6,6 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
-  type ViewToken,
   Text,
   View,
 } from "react-native";
@@ -21,6 +20,7 @@ import { useInventoryItems } from "@/hooks/useInventoryItems";
 import { useRecipeFeed } from "@/hooks/useRecipeFeed";
 import { useSavedRecipes, type SavedRecipe } from "@/hooks/useSavedRecipes";
 import { useActiveCook } from "@/hooks/useActiveCook";
+import { useSeenKeys } from "@/hooks/useSeenKeys";
 import { useAuthStore } from "@/stores/auth";
 import {
   buildRecipeFeedSessionRequest,
@@ -452,17 +452,9 @@ function SavedRecipesContent({ saved, onOpen }: { saved: ReturnType<typeof useSa
   const { colors } = useTheme();
   // A saved recipe that is still in the user's feed may start a paid photo
   // generation, so only rows that have been on screen request photos.
-  const [seenIds, setSeenIds] = useState(new Set<string>());
-  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 15 }).current;
-  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken<SavedRecipe>[] }) => {
-    setSeenIds((previous) => {
-      const next = new Set(previous);
-      for (const { item } of viewableItems) next.add(item.recipe_id);
-      return next.size === previous.size ? previous : next;
-    });
-  }).current;
+  const seenRows = useSeenKeys<SavedRecipe>((entry) => entry.recipe_id);
   if (saved.isPending) return <LoadingState label="Loading your cookbook..." />;
   if (saved.isError) return <ErrorState onRetry={() => saved.refetch()} />;
   if (!saved.data?.length) return <EmptyState icon={<View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: colors.accentSoft, alignItems: "center", justifyContent: "center" }}><Feather name="bookmark" size={24} color={colors.accent} /></View>} title="Nothing saved yet" message="Tap the bookmark on any recipe to keep it in your household cookbook" />;
-  return <FlatList testID="saved-recipes-list" data={saved.data} keyExtractor={(entry) => entry.recipe_id} extraData={seenIds} viewabilityConfig={viewabilityConfig} onViewableItemsChanged={onViewableItemsChanged} contentContainerStyle={{ padding: 24, gap: 12 }} showsVerticalScrollIndicator={false} renderItem={({ item: entry }) => <SavedRecipeRow recipe={entry.recipe} photoEnabled={seenIds.has(entry.recipe_id)} disabled={saved.isToggling} onOpen={() => onOpen(entry.recipe)} onRemove={() => { void saved.toggle({ recipe: entry.recipe, saved: true }).catch(() => Toast.show({ type: "error", text1: "Couldn't update saved recipes", text2: "Check your connection and try again." })); }} />} />;
+  return <FlatList testID="saved-recipes-list" data={saved.data} keyExtractor={(entry) => entry.recipe_id} {...seenRows.listProps} contentContainerStyle={{ padding: 24, gap: 12 }} showsVerticalScrollIndicator={false} renderItem={({ item: entry }) => <SavedRecipeRow recipe={entry.recipe} photoEnabled={seenRows.seen.has(entry.recipe_id)} disabled={saved.isToggling} onOpen={() => onOpen(entry.recipe)} onRemove={() => { void saved.toggle({ recipe: entry.recipe, saved: true }).catch(() => Toast.show({ type: "error", text1: "Couldn't update saved recipes", text2: "Check your connection and try again." })); }} />} />;
 }
