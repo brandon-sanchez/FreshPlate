@@ -1,6 +1,6 @@
-"""LangGraph wiring for the four-node recipe pipeline."""
+"""LangGraph wiring for the recipe pipeline and its optional photo step."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -15,8 +15,14 @@ from app.ai.agents.nodes import (
     retrieve_recipes,
     route_after_quality,
 )
+from app.ai.agents.photos import (
+    PHOTO_RESERVE_SECONDS,
+    RecipePhotoSource,
+    add_recipe_photos,
+)
 from app.ai.agents.state import (
     GenerationResult,
+    PhotoResult,
     QualityResult,
     RecipeState,
     RetrievalResult,
@@ -35,16 +41,22 @@ def build_recipe_graph(
     quality_retry_limit: int = MAX_QUALITY_RETRIES,
     retry_only_when_no_valid: bool = False,
     retrieval_limit: int = DEFAULT_MATCH_LIMIT,
+    photos: RecipePhotoSource | None = None,
 ) -> Any:
     """Compile the recipe pipeline with a bounded quality retry budget.
 
     ``retrieval_limit`` controls how many grounding docs the retrieve node
     fetches. Feed sessions request a pool larger than one generation window
     so later refill runs can draw on docs no earlier run has used.
+
+    With ``photos``, a photo step follows the quality check, and the recipe
+    steps stop ``PHOTO_RESERVE_SECONDS`` before the state's deadline to leave
+    it time. See ``add_recipe_photos``.
     """
     _validate_quality_retry_limit(quality_retry_limit)
     template = prompt or load_prompt("generate_recipes")
     builder = StateGraph(RecipeState)
+    step_deadline = _recipe_steps_deadline(photos)
 
     async def analyze_node(
         state: RecipeState,
@@ -63,7 +75,7 @@ def build_recipe_graph(
             state,
             retriever,
             limit=retrieval_limit,
-            deadline=_deadline_for_state(state),
+            deadline=step_deadline(state),
         )
 
     async def generate_node(state: RecipeState) -> GenerationResult:
@@ -71,19 +83,18 @@ def build_recipe_graph(
             state,
             provider,
             prompt=template,
-            deadline=_deadline_for_state(state),
+            deadline=step_deadline(state),
         )
 
     async def quality_node(state: RecipeState) -> QualityResult:
-        return await review_recipes(
-            state, provider, deadline=_deadline_for_state(state)
-        )
+        return await review_recipes(state, provider, deadline=step_deadline(state))
 
     def quality_route(state: RecipeState) -> str:
         return route_after_quality(
             state,
             quality_retry_limit=quality_retry_limit,
             retry_only_when_no_valid=retry_only_when_no_valid,
+            deadline=step_deadline(state),
         )
 
     builder.add_node("analyze_inventory", analyze_node)
@@ -94,11 +105,7 @@ def build_recipe_graph(
     builder.add_edge("analyze_inventory", "retrieve_recipes")
     builder.add_edge("retrieve_recipes", "generate_recipes")
     builder.add_edge("generate_recipes", "check_quality")
-    builder.add_conditional_edges(
-        "check_quality",
-        quality_route,
-        {"retry": "generate_recipes", "finish": END},
-    )
+    _finish_with_photos(builder, photos, quality_route)
     return builder.compile()
 
 
@@ -108,16 +115,19 @@ def build_recipe_generation_graph(
     prompt: PromptTemplate | None = None,
     quality_retry_limit: int = MAX_QUALITY_RETRIES,
     retry_only_when_no_valid: bool = False,
+    photos: RecipePhotoSource | None = None,
 ) -> Any:
     """Compile generation and quality nodes for an already-retrieved session.
 
     Feed refills reuse the first request's inventory analysis and retrieval
     context. This keeps later pages bounded to generation and quality checks
     instead of re-embedding the same inventory for every scroll event.
+    ``photos`` adds the photo step as in ``build_recipe_graph``.
     """
     _validate_quality_retry_limit(quality_retry_limit)
     template = prompt or load_prompt("generate_recipes")
     builder = StateGraph(RecipeState)
+    step_deadline = _recipe_steps_deadline(photos)
 
     async def initialize_node(state: RecipeState) -> dict[str, Any]:
         return {"deadline": _deadline_for_state(state)}
@@ -127,19 +137,18 @@ def build_recipe_generation_graph(
             state,
             provider,
             prompt=template,
-            deadline=_deadline_for_state(state),
+            deadline=step_deadline(state),
         )
 
     async def quality_node(state: RecipeState) -> QualityResult:
-        return await review_recipes(
-            state, provider, deadline=_deadline_for_state(state)
-        )
+        return await review_recipes(state, provider, deadline=step_deadline(state))
 
     def quality_route(state: RecipeState) -> str:
         return route_after_quality(
             state,
             quality_retry_limit=quality_retry_limit,
             retry_only_when_no_valid=retry_only_when_no_valid,
+            deadline=step_deadline(state),
         )
 
     builder.add_node("generate_recipes", generate_node)
@@ -148,12 +157,43 @@ def build_recipe_generation_graph(
     builder.add_edge(START, "initialize")
     builder.add_edge("initialize", "generate_recipes")
     builder.add_edge("generate_recipes", "check_quality")
+    _finish_with_photos(builder, photos, quality_route)
+    return builder.compile()
+
+
+def _recipe_steps_deadline(
+    photos: RecipePhotoSource | None,
+) -> Callable[[Mapping[str, Any]], PipelineDeadline]:
+    if photos is None:
+        return _deadline_for_state
+    return lambda state: _deadline_for_state(state).ending_before(PHOTO_RESERVE_SECONDS)
+
+
+def _finish_with_photos(
+    builder: StateGraph,
+    photos: RecipePhotoSource | None,
+    quality_route: Callable[[RecipeState], str],
+) -> None:
+    if photos is None:
+        builder.add_conditional_edges(
+            "check_quality",
+            quality_route,
+            {"retry": "generate_recipes", "finish": END},
+        )
+        return
+
+    async def photo_node(state: RecipeState) -> PhotoResult:
+        return await add_recipe_photos(
+            state, photos, deadline=_deadline_for_state(state)
+        )
+
+    builder.add_node("add_photos", photo_node)
     builder.add_conditional_edges(
         "check_quality",
         quality_route,
-        {"retry": "generate_recipes", "finish": END},
+        {"retry": "generate_recipes", "finish": "add_photos"},
     )
-    return builder.compile()
+    builder.add_edge("add_photos", END)
 
 
 def _validate_quality_retry_limit(value: int) -> None:

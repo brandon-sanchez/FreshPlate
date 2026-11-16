@@ -1,3 +1,4 @@
+import ActiveCookBanner from "@/components/active-cook-banner";
 import { RecipePressable } from "@/components/recipe-motion";
 import { StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
@@ -28,6 +29,7 @@ export function RecipeScreenHeader({ subtitle }: { subtitle?: string }) {
           {subtitle}
         </Text>
       )}
+      <ActiveCookBanner style={styles.cookBanner} />
     </View>
   );
 }
@@ -108,6 +110,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginTop: 4,
   },
+  cookBanner: { marginTop: 14 },
   contextBar: {
     marginHorizontal: 24,
     minHeight: 54,
