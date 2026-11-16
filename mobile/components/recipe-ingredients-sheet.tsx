@@ -1,6 +1,7 @@
 import { Modal, PanResponder, ScrollView, Text, View } from "react-native";
 import { useRef } from "react";
 import Feather from "@expo/vector-icons/Feather";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RecipePressable } from "@/components/recipe-motion";
@@ -9,15 +10,27 @@ import { useTheme } from "@/hooks/useTheme";
 import type { RecipeSuggestion } from "@/types/recipes";
 import RecipeSteps from "@/components/recipe-steps";
 
+type RecipeIngredientsSheetProps = {
+  /** The recipe to preview; `null` hides the sheet. */
+  recipe: RecipeSuggestion | null;
+  /** Called when the user dismisses the sheet, and before it opens the full recipe or a cook. */
+  onClose: () => void;
+  /** Opens the full recipe after a drag up on the handle or its accessibility action. */
+  onOpenDetail?: (recipe: RecipeSuggestion) => void;
+  /** Starts a cook of `recipe` from the "Cook this" button, after the sheet closes. */
+  onCook: (recipe: RecipeSuggestion) => void;
+};
+
+/**
+ * A bottom sheet that previews a recipe's ingredients and steps. Its primary
+ * button starts a cook, and dragging the handle up opens the full recipe.
+ */
 export default function RecipeIngredientsSheet({
   recipe,
   onClose,
   onOpenDetail,
-}: {
-  recipe: RecipeSuggestion | null;
-  onClose: () => void;
-  onOpenDetail?: (recipe: RecipeSuggestion) => void;
-}) {
+  onCook,
+}: RecipeIngredientsSheetProps) {
   const { colors, fonts } = useTheme();
   const insets = useSafeAreaInsets();
   const reducedMotion = useReducedMotion();
@@ -75,7 +88,16 @@ export default function RecipeIngredientsSheet({
           <View
             {...panResponder.panHandlers}
             testID="recipe-preview-drag-handle"
-            accessibilityLabel="Drag up to expand recipe"
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel="View full recipe"
+            accessibilityHint="Drag up to expand the recipe"
+            accessibilityActions={[{ name: "activate" }]}
+            onAccessibilityAction={() => {
+              if (!recipe) return;
+              onClose();
+              onOpenDetail?.(recipe);
+            }}
             style={{
               alignSelf: "center",
               width: 44,
@@ -218,26 +240,31 @@ export default function RecipeIngredientsSheet({
             <RecipePressable
               onPress={() => {
                 onClose();
-                onOpenDetail?.(recipe);
+                onCook(recipe);
               }}
               accessibilityRole="button"
-              accessibilityLabel="View full recipe"
+              accessibilityLabel={`Cook ${recipe.title}`}
+              testID="recipe-preview-cook"
               style={{
                 margin: 20,
-                minHeight: 48,
-                borderRadius: 14,
+                minHeight: 52,
+                borderRadius: 16,
                 backgroundColor: colors.accent,
+                flexDirection: "row",
+                gap: 10,
                 alignItems: "center",
                 justifyContent: "center",
               }}
             >
+              <Ionicons name="flame" size={18} color={colors.accentInk} />
               <Text
                 style={{
                   color: colors.accentInk,
                   fontFamily: fonts.bodyStrong,
+                  fontSize: 16,
                 }}
               >
-                View full recipe
+                Cook this
               </Text>
             </RecipePressable>
           )}
