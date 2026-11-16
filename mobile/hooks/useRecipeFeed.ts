@@ -13,6 +13,12 @@ import {
   RECIPE_FEED_REQUEST_TIMEOUT_MS,
 } from "@/lib/recipe-feed-api";
 import { preloadRecipePhotos } from "@/lib/recipe-photo-preload";
+import {
+  keepSteeredCards,
+  steeringRequest,
+  type SteerDirection,
+  type SteerSignal,
+} from "@/lib/recipe-steering";
 import type { ImageResult } from "@/types/images";
 import type {
   RecipeFeedResponse,
@@ -92,6 +98,14 @@ function uniqueRecipes(recipes: RecipeSuggestion[]): RecipeSuggestion[] {
  * `['recipe-image', recipe_id]` and its bytes are downloaded before the
  * page's cards are returned, so cards show photos without a request of their
  * own. Starting a new session cancels and removes the previous one.
+ *
+ * `steer` records a "More like this" or "Less like this" press for the rest
+ * of the session. Every later page request carries the picks, so batches are
+ * generated toward or away from them, and arriving cards are filtered by
+ * {@link keepSteeredCards}. A "More like this" press also requests the next
+ * page at once, or as soon as a page already loading lands. Pressing it again
+ * on the same recipe while that page is on its way changes nothing. The
+ * caller removes the swept cards on screen with `dismiss`.
  */
 export function useRecipeFeed() {
   const queryClient = useQueryClient();
@@ -113,6 +127,9 @@ export function useRecipeFeed() {
   const generationRef = useRef(0);
   const dismissedIdsRef = useRef(new Set<string>());
   const activeStartControllerRef = useRef<AbortController | null>(null);
+  const signalsRef = useRef<readonly SteerSignal[]>([]);
+  const steeredPageWantedRef = useRef(false);
+  const [steerVersion, setSteerVersion] = useState(0);
 
   const createMutation = useMutation<RecipeFeedPage, Error, StartMutationInput>({
     mutationFn: async ({ request, signal }) =>
@@ -133,10 +150,22 @@ export function useRecipeFeed() {
     queryFn: async ({ pageParam, signal }) => {
       if (!sessionId) throw new Error("Recipe feed session is not ready");
       const started = Date.now();
-      const page = await unpackPhotos(
-        queryClient,
-        await fetchRecipeFeedPage({ sessionId, cursor: pageParam, signal }),
+      const requested = signalsRef.current;
+      steeredPageWantedRef.current = false;
+      const response = await fetchRecipeFeedPage({
+        sessionId,
+        cursor: pageParam,
+        signal,
+        steering: steeringRequest(requested),
+      });
+      const recipes = keepSteeredCards(
+        response.data.recipes,
+        signalsRef.current,
+        requested,
       );
+      const page = await unpackPhotos(queryClient, {
+        data: { ...response.data, recipes },
+      });
       // The photo preload counts toward latency, because the buffer must
       // cover the whole wait until a page's cards can show.
       if (sessionIdRef.current === sessionId) {
@@ -180,6 +209,8 @@ export function useRecipeFeed() {
       sessionIdRef.current = null;
       dismissedIdsRef.current.clear();
       seenIdsRef.current.clear();
+      signalsRef.current = [];
+      steeredPageWantedRef.current = false;
       activePageRef.current = null;
       bufferTargetRef.current = RECIPE_FEED_READY_POOL_TARGET;
       pageLatencyMsRef.current = 25_000;
@@ -302,6 +333,37 @@ export function useRecipeFeed() {
     if (unseenCount < bufferTargetRef.current) loadNextPage();
   }, [loadNextPage, recipes]);
 
+  useEffect(() => {
+    if (!steeredPageWantedRef.current || feedQuery.isFetching) return;
+    steeredPageWantedRef.current = false;
+    loadNextPage();
+  }, [feedQuery.isFetching, loadNextPage, steerVersion]);
+
+  const steer = useCallback(
+    (direction: SteerDirection, recipe: RecipeSuggestion) => {
+      const latest = signalsRef.current.at(-1);
+      const repeatsPendingMore =
+        direction === "more" &&
+        latest?.direction === "more" &&
+        latest.recipe.recipe_id === recipe.recipe_id &&
+        (steeredPageWantedRef.current || activePageRef.current !== null);
+      // Each "More like this" batch is a paid generation, so a repeat press
+      // waits for the batch already on its way.
+      if (repeatsPendingMore) return;
+      signalsRef.current = [
+        ...signalsRef.current.filter(
+          (signal) => signal.recipe.recipe_id !== recipe.recipe_id,
+        ),
+        { direction, recipe },
+      ];
+      if (direction === "more") {
+        steeredPageWantedRef.current = true;
+        setSteerVersion((value) => value + 1);
+      }
+    },
+    [],
+  );
+
   const dismiss = useCallback((recipeId: string) => {
     if (dismissedIdsRef.current.has(recipeId)) return;
     dismissedIdsRef.current.add(recipeId);
@@ -329,6 +391,7 @@ export function useRecipeFeed() {
     retry,
     retryPrefetch,
     dismiss,
+    steer,
     maybePrefetch,
   };
 }

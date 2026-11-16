@@ -59,6 +59,16 @@ export type RecipeSuggestionsResponse = {
   };
 };
 
+/**
+ * The `steering` field of `POST /api/recipes/sessions/{id}/pages`: the
+ * session's "More like this" and "Less like this" picks, most recent last.
+ * The backend accepts at most 3 and 10 ids.
+ */
+export type RecipeFeedSteering = {
+  more_like: string[];
+  less_like: string[];
+};
+
 /** A recipe as the feed endpoints serve it, with its photo. */
 export type RecipeFeedCard = RecipeSuggestion & {
   /**

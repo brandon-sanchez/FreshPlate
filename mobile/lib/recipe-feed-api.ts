@@ -2,6 +2,7 @@ import { apiFetch } from "@/lib/api";
 import type {
   RecipeFeedResponse,
   RecipeFeedSessionRequest,
+  RecipeFeedSteering,
 } from "@/types/recipes";
 
 export const RECIPE_FEED_PAGE_SIZE = 5;
@@ -17,6 +18,8 @@ type RecipeFeedPageRequest = {
   sessionId: string;
   cursor: string;
   signal?: AbortSignal;
+  /** Steers the batch the page generates. */
+  steering?: RecipeFeedSteering;
 };
 
 export async function createRecipeFeedSession(
@@ -36,6 +39,7 @@ export async function fetchRecipeFeedPage({
   sessionId,
   cursor,
   signal,
+  steering,
 }: RecipeFeedPageRequest): Promise<RecipeFeedResponse> {
   return requestWithTimeout(signal, (requestSignal) =>
     apiFetch<RecipeFeedResponse>(
@@ -45,6 +49,7 @@ export async function fetchRecipeFeedPage({
         body: JSON.stringify({
           cursor,
           limit: RECIPE_FEED_PAGE_SIZE,
+          ...(steering && { steering }),
         }),
         signal: requestSignal,
       },
