@@ -76,7 +76,8 @@ def _assessment(count: int) -> dict[str, Any]:
                 "main_component": "vegetables",
                 "portion_reasoning": "complete meal",
                 "unlisted_foods": [],
-                "is_full_meal": True,
+                "dish_reasoning": "a meal on its own",
+                "is_requested_dish": True,
                 "realistic_portions": True,
                 "coherent_method": True,
             }
@@ -481,6 +482,48 @@ def test_honest_empty_session_reaches_the_empty_state_without_a_retry(
             "/api/recipes/sessions",
             headers=_auth_headers(signing_key),
             json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["recipes"] == []
+    assert response.json()["data"]["empty_reason"] == "INVENTORY_UNSUPPORTED"
+
+
+def test_a_kitchen_that_only_makes_a_side_dish_reaches_the_empty_state(
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    patch_jwks([signing_key])
+    side_dish = {
+        "checks": [
+            {
+                **_assessment(1)["checks"][0],
+                "dish_reasoning": "Wilted spinach with tomatoes is a side dish.",
+                "is_requested_dish": False,
+            }
+        ]
+    }
+    provider = FakeProvider(
+        [
+            *batch_responses(_recipe("Wilted Spinach and Tomatoes")),
+            side_dish,
+            *batch_responses(_recipe("Spinach and Tomato Saute")),
+            side_dish,
+        ]
+    )
+    app = create_app()
+    _install_dependencies(
+        app,
+        provider,
+        StubRetriever(),
+        InMemoryRecipeFeedStore(),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {"meal": "Dinner"}},
         )
 
     assert response.status_code == 200

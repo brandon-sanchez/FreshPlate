@@ -24,8 +24,8 @@
         "Wilt the greens\nCook the garlic and spinach in a covered pan over low heat for 2–3 minutes until wilted. Divide between two plates."
       ]
     },
-    "expected_verdict": "insufficient",
-    "reason": "100 g spinach and two garlic cloves do not form substantial meals for two."
+    "expected_verdict": "wrong_dish",
+    "reason": "100 g spinach and two garlic cloves are a side dish, not a meal for two."
   },
   {
     "name": "substantial vegetarian pasta",
@@ -108,5 +108,195 @@
     },
     "expected_verdict": "unsupported_ingredient",
     "reason": "The title and instructions add salmon absent from the ingredient list."
+  },
+  {
+    "name": "two-vegetable side",
+    "recipe": {
+      "title": "Roasted carrots and green beans",
+      "cook_time_minutes": 30,
+      "servings": 2,
+      "ingredients": [
+        {
+          "name": "Carrots",
+          "inventory_item_id": "carrot",
+          "use_amount": 4,
+          "unit": "each"
+        },
+        {
+          "name": "Green beans",
+          "inventory_item_id": "green-beans",
+          "use_amount": 300,
+          "unit": "g"
+        },
+        {
+          "name": "Olive oil",
+          "inventory_item_id": "olive-oil",
+          "use_amount": 2,
+          "unit": "tbsp"
+        }
+      ],
+      "steps": [
+        "Roast the vegetables\nToss the carrots and green beans with the oil on a sheet pan and roast at 425°F for 20–25 minutes until browned at the edges and tender.",
+        "Serve\nDivide between two plates."
+      ]
+    },
+    "expected_verdict": "wrong_dish",
+    "reason": "Two roasted vegetables are a side dish, however large the amounts."
+  },
+  {
+    "name": "garnish plate",
+    "recipe": {
+      "title": "Herb and lemon plate",
+      "cook_time_minutes": 5,
+      "servings": 2,
+      "ingredients": [
+        {
+          "name": "Parsley",
+          "inventory_item_id": "parsley",
+          "use_amount": 1,
+          "unit": "bunch"
+        },
+        {
+          "name": "Scallions",
+          "inventory_item_id": "scallion",
+          "use_amount": 4,
+          "unit": "each"
+        },
+        {
+          "name": "Lemon",
+          "inventory_item_id": "lemon",
+          "use_amount": 1,
+          "unit": "each"
+        }
+      ],
+      "steps": [
+        "Arrange the plate\nPick the parsley leaves, slice the scallions, and cut the lemon into wedges. Arrange them on two plates."
+      ]
+    },
+    "expected_verdict": "wrong_dish",
+    "reason": "Herbs, scallions and lemon wedges garnish a dish; they are not one."
+  },
+  {
+    "name": "snack plate when a meal was asked",
+    "preferences": {
+      "meal": "Dinner"
+    },
+    "recipe": {
+      "title": "Celery with peanut butter",
+      "cook_time_minutes": 5,
+      "servings": 2,
+      "ingredients": [
+        {
+          "name": "Celery",
+          "inventory_item_id": "celery",
+          "use_amount": 4,
+          "unit": "stalks"
+        },
+        {
+          "name": "Peanut butter",
+          "inventory_item_id": "peanut-butter",
+          "use_amount": 4,
+          "unit": "tbsp"
+        }
+      ],
+      "steps": [
+        "Cut the celery\nTrim the celery stalks and cut each into three pieces.",
+        "Fill and serve\nSpread the peanut butter into the hollow of each piece and divide between two plates."
+      ]
+    },
+    "expected_verdict": "wrong_dish",
+    "reason": "Celery with peanut butter is a snack, and the cook asked for dinner."
+  },
+  {
+    "name": "real snack when asked",
+    "preferences": {
+      "meal": "Snack"
+    },
+    "requested_dish": "snack",
+    "recipe": {
+      "title": "Celery with peanut butter",
+      "cook_time_minutes": 5,
+      "servings": 2,
+      "ingredients": [
+        {
+          "name": "Celery",
+          "inventory_item_id": "celery",
+          "use_amount": 4,
+          "unit": "stalks"
+        },
+        {
+          "name": "Peanut butter",
+          "inventory_item_id": "peanut-butter",
+          "use_amount": 4,
+          "unit": "tbsp"
+        }
+      ],
+      "steps": [
+        "Cut the celery\nTrim the celery stalks and cut each into three pieces.",
+        "Fill and serve\nSpread the peanut butter into the hollow of each piece and divide between two plates."
+      ]
+    },
+    "expected_verdict": "eligible",
+    "reason": "Celery with peanut butter is a snack most people recognise."
+  },
+  {
+    "name": "real meal built from a side",
+    "recipe": {
+      "title": "Chickpea and carrot curry over rice",
+      "cook_time_minutes": 35,
+      "servings": 2,
+      "ingredients": [
+        {
+          "name": "Rice",
+          "inventory_item_id": "rice",
+          "use_amount": 150,
+          "unit": "g"
+        },
+        {
+          "name": "Olive oil",
+          "inventory_item_id": "olive-oil",
+          "use_amount": 1,
+          "unit": "tbsp"
+        },
+        {
+          "name": "Carrots",
+          "inventory_item_id": "carrot",
+          "use_amount": 3,
+          "unit": "each"
+        },
+        {
+          "name": "Garlic",
+          "inventory_item_id": "garlic",
+          "use_amount": 3,
+          "unit": "cloves"
+        },
+        {
+          "name": "Curry powder",
+          "inventory_item_id": "curry-powder",
+          "use_amount": 2,
+          "unit": "tsp"
+        },
+        {
+          "name": "Chickpeas",
+          "inventory_item_id": "chickpeas",
+          "use_amount": 1,
+          "unit": "can"
+        },
+        {
+          "name": "Coconut milk",
+          "inventory_item_id": "coconut-milk",
+          "use_amount": 1,
+          "unit": "can"
+        }
+      ],
+      "steps": [
+        "Cook the rice\nSimmer the rice in a covered pot of water for 15–18 minutes until tender and the water is absorbed.",
+        "Start the curry\nMeanwhile, heat the oil in a large saucepan over medium heat and cook the carrots for 5 minutes until they start to soften. Stir in the garlic and curry powder for 30 seconds until fragrant.",
+        "Simmer\nAdd the drained chickpeas and the coconut milk and simmer for 12–15 minutes until the carrots are tender and the sauce coats a spoon.",
+        "Serve\nSpoon the curry over the rice in two bowls."
+      ]
+    },
+    "expected_verdict": "eligible",
+    "reason": "The same chickpeas and carrots become a meal once built into a curry over rice."
   }
 ]
