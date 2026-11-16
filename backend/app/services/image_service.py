@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from app.ai.agents.models import Recipe
 from app.ai.images.openai import MAX_PROMPT_BYTES
 from app.ai.images.prompts import (
+    RECIPE_PHOTO_STYLE_VERSION,
     ingredient_image_prompt,
     recipe_image_prompt,
     recipe_photo_subject,
@@ -243,10 +244,16 @@ class ImageService:
         ingredient, or renaming the dish, gives a new key. Names are used
         rather than food ids, which belong to one household, so households
         that get the same dish share its photo. The photo shows only food,
-        so sharing it reveals nothing about a household.
+        so sharing it reveals nothing about a household. The key also holds
+        `RECIPE_PHOTO_STYLE_VERSION`, so photos made from an earlier prompt
+        stop matching when the prompt changes how photos look.
         """
         title, ingredients = recipe_photo_subject(recipe)
-        content = {"title": title, "ingredients": ingredients}
+        content = {
+            "style": RECIPE_PHOTO_STYLE_VERSION,
+            "title": title,
+            "ingredients": ingredients,
+        }
         return _digest("recipe", json.dumps(content, sort_keys=True))
 
     @staticmethod

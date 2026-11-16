@@ -22,6 +22,16 @@ _KEEPS_QUALIFIER = {
     "raw": frozenset({"honey", "sugar"}),
 }
 
+RECIPE_PHOTO_STYLE_VERSION = 2
+"""Version of how recipe photos look, included in every recipe photo cache key.
+
+Bump when the photo prompt changes what an image looks like. Every dish then
+gets a new key, and its next view generates a photo from the changed prompt
+instead of reusing an earlier one. A wording change that leaves images
+looking the same needs no bump, because a bump pays for every recipe photo
+again.
+"""
+
 _RECIPE_STYLE = (
     "Realistic food photograph of the cooked, plated dish exactly as it is "
     "served, described below. Every ingredient appears cooked, thawed or fresh "
