@@ -42,11 +42,15 @@ const spinachLot = {
   added_by: "u1",
   opened_at: "2026-05-30T09:15:00+00:00",
   created_at: "2026-05-28T18:00:00+00:00",
+  updated_at: "2026-05-30T09:15:00.654321+00:00",
+  initial_quantity: 2,
+  is_estimate: true,
   food: {
     id: "food-1",
     name: "Spinach",
     stock_base: "each",
     each_label: "bag",
+    whole_units_only: true,
     category: { id: "c1", name: "Produce", icon: "leaf" },
   },
 };
@@ -60,11 +64,15 @@ const soupLot = {
   added_by: null,
   opened_at: null,
   created_at: "2026-05-29T20:30:00+00:00",
+  updated_at: "2026-05-29T20:30:00+00:00",
+  initial_quantity: null,
+  is_estimate: false,
   food: {
     id: "food-2",
     name: "Chicken soup",
     stock_base: "ml",
     each_label: null,
+    whole_units_only: false,
     category: { id: "c2", name: "Leftovers", icon: "inbox" },
   },
 };
@@ -88,8 +96,9 @@ describe("useInventoryItems", () => {
 
     expect(mockFrom).toHaveBeenCalledWith("lots");
     expect(mockSelect.mock.calls[0][0].replace(/\s+/g, " ").trim()).toBe(
-      "id, quantity, expiration_date, storage_location, notes, added_by, opened_at, created_at, " +
-        "food:food_stock!inner(id, name, stock_base, each_label, " +
+      "id, quantity, initial_quantity, is_estimate, expiration_date, storage_location, notes, " +
+        "added_by, opened_at, created_at, updated_at, " +
+        "food:food_stock!inner(id, name, stock_base, each_label, whole_units_only, " +
         "category:food_categories(id, name, icon))",
     );
     expect(mockEq).toHaveBeenCalledWith("household_id", "household-1");
@@ -113,7 +122,10 @@ describe("useInventoryItems", () => {
         food_id: "food-1",
         name: "Spinach",
         quantity: 1,
+        initial_quantity: 2,
+        is_estimate: true,
         unit: "bag",
+        whole_units_only: true,
         expiration_date: "2026-06-01",
         storage_location: "fridge",
         is_leftover: false,
@@ -121,6 +133,7 @@ describe("useInventoryItems", () => {
         added_by: "u1",
         opened_at: "2026-05-30T09:15:00+00:00",
         created_at: "2026-05-28T18:00:00+00:00",
+        updated_at: "2026-05-30T09:15:00.654321+00:00",
         category: { id: "c1", name: "Produce", icon: "leaf" },
       },
       {
@@ -128,7 +141,10 @@ describe("useInventoryItems", () => {
         food_id: "food-2",
         name: "Chicken soup",
         quantity: 750,
+        initial_quantity: null,
+        is_estimate: false,
         unit: "ml",
+        whole_units_only: false,
         expiration_date: null,
         storage_location: "freezer",
         is_leftover: true,
@@ -136,6 +152,7 @@ describe("useInventoryItems", () => {
         added_by: null,
         opened_at: null,
         created_at: "2026-05-29T20:30:00+00:00",
+        updated_at: "2026-05-29T20:30:00+00:00",
         category: { id: "c2", name: "Leftovers", icon: "inbox" },
       },
     ]);
