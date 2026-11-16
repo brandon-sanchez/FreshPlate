@@ -6,6 +6,7 @@ import type { ImageResult } from "@/types/images";
 const PENDING_POLL_MS = 4_000;
 const URL_EXPIRY_MARGIN_MS = 60_000;
 const UNAVAILABLE_STALE_MS = 15 * 60_000;
+const LATE_STALE_MS = 60_000;
 
 /**
  * Returns the generated photo for a recipe snapshot.
@@ -15,7 +16,8 @@ const UNAVAILABLE_STALE_MS = 15 * 60_000;
  * `recipe_id`, so every view reuses one result. A `ready` result stays fresh
  * until a minute before its signed URL expires. A `pending` result polls
  * every 4 seconds while a view is mounted. An `unavailable` result is kept
- * for 15 minutes. Errors are not retried for 4xx responses and are retried
+ * for 15 minutes, except a `late` one, which a view mounted a minute or more
+ * later asks for again. Errors are not retried for 4xx responses and are retried
  * once otherwise; the view shows its placeholder either way.
  *
  * @param recipeId - The recipe snapshot's `recipe_id`.
@@ -41,7 +43,9 @@ export function useRecipeImage(
 }
 
 function freshForMs(result: ImageResult | undefined, fetchedAt: number): number {
-  if (result?.status === "unavailable") return UNAVAILABLE_STALE_MS;
+  if (result?.status === "unavailable") {
+    return result.reason === "late" ? LATE_STALE_MS : UNAVAILABLE_STALE_MS;
+  }
   if (result?.status !== "ready" || !result.expires_at) return 0;
   const expiresAt = Date.parse(result.expires_at);
   return Math.max(0, expiresAt - URL_EXPIRY_MARGIN_MS - fetchedAt);

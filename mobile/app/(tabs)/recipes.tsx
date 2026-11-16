@@ -259,6 +259,7 @@ export default function RecipesScreen() {
         bottomInset={tabBarHeight + 28}
         onAsk={() => setFlowOpen(true)}
         onDismiss={feed.dismiss}
+        onSteer={feed.steer}
         onNearEnd={feed.maybePrefetch}
         onRetryMore={feed.retryPrefetch}
         onAddItems={() => router.push("/(tabs)/inventory")}

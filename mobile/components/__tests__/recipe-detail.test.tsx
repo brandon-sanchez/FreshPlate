@@ -114,10 +114,31 @@ it("renders the selected snapshot and sends its identity to the shared save acti
     "Sauté and serve.",
   );
   expect(screen.queryByText(recipe.recipe_id)).toBeNull();
-  fireEvent.press(screen.getByLabelText("Save recipe"));
+  fireEvent.press(
+    screen.getByLabelText("Save Spinach skillet to household cookbook"),
+  );
   expect(onToggleSave).toHaveBeenCalledWith(recipe, false);
   fireEvent.press(screen.getByLabelText("Close recipe details"));
   expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+it("shows Time, then Serves, each value above its label, and no Match", () => {
+  const screen = render(
+    <RecipeDetail
+      recipe={recipe}
+      isSaved={false}
+      isSavePending={false}
+      onToggleSave={jest.fn()}
+      onClose={jest.fn()}
+      {...cookProps}
+    />,
+    { wrapper },
+  );
+  const stats = screen.getByTestId("recipe-stats");
+  expect(stats).toHaveTextContent("20 minTime2Serves");
+  expect(screen.queryByText("Match")).toBeNull();
+  expect(screen.getByLabelText("Time, 20 minutes")).toBeTruthy();
+  expect(screen.getByLabelText("Serves 2")).toBeTruthy();
 });
 
 it("uses updated saved state and blocks a second toggle while saving", () => {
@@ -130,10 +151,10 @@ it("uses updated saved state and blocks a second toggle while saving", () => {
     isSaved: true,
   };
   const screen = render(<RecipeDetail {...props} isSavePending />, { wrapper });
-  fireEvent.press(screen.getByLabelText("Remove recipe from saved recipes"));
+  fireEvent.press(screen.getByLabelText("Remove Spinach skillet from saved recipes"));
   expect(onToggleSave).not.toHaveBeenCalled();
   screen.rerender(<RecipeDetail {...props} isSavePending={false} />);
-  fireEvent.press(screen.getByLabelText("Remove recipe from saved recipes"));
+  fireEvent.press(screen.getByLabelText("Remove Spinach skillet from saved recipes"));
   expect(onToggleSave).toHaveBeenCalledWith(recipe, true);
 });
 

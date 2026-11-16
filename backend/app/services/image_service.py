@@ -31,16 +31,20 @@ from app.ai.images.prompts import (
     recipe_photo_subject,
 )
 from app.ai.llm.errors import ProviderError
+from app.ai.llm.retry import PipelineDeadline
 from app.core.config import Settings
+from app.models.images import ImageResult
 
 logger = logging.getLogger("freshplate.images")
 
 _UPLOAD_GRACE_SECONDS = 60
+# Time a request-bound attempt keeps after the provider returns, for WebP
+# encoding, the upload, the ledger settle and URL signing.
+_FINISH_SECONDS = 2.0
 _WEBP_QUALITY = 82
 
 ImageKind = Literal["recipe", "ingredient"]
 ClaimOutcome = Literal["ready", "claimed", "in_progress", "failed", "budget_exhausted"]
-UnavailableReason = Literal["disabled", "budget_exhausted", "failed"]
 
 
 class ImageStoreError(RuntimeError):
@@ -209,43 +213,6 @@ class ImagePolicy(BaseModel):
         )
 
 
-class ImageResult(BaseModel):
-    """What a screen shows for one image.
-
-    Attributes:
-        status: `ready` when `url` serves the image, `pending` while another
-            request generates it, or `unavailable` when the screen shows its
-            placeholder.
-        image_key: Stable identity of the image, the same for every view of
-            one dish or ingredient. Suitable as a client cache key,
-            since `url` changes each time it is signed.
-        url: Signed URL of the WebP image. Set only when ready.
-        expires_at: When `url` stops working. Set only when ready.
-        reason: Why the image is unavailable. `disabled`: generation is off
-            or unconfigured, or the recipe can only be served from cache.
-            `budget_exhausted`: the global or the caller's monthly cap is
-            reached. `failed`: the last attempt failed. A later request may
-            retry after the cooldown, up to the attempt limit, but a prompt
-            over the provider limit always fails. Set only when unavailable.
-    """
-
-    status: Literal["ready", "pending", "unavailable"]
-    image_key: str
-    url: str | None = None
-    expires_at: datetime | None = None
-    reason: UnavailableReason | None = None
-
-    @classmethod
-    def pending(cls, image_key: str) -> ImageResult:
-        """Return the result for an image another request is generating."""
-        return cls(status="pending", image_key=image_key)
-
-    @classmethod
-    def unavailable(cls, image_key: str, reason: UnavailableReason) -> ImageResult:
-        """Return the placeholder result for `reason`."""
-        return cls(status="unavailable", image_key=image_key, reason=reason)
-
-
 class ImageService:
     """Cached, budgeted image generation shared by every request in a process.
 
@@ -294,7 +261,12 @@ class ImageService:
         return _digest("ingredient", "name:" + food.name_key)
 
     async def recipe_image(
-        self, recipe: Recipe, requester: str, *, generate: bool
+        self,
+        recipe: Recipe,
+        requester: str,
+        *,
+        generate: bool,
+        deadline: PipelineDeadline | None = None,
     ) -> ImageResult:
         """Return the photo for a recipe, generating it on the first request.
 
@@ -304,6 +276,14 @@ class ImageService:
             generate: Whether a miss may generate. Pass True only for
                 snapshots the backend wrote, since a client-written recipe
                 would let a user choose the prompt.
+            deadline: When a generation this call starts must be finished,
+                stored and signed. The provider gets whatever is left of it
+                when the call starts, less time to store the result, and
+                never more than the policy's timeout. An attempt the
+                deadline cuts short, or leaves no time to start, returns
+                `unavailable` with reason `late`. A request that must not
+                leave work running after its response passes its own
+                deadline. None allows the policy's timeout.
 
         Returns:
             The image, `pending`, or `unavailable` with a reason.
@@ -317,6 +297,7 @@ class ImageService:
             recipe_image_prompt(recipe),
             requester,
             generate=generate,
+            deadline=deadline,
         )
 
     async def food_image(self, food: FoodIdentity, requester: str) -> ImageResult:
@@ -348,6 +329,7 @@ class ImageService:
         requester: str,
         *,
         generate: bool,
+        deadline: PipelineDeadline | None = None,
     ) -> ImageResult:
         flight = (kind, key, generate and self._policy.enabled)
         task = self._inflight.get(flight)
@@ -355,7 +337,14 @@ class ImageService:
             # A separate task, so a caller that disconnects mid-generation
             # cannot cancel an attempt that is already billed.
             task = asyncio.create_task(
-                self._resolve(kind, key, prompt, requester, generate=flight[2])
+                self._resolve(
+                    kind,
+                    key,
+                    prompt,
+                    requester,
+                    generate=flight[2],
+                    deadline=deadline,
+                )
             )
             self._inflight[flight] = task
             task.add_done_callback(lambda _: self._inflight.pop(flight, None))
@@ -369,6 +358,7 @@ class ImageService:
         requester: str,
         *,
         generate: bool,
+        deadline: PipelineDeadline | None,
     ) -> ImageResult:
         if not generate:
             path = await self._store.find_ready(kind, key)
@@ -383,18 +373,32 @@ class ImageService:
         if claim.outcome == "in_progress":
             return ImageResult.pending(key)
         if claim.outcome == "claimed":
-            return await self._generate(kind, key, prompt, claim)
+            return await self._generate(kind, key, prompt, claim, deadline)
         if claim.outcome == "budget_exhausted":
             return ImageResult.unavailable(key, "budget_exhausted")
         return ImageResult.unavailable(key, "failed")
 
     async def _generate(
-        self, kind: ImageKind, key: str, prompt: str, claim: ImageClaim
+        self,
+        kind: ImageKind,
+        key: str,
+        prompt: str,
+        claim: ImageClaim,
+        deadline: PipelineDeadline | None,
     ) -> ImageResult:
+        timeout = self._policy.timeout_seconds
+        if deadline is not None:
+            # Sized after the claim, so ledger latency comes out of the
+            # provider's share rather than running past the deadline.
+            timeout = min(timeout, deadline.remaining_seconds - _FINISH_SECONDS)
+        cut_by_deadline = timeout < self._policy.timeout_seconds
+        if timeout <= 0:
+            await self._release_best_effort(claim, refund=True)
+            return ImageResult.unavailable(key, "late")
         try:
             image = await asyncio.wait_for(
                 self._provider.generate(prompt, kind=kind),
-                timeout=self._policy.timeout_seconds,
+                timeout=timeout,
             )
             webp = None if image is None else await asyncio.to_thread(_to_webp, image)
         except (ProviderError, TimeoutError, OSError, ValueError) as exc:
@@ -408,6 +412,8 @@ class ImageService:
                 type(exc).__name__,
                 refund,
             )
+            if isinstance(exc, TimeoutError) and cut_by_deadline:
+                return ImageResult.unavailable(key, "late")
             return ImageResult.unavailable(key, "failed")
         if webp is None:
             await self._release_best_effort(claim, refund=True)
@@ -442,6 +448,44 @@ class ImageService:
             )
         except ImageStoreError:
             logger.warning("image release failed asset=%s", claim.asset_id)
+
+
+class RequesterRecipePhotos:
+    """Feed recipe photos charged to one user, as the recipe graph's photo source.
+
+    Every recipe it is given must be one the backend generated, since a miss
+    starts a paid generation of its photo.
+    """
+
+    def __init__(self, images: ImageService, requester: str) -> None:
+        self._images = images
+        self._requester = requester
+
+    def key(self, recipe: Recipe) -> str:
+        """Return the photo cache key of `recipe`."""
+        return self._images.recipe_key(recipe)
+
+    async def photo(self, recipe: Recipe, *, deadline: PipelineDeadline) -> ImageResult:
+        """Return the photo of `recipe`, generating it on a miss.
+
+        Args:
+            recipe: A recipe the backend generated.
+            deadline: When a generation this call starts must be stored.
+
+        Returns:
+            The image, `pending`, or `unavailable` with a reason. A ledger or
+            Storage failure returns `unavailable` with reason `failed`.
+        """
+        try:
+            return await self._images.recipe_image(
+                recipe,
+                self._requester,
+                generate=True,
+                deadline=deadline,
+            )
+        except ImageStoreError:
+            logger.warning("recipe photo store failure")
+            return ImageResult.unavailable(self.key(recipe), "failed")
 
 
 def _digest(kind: str, identity: str) -> str:

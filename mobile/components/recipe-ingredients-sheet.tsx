@@ -8,6 +8,7 @@ import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
 import type { RecipeSuggestion } from "@/types/recipes";
 import RecipePhoto from "@/components/recipe-photo";
+import RecipeStats from "@/components/recipe-stats";
 import RecipeSteps from "@/components/recipe-steps";
 
 type RecipeIngredientsSheetProps = {
@@ -173,15 +174,7 @@ export default function RecipeIngredientsSheet({
               >
                 {recipe?.title}
               </Text>
-              <Text
-                style={{
-                  fontFamily: fonts.body,
-                  color: colors.textMuted,
-                  fontSize: 13,
-                }}
-              >
-                {recipe?.servings} servings · {recipe?.cook_time_minutes} min
-              </Text>
+              {recipe && <RecipeStats recipe={recipe} />}
             </View>
             {recipe?.ingredients.map((ingredient, index) => (
               <View

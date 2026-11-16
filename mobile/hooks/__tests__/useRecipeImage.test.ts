@@ -161,3 +161,21 @@ it("keeps an unavailable result for 15 minutes", async () => {
   await waitFor(() => expect(third.result.current.isFetching).toBe(false));
   clock.mockRestore();
 });
+
+it("asks again about a minute after a photo that missed the feed's deadline", async () => {
+  const late: ImageResult = { ...pending, status: "unavailable", reason: "late" };
+  mockFetchRecipeImage.mockResolvedValue(ready());
+  const { client, wrapper } = setup();
+  client.setQueryData(["recipe-image", "r1"], late);
+  const now = Date.now();
+  const clock = jest.spyOn(Date, "now").mockReturnValue(now + 30_000);
+  const first = renderHook(() => useRecipeImage("r1"), { wrapper });
+  await act(async () => {});
+  expect(mockFetchRecipeImage).not.toHaveBeenCalled();
+  first.unmount();
+  clock.mockReturnValue(now + 61_000);
+  const second = renderHook(() => useRecipeImage("r1"), { wrapper });
+  await waitFor(() => expect(second.result.current.data?.status).toBe("ready"));
+  expect(mockFetchRecipeImage).toHaveBeenCalledTimes(1);
+  clock.mockRestore();
+});
