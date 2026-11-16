@@ -331,6 +331,7 @@ export default function HomeScreen() {
                 <InventoryRow
                   key={row.key}
                   row={row}
+                  photoEnabled
                   onPress={() => router.push(`/food/${row.foodId}`)}
                 />
               ))}
@@ -347,6 +348,7 @@ export default function HomeScreen() {
                 <InventoryRow
                   key={row.key}
                   row={row}
+                  photoEnabled
                   onPress={() => router.push(`/food/${row.foodId}`)}
                 />
               ))}
