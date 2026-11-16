@@ -2,21 +2,20 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ToastShowParams } from "react-native-toast-message";
 import { ChangedElsewhereError } from "@/lib/lotRpc";
 import { supabase } from "@/lib/supabase";
-import { readStockUnit, toStockAmount } from "@/lib/stockUnit";
+import { LotAmount, toAddLotArgs } from "@/lib/lotAmount";
 import { useAuthStore } from "@/stores/auth";
 
 /**
- * A batch of food to add, with the amount in the unit the user typed.
+ * A batch of food to add, with the amount already in the food's stock base.
  * `into_lot_id` names a live batch the food was put into, such as a jug or an
  * egg tray, or is `null` to add it as its own batch. Adding into a batch uses
  * that batch's food and location, so `name`, `category_id` and
- * `storage_location` are not used then.
+ * `storage_location` are not used then, and neither is the amount's package.
  */
 export type AddItemInput = {
   name: string;
   category_id: string | null;
-  quantity: number;
-  unit: string;
+  amount: LotAmount;
   expiration_date: string | null;
   storage_location: "fridge" | "freezer" | "pantry";
   notes: string | null;
@@ -47,13 +46,12 @@ export class StockUnitMismatchError extends Error {
 const MISMATCH_DETAIL = /is stored as (g|ml|each)(?: \((.+)\))?$/;
 
 /**
- * Returns a mutation that adds a batch of food through the `add_lot` RPC. The
- * typed unit is read into the food's stock base first ("1.5 kg" adds 1500 g).
- * The RPC creates the food when its name is new and merges the amount into a
- * full, unopened lot with the same date, location and note. With
- * `into_lot_id`, the amount goes into that batch through the `add_to_lot` RPC
- * instead, which marks it opened and keeps the earlier date. Invalidates
- * `['inventory']` on success.
+ * Returns a mutation that adds a batch of food through the `add_lot` RPC,
+ * with the package label and size of a measured lot. The RPC creates the food
+ * when its name is new and merges the amount into a full, unopened lot with
+ * the same date, location, package and note. With `into_lot_id`, the amount
+ * goes into that batch through the `add_to_lot` RPC instead, which marks it
+ * opened and keeps the earlier date. Invalidates `['inventory']` on success.
  *
  * @throws {@link StockUnitMismatchError} when the food is tracked in another
  * unit, and {@link ChangedElsewhereError} when the picked container was used
@@ -67,16 +65,15 @@ export function useAddItem() {
       const { user, householdId } = useAuthStore.getState();
       if (!user || !householdId) throw new Error("not signed in");
 
-      const unit = readStockUnit(input.unit);
-      const quantity = toStockAmount(input.quantity, unit);
+      const lotArgs = toAddLotArgs(input.amount);
       if (input.into_lot_id !== null) {
         const { error } = await supabase.rpc("add_to_lot", {
           p_household_id: householdId,
           p_lot_id: input.into_lot_id,
-          p_stock_base: unit.stockBase,
-          p_quantity: quantity,
+          p_stock_base: lotArgs.p_stock_base,
+          p_quantity: lotArgs.p_quantity,
           p_expiration_date: input.expiration_date,
-          p_each_label: unit.eachLabel,
+          p_each_label: lotArgs.p_each_label,
         });
         if (error?.message === "LOT_NOT_LIVE") throw new ChangedElsewhereError(error.message);
         if (error) throw addError(error);
@@ -85,12 +82,10 @@ export function useAddItem() {
       const { data, error } = await supabase.rpc("add_lot", {
         p_household_id: householdId,
         p_name: input.name,
-        p_stock_base: unit.stockBase,
-        p_quantity: quantity,
+        ...lotArgs,
         p_storage_location: input.storage_location,
         p_expiration_date: input.expiration_date,
         p_category_id: input.category_id,
-        p_each_label: unit.eachLabel,
         p_notes: input.notes,
       });
       if (error) throw addError(error);
