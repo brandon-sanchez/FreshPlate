@@ -50,3 +50,15 @@ export function formatShortDate(isoDate: string): string {
   const [y, m, d] = isoDate.split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
+
+/**
+ * Compares two day counts from {@link daysUntilExpiration}, soonest first
+ * when `direction` is 1 and latest first when it is -1. Undated (`null`)
+ * sorts last in both directions, because it has no date to place.
+ */
+export function compareDays(a: number | null, b: number | null, direction: 1 | -1 = 1): number {
+  if (a === b) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  return (a - b) * direction;
+}
