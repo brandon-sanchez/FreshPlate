@@ -112,6 +112,7 @@ describe("ItemForm", () => {
       },
       expiration_date: "2026-11-13",
       storage_location: "freezer",
+      into_lot_id: null,
     });
   });
 
