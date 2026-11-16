@@ -10,6 +10,7 @@ import type { RecipeSuggestion } from "@/types/recipes";
 import RecipePhoto from "@/components/recipe-photo";
 import RecipeStats from "@/components/recipe-stats";
 import RecipeSteps from "@/components/recipe-steps";
+import { formatIngredientAmount } from "@/lib/recipe-format";
 
 type RecipeIngredientsSheetProps = {
   /** The recipe to preview; `null` hides the sheet. */
@@ -208,7 +209,7 @@ export default function RecipeIngredientsSheet({
                     fontSize: 14,
                   }}
                 >
-                  {Number(ingredient.use_amount.toFixed(2))} {ingredient.unit}
+                  {formatIngredientAmount(ingredient)}
                 </Text>
               </View>
             ))}
