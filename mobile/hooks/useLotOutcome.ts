@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 import { ChangedElsewhereError, RETRY_HINT, callLotRpc, lotErrorToast } from "@/lib/lotRpc";
 import { showUndoToast } from "@/components/toastConfig";
 import { useAuthStore } from "@/stores/auth";

@@ -2,7 +2,7 @@ import React from "react";
 import { Alert, type AlertButton } from "react-native";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 
 const mockDelete = jest.fn();
 
@@ -32,7 +32,7 @@ jest.mock("expo-router", () => ({
 }));
 jest.mock("@expo/vector-icons/FontAwesome", () => () => null);
 jest.mock("@react-native-community/slider", () => () => null);
-jest.mock("react-native-toast-message", () => ({ __esModule: true, default: { show: jest.fn() } }));
+jest.mock("@/lib/toast", () => ({ __esModule: true, default: { show: jest.fn() } }));
 
 import ItemDetailScreen from "@/app/item/[id]";
 

@@ -1,7 +1,7 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 import type { InventoryItem } from "@/hooks/useInventoryItems";
 
 const mockRpc = jest.fn();
@@ -15,7 +15,7 @@ jest.mock("@/stores/auth", () => ({
 }));
 const mockBack = jest.fn();
 jest.mock("expo-router", () => ({ useRouter: () => ({ back: mockBack }) }));
-jest.mock("react-native-toast-message", () => ({ __esModule: true, default: { show: jest.fn() } }));
+jest.mock("@/lib/toast", () => ({ __esModule: true, default: { show: jest.fn() } }));
 
 import LotRemainingControl from "@/components/LotRemainingControl";
 
