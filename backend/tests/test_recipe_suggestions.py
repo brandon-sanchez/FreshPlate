@@ -25,7 +25,7 @@ from app.api.recipes import (
 from app.main import create_app
 from app.services.food_lines import FoodLinesError
 from tests.conftest import HOUSEHOLD_ID, FakeFoodLineSource, SigningKey
-from tests.recipe_fakes import batch_responses
+from tests.recipe_fakes import batch_responses, model_answer
 
 
 def _auth_headers(signing_key: SigningKey) -> dict[str, str]:
@@ -79,6 +79,10 @@ def _recipe(title: str = "Spinach Pasta") -> dict[str, Any]:
         ],
         "steps": ["Cook the vegetables.", "Toss with pasta."],
     }
+
+
+def _answer(title: str = "Spinach Pasta") -> dict[str, Any]:
+    return model_answer(_recipe(title), _inventory())
 
 
 def _eligible(index: int = 0) -> dict[str, Any]:
@@ -136,7 +140,7 @@ def test_authenticated_suggestion_returns_identity_match_and_expiry_badge(
         recipe_app,
         FakeProvider(
             [
-                *batch_responses(_recipe()),
+                *batch_responses(_answer()),
                 {
                     "checks": [_eligible()]
                 },
@@ -175,7 +179,7 @@ def test_same_title_regeneration_gets_a_new_recipe_id(
     _install_graph_dependencies(recipe_app, None)
     recipe_app.dependency_overrides[get_recipe_provider] = lambda: FakeProvider(
         [
-            *batch_responses(_recipe()),
+            *batch_responses(_answer()),
             {
                 "checks": [_eligible()]
             },
@@ -229,7 +233,7 @@ def test_suggestion_honors_exclusions_and_batch_ceiling(
     provider = FakeProvider(
         [
             *batch_responses(
-                _recipe("First Recipe"), _recipe("Excluded Recipe"), calls=2
+                _answer("First Recipe"), _answer("Excluded Recipe"), calls=2
             ),
             {"checks": [
                 _eligible(),
@@ -344,7 +348,7 @@ class DelayedProvider:
         await asyncio.sleep(self.delay_seconds)
         if response_model.__name__ == "MealChecklist":
             return response_model(checks=[_eligible()])
-        return RecipeGenerationResponse(recipes=[_recipe()])
+        return RecipeGenerationResponse(recipes=[_answer()])
 
 
 def test_deadline_exhaustion_returns_ai_unavailable(
@@ -404,7 +408,7 @@ def test_suggestion_reads_the_requested_households_foods(
     foods = FakeFoodLineSource(_inventory())
     _install_graph_dependencies(
         recipe_app,
-        FakeProvider([*batch_responses(_recipe()), {"checks": [_eligible()]}]),
+        FakeProvider([*batch_responses(_answer()), {"checks": [_eligible()]}]),
         foods=foods,
     )
 

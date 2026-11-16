@@ -25,7 +25,7 @@ from app.api.recipes import (
 from app.core.config import settings
 from app.main import create_app
 from tests.conftest import HOUSEHOLD_ID, FakeFoodLineSource
-from tests.recipe_fakes import batch_responses
+from tests.recipe_fakes import batch_responses, model_answer
 
 
 def _inventory() -> list[dict[str, Any]]:
@@ -36,7 +36,7 @@ def _inventory() -> list[dict[str, Any]]:
 
 
 def _recipe(title: str) -> dict[str, Any]:
-    return {
+    recipe = {
         "title": title,
         "description": "Test recipe",
         "servings": 2,
@@ -51,6 +51,7 @@ def _recipe(title: str) -> dict[str, Any]:
             }
         ],
     }
+    return model_answer(recipe, _inventory())
 
 
 class StubRetriever:

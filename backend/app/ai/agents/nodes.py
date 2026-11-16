@@ -18,6 +18,7 @@ from app.ai.agents.diversity import (
     drop_near_duplicate_titles,
     recipe_directions,
 )
+from app.ai.agents.food_labels import FoodLabels
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING, MAX_BATCH_CEILING
 from app.ai.agents.models import (
     Recipe,
@@ -222,7 +223,9 @@ async def generate_recipes(
     so the provider can cache that shared prefix, followed by its own
     direction from ``recipe_directions`` so the calls don't all write the
     same dish. The directions shift with the number of shown titles, so a
-    feed refill doesn't repeat the first page's directions.
+    feed refill doesn't repeat the first page's directions. The prompt names
+    each food by its ``FoodLabels`` label, and every recipe is mapped back
+    to real food ids before it is returned.
 
     Calls stop ``MEAL_REVIEW_RESERVE_SECONDS`` before the pipeline deadline
     when that still leaves them Gemini's minimum call time, so the meal
@@ -249,7 +252,8 @@ async def generate_recipes(
     if not usable_items or batch_ceiling == 0:
         return {"generated_recipes": [], "retry_count": retry_count}
 
-    shared_prompt = _generation_prompt(state, usable_items)
+    labels = FoodLabels(item["id"] for item in usable_items)
+    shared_prompt = _generation_prompt(state, usable_items, labels)
     response_model = recipe_batch_model(
         1, {item["id"]: item["units"] for item in usable_items}
     )
@@ -261,6 +265,7 @@ async def generate_recipes(
                 f"{shared_prompt}\n\n{direction}",
                 response_model=response_model,
                 template=template,
+                labels=labels,
                 deadline=calls_deadline,
             )
             for direction in recipe_directions(
@@ -302,6 +307,7 @@ async def _generate_one(
     *,
     response_model: type[RecipeGenerationResponse],
     template: PromptTemplate,
+    labels: FoodLabels,
     deadline: PipelineDeadline | None,
 ) -> list[Recipe]:
     """Return the recipe one generation call writes, or an empty list."""
@@ -312,7 +318,10 @@ async def _generate_one(
         deadline=deadline,
         thinking=template.thinking,
     )
-    return RecipeGenerationResponse.model_validate(response).recipes[:1]
+    return [
+        labels.resolve(recipe)
+        for recipe in RecipeGenerationResponse.model_validate(response).recipes[:1]
+    ]
 
 
 def _shown_title_count(state: Mapping[str, Any]) -> int:
@@ -446,6 +455,7 @@ def _usable_items(raw_items: Any) -> list[UsableItem]:
 def _generation_prompt(
     state: Mapping[str, Any],
     usable_items: Sequence[UsableItem],
+    labels: FoodLabels,
 ) -> str:
     """Build the user prompt every call in a batch shares.
 
@@ -472,14 +482,18 @@ def _generation_prompt(
             "garnishes."
         ),
         (
-            "Every ingredient must map to one listed inventory_item_id. Write "
-            "its use_amount in whichever of that food's listed units a cook "
-            "would use, such as cloves of garlic or tablespoons of oil."
+            "Every ingredient must map to one listed food. Its "
+            "inventory_item_id is that food's short id, such as f1, from the "
+            "start of the food's line. Write the ingredient's use_amount in "
+            "whichever of that food's listed units a cook would use, such as "
+            "cloves of garlic or tablespoons of oil."
         ),
         "",
         "Usable inventory:",
     ]
-    lines.extend(_inventory_line(item) for item in usable_items)
+    lines.extend(
+        _inventory_line(item, labels.label(item["id"])) for item in usable_items
+    )
 
     lines.extend(("", "Retrieved recipe inspiration:"))
     retrieved_recipes = state.get("retrieved_recipes", [])
@@ -520,9 +534,9 @@ def _generation_prompt(
     return "\n".join(lines)
 
 
-def _inventory_line(item: UsableItem) -> str:
+def _inventory_line(item: UsableItem, label: str) -> str:
     parts = [
-        f"- {item['id']}: {item['name']}",
+        f"- {label}: {item['name']}",
         f"{_amount_text(item['quantity'])} {item['unit']}",
     ]
     if item["lot_count"] > 1:
@@ -586,7 +600,7 @@ def _quality_issues(
         item = inventory_by_id[item_id]
         if needed > Decimal(str(item["quantity"])):
             issues.append(
-                f"ingredients mapped to inventory item '{item_id}' need "
+                f"ingredients using {item['name']} need "
                 f"{_amount_text(needed)} {item['unit']} in total, more than the "
                 f"available {_amount_text(item['quantity'])} {item['unit']}"
             )
