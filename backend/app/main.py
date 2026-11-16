@@ -5,21 +5,35 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from app.ai.images import OpenAIImageProvider
 from app.ai.prompts.loader import load_prompt
 from app.api.barcode import router as barcode_router
 from app.api.cook import router as cook_router
 from app.api.health import router as health_router
+from app.api.images import router as images_router
 from app.api.me import router as me_router
 from app.api.recipes import router as recipes_router
 from app.core.config import settings
+from app.services.image_service import ImagePolicy, ImageService
+from app.services.image_store import SupabaseImageStore
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Reuse Supabase HTTP connections and close them when the app shuts down."""
+    """Share Supabase connections and the image service, then close them."""
     load_prompt("generate_recipes")
     async with httpx.AsyncClient() as client:
         app.state.supabase_http_client = client
+        policy = ImagePolicy.from_settings(settings)
+        app.state.image_service = ImageService(
+            SupabaseImageStore(client),
+            OpenAIImageProvider(
+                settings.openai_api_key,
+                enabled=policy.enabled,
+                monthly_cap_microusd=policy.monthly_cap_microusd,
+            ),
+            policy,
+        )
         yield
 
 
@@ -40,6 +54,7 @@ def create_app() -> FastAPI:
     app.include_router(barcode_router)
     app.include_router(cook_router)
     app.include_router(recipes_router)
+    app.include_router(images_router)
 
     return app
 

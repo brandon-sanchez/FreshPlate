@@ -14,6 +14,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { getUrgency } from "@/constants/theme";
 import UrgencyBar from "@/components/UrgencyBar";
 import type { FoodRow } from "@/lib/foodRows";
+import { formatAmount } from "@/lib/amount";
 
 type InventoryRowProps = {
   /** The food to show, with its lots stacked. A single-lot row reads like one batch. */
@@ -158,7 +159,7 @@ function InventoryRow({ row, onPress, highlight }: InventoryRowProps) {
 }
 
 function metaLine(row: FoodRow): string {
-  const parts = [`${formatQuantity(row.total)} ${row.unit}`];
+  const parts = [formatAmount(row.total, row.unit, row.isEstimate)];
   if (row.lots.length > 1) parts.push(`${row.lots.length} batches`);
   parts.push(row.locations.map(capitalize).join(", "));
   if (row.isLeftover) parts.push("Leftover");
@@ -168,7 +169,7 @@ function metaLine(row: FoodRow): string {
 }
 
 function accessibilitySummary(row: FoodRow): string {
-  const parts = [row.name, `${formatQuantity(row.total)} ${row.unit}`];
+  const parts = [row.name, formatAmount(row.total, row.unit, row.isEstimate)];
   if (row.lots.length > 1) parts.push(`${row.lots.length} batches`);
   parts.push(expirySummary(row.days));
   const hidden = hiddenExpiredLots(row);
@@ -187,10 +188,6 @@ function expirySummary(days: number | null): string {
   if (days === 0) return "expires today";
   if (days === 1) return "expires tomorrow";
   return `expires in ${days} days`;
-}
-
-function formatQuantity(q: number): string {
-  return Number.isInteger(q) ? String(q) : q.toFixed(1);
 }
 
 function capitalize(s: string): string {
