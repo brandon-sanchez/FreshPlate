@@ -24,7 +24,7 @@ import { dateInDays, daysUntilExpiration } from "@/lib/expiry";
 import { formatAmount } from "@/lib/amount";
 import { FoodNameTakenError, useUpdateItem } from "@/hooks/useUpdateItem";
 import { useDeleteItem } from "@/hooks/useDeleteItem";
-import { ChangedElsewhereError } from "@/hooks/useLotOutcome";
+import { ChangedElsewhereError } from "@/lib/lotRpc";
 import { useAuthStore } from "@/stores/auth";
 import { getUrgency } from "@/constants/theme";
 
