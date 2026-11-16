@@ -23,7 +23,7 @@ export default function Chip({
   onPress,
   accessibilityLabel,
 }: ChipProps) {
-  const { colors } = useTheme();
+  const { colors, fonts } = useTheme();
   const look = {
     off: {
       fill: colors.surfaceAlt,
@@ -56,7 +56,7 @@ export default function Chip({
       <Text
         style={{
           color: look.ink,
-          fontWeight: "600",
+          fontFamily: fonts.bodyStrong,
           fontSize: 12.5,
           letterSpacing: -0.1,
         }}
