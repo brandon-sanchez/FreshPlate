@@ -28,7 +28,10 @@ jest.mock("@/lib/recipe-feed-api", () => ({
   fetchRecipeFeedPage: (...args: unknown[]) => mockFetchPage(...args),
 }));
 
+jest.mock("@/lib/supabase", () => ({ supabase: {} }));
+
 import { useRecipeFeed } from "@/hooks/useRecipeFeed";
+import { ApiError } from "@/lib/api";
 
 const request: RecipeFeedSessionRequest = {
   household_id: "household-1",
@@ -444,6 +447,34 @@ describe("useRecipeFeed", () => {
     act(() => result.current.retryPrefetch());
     await waitFor(() => expect(result.current.recipes).toHaveLength(2));
     expect(mockFetchPage).toHaveBeenCalledTimes(3);
+  });
+
+  it("surfaces a tail page the server answered as out of time without retrying it", async () => {
+    mockCreateSession.mockResolvedValueOnce(
+      page([recipe("recipe-1", "Spinach Pasta")], "1", true),
+    );
+    mockFetchPage.mockRejectedValueOnce(
+      new ApiError(503, "AI service unavailable", "AI_UNAVAILABLE"),
+    );
+
+    const { result } = renderHook(() => useRecipeFeed(), { wrapper });
+    act(() => result.current.start(request));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    act(() => result.current.maybePrefetch(0));
+    await waitFor(() => expect(result.current.prefetchError).not.toBeNull());
+    expect(mockFetchPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces a session the server answered as out of time without retrying it", async () => {
+    mockCreateSession.mockRejectedValueOnce(
+      new ApiError(503, "AI service unavailable", "AI_UNAVAILABLE"),
+    );
+
+    const { result } = renderHook(() => useRecipeFeed(), { wrapper });
+    act(() => result.current.start(request));
+    await waitFor(() => expect(result.current.status).toBe("error"));
+    expect(mockCreateSession).toHaveBeenCalledTimes(1);
   });
 
   it("moves each card's photo into the recipe image cache", async () => {

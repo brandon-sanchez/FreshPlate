@@ -6,6 +6,7 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ApiError } from "@/lib/api";
 import {
   createRecipeFeedSession,
   fetchRecipeFeedPage,
@@ -68,6 +69,16 @@ type StartMutationInput = {
   request: RecipeFeedSessionRequest;
   signal: AbortSignal;
 };
+
+/**
+ * Retries a failed page once, and only when no server answer arrived. A
+ * server answer such as 503 `AI_UNAVAILABLE` comes after the page's
+ * generation budget is spent, so a retry would pay for a second generation
+ * that fails the same way.
+ */
+function retryUnansweredOnce(failureCount: number, error: Error): boolean {
+  return !(error instanceof ApiError) && failureCount < 1;
+}
 
 function toError(value: unknown): Error {
   if (value instanceof Error) return value;
@@ -175,7 +186,7 @@ export function useRecipeFeed() {
     },
     getNextPageParam: (lastPage) => lastPage?.data.next_cursor ?? undefined,
     staleTime: Infinity,
-    retry: 1,
+    retry: retryUnansweredOnce,
     retryDelay: 250,
   });
 
