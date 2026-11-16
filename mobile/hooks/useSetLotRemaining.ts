@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 import type { InventoryItem } from "@/hooks/useInventoryItems";
 import { callLotRpc, lotErrorToast } from "@/lib/lotRpc";
 import { useAuthStore } from "@/stores/auth";

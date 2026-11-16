@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Keyboard, Pressable, Text, TextInput, View } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 import { useTheme } from "@/hooks/useTheme";
 import ChoiceChips, { type Choice } from "@/components/ChoiceChips";
 import type { InventoryItem } from "@/hooks/useInventoryItems";

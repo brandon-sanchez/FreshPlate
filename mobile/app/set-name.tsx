@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Toast from "react-native-toast-message";
+import Toast from "@/lib/toast";
 import { firstNameFromMetadata, useAuthStore } from "@/stores/auth";
 import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
 import { useTheme } from "@/hooks/useTheme";
