@@ -536,6 +536,28 @@ describe("RecipeFeed", () => {
     expect(slotHeight()).toBe(410);
   });
 
+  it("keeps the stack under the cooking banner on a 956 pt tall phone", () => {
+    const { getByTestId, queryByTestId } = render(
+      <RecipeFeed {...defaultProps} recipes={[baseRecipe]} />,
+    );
+    const layout = (height: number) =>
+      fireEvent(getByTestId("recipe-feed-viewport"), "layout", {
+        nativeEvent: { layout: { x: 0, y: 0, width: 440, height } },
+      });
+
+    // 488 pt is the feed viewport left on the iPhone 17 Pro Max with the
+    // banner showing, which leaves a 404 pt card.
+    layout(488);
+    expect(getByTestId("recipe-carousel")).toBeTruthy();
+    expect(
+      ReactNative.StyleSheet.flatten(
+        getByTestId("recipe-carousel-slot-0").props.style,
+      ).height,
+    ).toBe(404);
+    layout(487);
+    expect(queryByTestId("recipe-carousel")).toBeNull();
+  });
+
   it("shows a refill issue on the feed background as an alert, not a card", () => {
     const { getByRole, getByTestId } = render(
       <RecipeFeed

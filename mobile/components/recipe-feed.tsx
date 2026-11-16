@@ -60,7 +60,7 @@ const STACK_CHROME_HEIGHT = 84;
 // Smallest compact card, in points, that fits the photo, a two-line title,
 // the Time and Serves block, one ingredient line with "Uses up", and the
 // feedback row without clipping.
-const COMPACT_CARD_MIN_HEIGHT = 408;
+const COMPACT_CARD_MIN_HEIGHT = 404;
 
 const replacementTransition = LinearTransition.duration(360).easing(
   Easing.inOut(Easing.cubic),
