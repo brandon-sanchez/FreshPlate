@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from app.ai.agents.models import Recipe, RecipeIngredient
+from app.ai.agents.kitchen_basics import KitchenBasics
+from app.ai.agents.models import Recipe
 
 
 class FoodLabels:
@@ -20,8 +21,8 @@ class FoodLabels:
     resolves each recipe as soon as its response parses.
     """
 
-    def __init__(self, food_ids: Iterable[str], basics: Iterable[str] = ()) -> None:
-        """Label ``food_ids`` from ``f1`` and ``basics`` names from ``k1``, in order."""
+    def __init__(self, food_ids: Iterable[str], basics: KitchenBasics) -> None:
+        """Label ``food_ids`` from ``f1`` and ``basics`` from ``k1``, in order."""
         self._label_by_id = {
             food_id: f"f{number}" for number, food_id in enumerate(food_ids, start=1)
         }
@@ -29,7 +30,7 @@ class FoodLabels:
             label: food_id for food_id, label in self._label_by_id.items()
         }
         self._basic_by_label = {
-            f"k{number}": name for number, name in enumerate(basics, start=1)
+            f"k{number}": name for number, name in enumerate(basics.names, start=1)
         }
         self._label_by_basic = {
             name: label for label, name in self._basic_by_label.items()
@@ -47,14 +48,20 @@ class FoodLabels:
         """Return ``recipe`` with each of the request's labels resolved.
 
         A food label becomes the food's id. A basic's label becomes a null
-        id, and the ingredient takes the basic's listed name, which is how
-        ``check_quality`` recognizes it. Steps drop basic labels from
-        ``uses``, because ``uses`` lists food ids. Any other value is kept
+        id, which is how ``KitchenBasics.supplies`` recognizes a basic. The
+        ingredient keeps the name the model wrote, so the meal judge sees
+        "Chicken stock" written on the water's label. Steps drop basic
+        labels from ``uses``, because ``uses`` lists food ids. Any other value is kept
         as written, so the quality check rejects an ingredient that names it
         as an unknown food, and drops it from a step's ``uses`` like any
         food the recipe does not list.
         """
-        ingredients = [self._resolve_ingredient(item) for item in recipe.ingredients]
+        ingredients = [
+            item.model_copy(
+                update={"inventory_item_id": self._food_id(item.inventory_item_id)}
+            )
+            for item in recipe.ingredients
+        ]
         steps = [
             step.model_copy(
                 update={
@@ -69,13 +76,7 @@ class FoodLabels:
         ]
         return recipe.model_copy(update={"ingredients": ingredients, "steps": steps})
 
-    def _resolve_ingredient(self, item: RecipeIngredient) -> RecipeIngredient:
-        value = item.inventory_item_id
-        if value is None:
-            return item
-        basic = self._basic_by_label.get(value)
-        if basic is not None:
-            return item.model_copy(update={"inventory_item_id": None, "name": basic})
-        return item.model_copy(
-            update={"inventory_item_id": self._id_by_label.get(value, value)}
-        )
+    def _food_id(self, value: str | None) -> str | None:
+        if value is None or value in self._basic_by_label:
+            return None
+        return self._id_by_label.get(value, value)

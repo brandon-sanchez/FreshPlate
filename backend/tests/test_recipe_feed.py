@@ -11,6 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING
 from app.ai.llm.errors import ProviderError
 from app.ai.llm.providers import FakeProvider
@@ -23,12 +24,13 @@ from app.api.recipes import (
     get_recipe_retriever,
 )
 from app.main import create_app
+from app.services.food_lines import FoodLinesError
 from app.services.image_service import ImageService
 from app.services.recipe_feed_store import RecipeFeedSession, RecipeFeedStoreError
 from tests.conftest import HOUSEHOLD_ID, FakeFoodLineSource, SigningKey
 from tests.image_fakes import POLICY, FakeStore
 from tests.image_fakes import FakeProvider as FakeImageProvider
-from tests.recipe_fakes import batch_responses, model_answer
+from tests.recipe_fakes import NO_BASICS, batch_responses, model_answer
 
 
 def _auth_headers(signing_key: SigningKey) -> dict[str, str]:
@@ -56,7 +58,14 @@ def _inventory() -> list[dict[str, Any]]:
     ]
 
 
-def _recipe(title: str) -> dict[str, Any]:
+_SALT = {"name": "Salt", "inventory_item_id": None, "use_amount": 1, "unit": "tsp"}
+
+
+def _recipe(
+    title: str,
+    *seasonings: dict[str, Any],
+    basics: KitchenBasics = NO_BASICS,
+) -> dict[str, Any]:
     recipe = {
         "title": title,
         "cook_time_minutes": 20,
@@ -67,11 +76,12 @@ def _recipe(title: str) -> dict[str, Any]:
                 "inventory_item_id": "spinach",
                 "use_amount": 0.5,
                 "unit": "bag",
-            }
+            },
+            *seasonings,
         ],
         "steps": ["Cook the vegetables."],
     }
-    return model_answer(recipe, _inventory())
+    return model_answer(recipe, _inventory(), basics)
 
 
 def _assessment(count: int) -> dict[str, Any]:
@@ -389,15 +399,41 @@ def test_refill_returns_partial_results_without_a_second_quality_pass(
     assert len(provider._responses) == 1
 
 
+def test_feed_session_is_unavailable_when_the_basics_cannot_be_read(
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    class UnreadableBasics(FakeFoodLineSource):
+        async def list_kitchen_basics(self, household_id: Any) -> list[str]:
+            raise FoodLinesError("Reading kitchen_basics failed")
+
+    patch_jwks([signing_key])
+    store = InMemoryRecipeFeedStore()
+    app = create_app()
+    _install_dependencies(app, FakeProvider([]), StubRetriever(), store)
+    app.dependency_overrides[get_food_line_source] = lambda: UnreadableBasics(
+        _inventory()
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        )
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "RECIPE_FEED_UNAVAILABLE"
+    assert store.sessions == {}
+
+
 def test_feed_refills_season_with_the_basics_the_session_started_with(
     signing_key: SigningKey,
     patch_jwks,
 ) -> None:
     patch_jwks([signing_key])
-    salted = _recipe("Salted spinach")
-    # Salt is the session's only basic, so the prompt labels it k1.
-    salted["ingredients"].append(
-        {"name": "Salt", "inventory_item_id": "k1", "use_amount": 1, "unit": "tsp"}
+    salted = _recipe(
+        "Salted spinach", _SALT, basics=KitchenBasics(["Salt", "Tomatoes"])
     )
     provider = FakeProvider(
         [
@@ -426,7 +462,7 @@ def test_feed_refills_season_with_the_basics_the_session_started_with(
             json={"cursor": first.json()["data"]["next_cursor"], "limit": 5},
         )
 
-    assert store.sessions[UUID(session_id)].kitchen_basics == ["Salt"]
+    assert store.sessions[UUID(session_id)].kitchen_basics == KitchenBasics(["Salt"])
     assert refill.status_code == 200
     [recipe] = refill.json()["data"]["recipes"]
     assert recipe["title"] == "Salted spinach"
@@ -1209,6 +1245,46 @@ def test_steered_refill_asks_for_more_and_fewer_recipes_like_the_chosen_cards(
     ][DEFAULT_BATCH_CEILING:]
     assert len(refill_calls) == DEFAULT_BATCH_CEILING
     assert all("Steering from the cook" in prompt for prompt in refill_calls)
+
+
+def test_steering_examples_leave_out_kitchen_basics(
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    patch_jwks([signing_key])
+    salted = _recipe("Salted Spinach", _SALT, basics=KitchenBasics(["Salt"]))
+    provider = PromptRecordingProvider(
+        [
+            *batch_responses(salted),
+            _assessment(1),
+            *batch_responses(_recipe("Spinach Pie")),
+            _assessment(1),
+        ]
+    )
+    app = create_app()
+    _install_dependencies(
+        app, provider, StubRetriever(), InMemoryRecipeFeedStore(), basics=["Salt"]
+    )
+
+    with TestClient(app) as client:
+        data = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        ).json()["data"]
+        page = client.post(
+            f"/api/recipes/sessions/{data['session_id']}/pages",
+            headers=_auth_headers(signing_key),
+            json={
+                "cursor": data["next_cursor"],
+                "limit": 5,
+                "steering": {"more_like": [data["recipes"][0]["recipe_id"]]},
+            },
+        )
+
+    assert page.status_code == 200
+    steering = _refill_prompt(provider).split("Steering from the cook")[1]
+    assert "- Salted Spinach (uses Baby Spinach)\n" in steering
 
 
 def test_unsteered_refill_prompt_has_no_steering(

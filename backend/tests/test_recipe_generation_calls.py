@@ -20,6 +20,7 @@ from app.ai.agents.nodes import (
 from app.ai.llm.errors import ProviderError
 from app.ai.llm.providers import GEMINI_MIN_DEADLINE_SECONDS
 from app.ai.llm.retry import PipelineDeadline
+from tests.recipe_fakes import NO_BASICS
 
 Behavior = Callable[[int, str], Awaitable[dict[str, Any]]]
 
@@ -65,8 +66,11 @@ FOODS = [
 
 
 def _state(**overrides: Any) -> dict[str, Any]:
-    analysis = analyze_inventory({"inventory": FOODS}, today=date(2026, 8, 3))
+    analysis = analyze_inventory(
+        {"kitchen_basics": NO_BASICS, "inventory": FOODS}, today=date(2026, 8, 3)
+    )
     return {
+        "kitchen_basics": NO_BASICS,
         "usable_items": analysis["usable_items"],
         "retrieved_recipes": [],
         "preferences": {},
@@ -311,7 +315,9 @@ def test_near_duplicate_rule(first: str, second: str, same_dish: bool) -> None:
 
 
 def test_a_kitchen_of_only_condiments_still_gets_a_lead() -> None:
-    analysis = analyze_inventory({"inventory": FOODS[-1:]}, today=date(2026, 8, 3))
+    analysis = analyze_inventory(
+        {"kitchen_basics": NO_BASICS, "inventory": FOODS[-1:]}, today=date(2026, 8, 3)
+    )
 
     [direction] = recipe_directions(analysis["usable_items"], 1)
 
@@ -387,7 +393,8 @@ async def test_a_snack_request_asks_every_call_for_a_real_snack(
 
 def test_snack_directions_may_lead_with_a_snack_food() -> None:
     analysis = analyze_inventory(
-        {"inventory": [SNACK_FOOD, *FOODS]}, today=date(2026, 8, 3)
+        {"kitchen_basics": NO_BASICS, "inventory": [SNACK_FOOD, *FOODS]},
+        today=date(2026, 8, 3),
     )
 
     meal_leads = recipe_directions(analysis["usable_items"], 6)
@@ -470,7 +477,9 @@ async def test_a_request_that_rules_out_dessert_still_asks_for_a_meal(
 
 
 def test_dessert_directions_never_lead_with_meat() -> None:
-    analysis = analyze_inventory({"inventory": FOODS}, today=date(2026, 8, 3))
+    analysis = analyze_inventory(
+        {"kitchen_basics": NO_BASICS, "inventory": FOODS}, today=date(2026, 8, 3)
+    )
 
     directions = recipe_directions(analysis["usable_items"], 4, dish="dessert")
 

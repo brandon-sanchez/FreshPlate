@@ -82,7 +82,7 @@ def meal_verdict(
     judge calls unlisted is ignored when it is one of ``basics``, the
     household's kitchen basics.
     """
-    unlisted = [food for food in check.unlisted_foods if food not in basics]
+    unlisted = [food for food in check.unlisted_foods if not basics.has_name(food)]
     if unlisted:
         return "unsupported_ingredient", f"names foods not in the kitchen: {unlisted}"
     if not check.is_requested_dish:
@@ -129,7 +129,7 @@ async def assess_meals(
     inventory_by_id = {item["id"]: item for item in state.get("usable_items", [])}
     preferences = state.get("preferences", {})
     dish = requested_dish(preferences)
-    basics = KitchenBasics.parse(state.get("kitchen_basics"))
+    basics: KitchenBasics = state["kitchen_basics"]
     payload = {
         "candidates": [
             {

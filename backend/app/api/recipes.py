@@ -546,16 +546,17 @@ async def _within_recipe_deadline(
 
 async def _read_kitchen(
     foods: FoodLineSource, household_id: UUID
-) -> tuple[list[FoodLine], list[str]]:
-    return await asyncio.gather(
+) -> tuple[list[FoodLine], KitchenBasics]:
+    lines, basic_names = await asyncio.gather(
         foods.list_food_lines(household_id), foods.list_kitchen_basics(household_id)
     )
+    return lines, KitchenBasics(basic_names)
 
 
 def _initial_recipe_state(
     lines: Sequence[FoodLine],
     *,
-    kitchen_basics: list[str],
+    kitchen_basics: KitchenBasics,
     preferences: dict[str, Any],
     exclude_titles: list[str],
     batch_ceiling: int,
@@ -581,7 +582,6 @@ def _session_from_initial_result(
 ) -> RecipeFeedSession:
     usable_items = result.get("usable_items", [])
     retrieved_recipes = result.get("retrieved_recipes", [])
-    basics = KitchenBasics.parse(result.get("kitchen_basics"))
     if not isinstance(usable_items, Sequence) or isinstance(usable_items, (str, bytes)):
         raise ValueError("Recipe graph returned invalid usable inventory")
     if not isinstance(retrieved_recipes, Sequence) or isinstance(
@@ -596,7 +596,7 @@ def _session_from_initial_result(
         retrieved_recipes=jsonable_encoder(list(retrieved_recipes)),
         retrieval_cursor=min(GENERATION_DOCS_CEILING, len(retrieved_recipes)),
         exclude_titles=[],
-        kitchen_basics=list(basics.names),
+        kitchen_basics=result["kitchen_basics"],
         candidate_count=candidate_count,
         generation_runs=1,
         has_more=bool(usable_items),
@@ -693,7 +693,7 @@ def _build_suggestions(
     ):
         raise ValueError("Recipe graph returned an invalid recipe state")
 
-    basics = KitchenBasics.parse(result.get("kitchen_basics"))
+    basics: KitchenBasics = result["kitchen_basics"]
     excluded_titles = {
         _normalize_title(title) for title in exclude_titles if title.strip()
     }

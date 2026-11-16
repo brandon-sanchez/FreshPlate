@@ -48,8 +48,9 @@ class RecipeIngredient(BaseModel):
 
     Attributes:
         name: The ingredient as the cook calls it, such as "Garlic".
-        inventory_item_id: The food the ingredient draws on. None for a
-            kitchen basic, which is always on hand and never deducted.
+        inventory_item_id: The food the ingredient draws on. None means a
+            kitchen basic, which is always on hand, is never deducted, and
+            counts toward no food's stock (see ``KitchenBasics.supplies``).
         use_amount: The amount in ``unit``, which the cook flow converts into
             the food's stock unit for deduction. None only in recipes that
             the quality check rejects.
@@ -214,14 +215,14 @@ def recipe_batch_model(
     batch_ceiling: int,
     units_by_food: Mapping[str, Sequence[str]],
     *,
-    has_basics: bool = False,
+    extra_units: Sequence[str],
 ) -> type[RecipeGenerationResponse]:
     """Return a response model whose JSON schema fits this kitchen.
 
     Gemini enforces the schema while it decodes. ``maxItems`` stops the batch
     at the ceiling instead of writing recipes the caller would discard, and
-    an ingredient's unit must be one of the kitchen's units, or a spoon or
-    cup measure when the kitchen has basics. Pydantic enforces
+    an ingredient's unit must be one of the kitchen's units or
+    ``extra_units``. Pydantic enforces
     neither rule, and the schema does not list the food ids, so
     ``generate_recipes`` trims an oversized batch and ``check_quality``
     rejects unknown foods. There is deliberately no minimum: an empty list is
@@ -231,8 +232,8 @@ def recipe_batch_model(
         batch_ceiling: The most recipes the model may return.
         units_by_food: Each usable food's id and the units it may be used in.
             Must not be empty, because an ingredient must name a food.
-        has_basics: Whether the prompt lists kitchen basics, which recipes
-            measure in pinches, spoons, cups or ml.
+        extra_units: Units an ingredient may use beyond the foods' own,
+            such as the spoon measures of ingredients that name no food.
 
     Raises:
         ValueError: When ``units_by_food`` is empty.
@@ -247,9 +248,7 @@ def recipe_batch_model(
             Field(
                 default_factory=list,
                 json_schema_extra={
-                    "items": _recipe_schema(
-                        units_by_food, _BASIC_UNITS if has_basics else ()
-                    ),
+                    "items": _recipe_schema(units_by_food, extra_units),
                     "maxItems": batch_ceiling,
                 },
             ),
@@ -260,9 +259,6 @@ def recipe_batch_model(
 # The largest unit enum a live Gemini call accepted next to the rest of the
 # recipe schema. A longer list is sent as a plain string instead.
 _MAX_UNIT_ENUM_VALUES = 30
-# The units a recipe may measure a kitchen basic in, such as "1 tsp salt".
-# Basics are never converted or deducted, so these only need to read well.
-_BASIC_UNITS = ("pinch", "tsp", "tbsp", "cup", "ml")
 
 
 def _object(properties: dict[str, Any], *optional: str) -> dict[str, Any]:
@@ -274,7 +270,7 @@ def _object(properties: dict[str, Any], *optional: str) -> dict[str, Any]:
 
 
 def _recipe_schema(
-    units_by_food: Mapping[str, Sequence[str]], basic_units: Sequence[str]
+    units_by_food: Mapping[str, Sequence[str]], extra_units: Sequence[str]
 ) -> dict[str, Any]:
     """Return the JSON schema of one generated recipe.
 
@@ -285,14 +281,13 @@ def _recipe_schema(
     one enum or as an ``anyOf`` with a variant for each food, so
     ``inventory_item_id`` is a plain string holding the food's prompt label
     from ``FoodLabels``, and ``check_quality`` rejects an ingredient whose
-    label names no food. A kitchen basic's ingredient holds the basic's
-    label the same way. ``unit`` is limited to the units of all the foods
-    together, plus ``basic_units``. A unit that belongs to a different food
-    is left to the cook flow, which asks for the amount. A step's ``uses`` is a list of
-    plain strings for the same reason as the id, and ``check_quality`` keeps
-    only the foods the recipe lists. Text that may be absent,
-    such as ``prep``, ``why`` and a step's ``phase``, is a plain string the
-    model leaves empty, and validation reads it as None. ``steps`` has no
+    label names no food. ``unit`` is limited to the units of all the foods
+    together, plus ``extra_units``. A unit that belongs to a different food
+    is left to the cook flow, which asks for the amount. A step's ``uses``
+    is a list of plain strings for the same reason as the id, and
+    ``check_quality`` keeps only the foods the recipe lists. Text that may
+    be absent, such as ``prep``, ``why`` and a step's ``phase``, is a plain
+    string the model leaves empty, and validation reads it as None. ``steps`` has no
     ``maxItems``, because the dish decides how many steps it needs.
     ``cook_time_minutes`` is left out, because validation copies it from
     ``total_minutes``.
@@ -303,7 +298,7 @@ def _recipe_schema(
         dict.fromkeys(
             [
                 *(unit for food_units in units_by_food.values() for unit in food_units),
-                *basic_units,
+                *extra_units,
             ]
         )
     )
