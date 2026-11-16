@@ -133,8 +133,16 @@ function RootLayoutNav() {
                 options={{ title: "" }}
               />
               <Stack.Screen
+                name="review-expired"
+                options={{ title: "Review expired" }}
+              />
+              <Stack.Screen
                 name="set-name"
                 options={{ headerShown: false, presentation: "modal" }}
+              />
+              <Stack.Screen
+                name="cook"
+                options={{ headerShown: false, presentation: "fullScreenModal" }}
               />
               <Stack.Screen
                 name="scan-review"
