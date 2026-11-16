@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { Text, View } from "react-native";
-import { RectButton } from "react-native-gesture-handler";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import Animated, {
   interpolateColor,
@@ -12,6 +11,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { useTheme } from "@/hooks/useTheme";
 import { getUrgency } from "@/constants/theme";
+import PressableScale from "@/components/PressableScale";
 import UrgencyBar from "@/components/UrgencyBar";
 import type { FoodRow } from "@/lib/foodRows";
 import { formatAmount } from "@/lib/amount";
@@ -71,90 +71,93 @@ function InventoryRow({ row, onPress, highlight }: InventoryRowProps) {
     transform: [{ scale: 1 + pulse.value * 0.012 }],
   }));
 
+  // A JS Pressable rather than a gesture-handler RectButton: inside
+  // LotOutcomeSwipe, the swipeable's tap gesture keeps a RectButton's onPress
+  // from firing on iOS, so the row would not open.
   return (
-    <Animated.View
-      style={[
-        {
-          borderRadius: 14,
-          borderWidth: 1,
-          overflow: "hidden",
-          shadowColor: card.shadowColor,
-          shadowOffset: card.shadowOffset,
-          shadowOpacity: card.shadowOpacity,
-          shadowRadius: card.shadowRadius,
-          elevation: card.elevation,
-        },
-        animatedStyle,
-      ]}
+    <PressableScale
+      onPress={onPress ? () => onPress(row) : undefined}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilitySummary(row)}
     >
-      <RectButton
-        onPress={onPress ? () => onPress(row) : undefined}
-        accessible
-        accessibilityRole="button"
-        accessibilityLabel={accessibilitySummary(row)}
-        activeOpacity={1}
-        underlayColor="transparent"
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 12,
-          padding: 12,
-        }}
+      <Animated.View
+        style={[
+          {
+            borderRadius: 14,
+            borderWidth: 1,
+            overflow: "hidden",
+            shadowColor: card.shadowColor,
+            shadowOffset: card.shadowOffset,
+            shadowOpacity: card.shadowOpacity,
+            shadowRadius: card.shadowRadius,
+            elevation: card.elevation,
+          },
+          animatedStyle,
+        ]}
       >
         <View
           style={{
-            width: 48,
-            height: 48,
-            borderRadius: 12,
-            backgroundColor: colors.surfaceAlt,
+            flexDirection: "row",
             alignItems: "center",
-            justifyContent: "center",
+            gap: 12,
+            padding: 12,
           }}
         >
-          <FontAwesome name={iconName} size={22} color={colors.textMuted} />
-        </View>
+          <View
+            style={{
+              width: 48,
+              height: 48,
+              borderRadius: 12,
+              backgroundColor: colors.surfaceAlt,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <FontAwesome name={iconName} size={22} color={colors.textMuted} />
+          </View>
 
-        <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-          <Text
-            numberOfLines={1}
-            style={{
-              fontFamily: fonts.bodyStrong,
-              fontSize: 15,
-              color: colors.text,
-              letterSpacing: -0.2,
-            }}
-          >
-            {row.name}
-          </Text>
-          <Text
-            numberOfLines={1}
-            style={{
-              fontFamily: fonts.body,
-              fontSize: 12.5,
-              color: colors.textMuted,
-              letterSpacing: -0.05,
-            }}
-          >
-            {metaLine(row)}
-          </Text>
-          <UrgencyBar daysUntilExpiration={days} width={92} />
-        </View>
+          <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+            <Text
+              numberOfLines={1}
+              style={{
+                fontFamily: fonts.bodyStrong,
+                fontSize: 15,
+                color: colors.text,
+                letterSpacing: -0.2,
+              }}
+            >
+              {row.name}
+            </Text>
+            <Text
+              numberOfLines={1}
+              style={{
+                fontFamily: fonts.body,
+                fontSize: 12.5,
+                color: colors.textMuted,
+                letterSpacing: -0.05,
+              }}
+            >
+              {metaLine(row)}
+            </Text>
+            <UrgencyBar daysUntilExpiration={days} width={92} />
+          </View>
 
-        {urgencyLabel ? (
-          <Text
-            style={{
-              fontFamily: fonts.bodyStrong,
-              fontSize: 11,
-              color: labelColor,
-              letterSpacing: 0.4,
-              textTransform: "uppercase",
-            }}
-          >
-            {urgencyLabel}
-          </Text>
-        ) : null}
-      </RectButton>
-    </Animated.View>
+          {urgencyLabel ? (
+            <Text
+              style={{
+                fontFamily: fonts.bodyStrong,
+                fontSize: 11,
+                color: labelColor,
+                letterSpacing: 0.4,
+                textTransform: "uppercase",
+              }}
+            >
+              {urgencyLabel}
+            </Text>
+          ) : null}
+        </View>
+      </Animated.View>
+    </PressableScale>
   );
 }
 
