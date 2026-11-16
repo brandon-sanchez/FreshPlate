@@ -15,6 +15,8 @@ from fastapi.testclient import TestClient
 
 from app.ai.llm.errors import ProviderError
 from app.api.recipes import (
+    RECIPE_FEED_INITIAL_HEAD_BATCH_CEILING,
+    RECIPE_FEED_REFILL_BATCH_CEILING,
     get_food_line_source,
     get_recipe_feed_store,
     get_recipe_provider,
@@ -23,6 +25,7 @@ from app.api.recipes import (
 from app.core.config import settings
 from app.main import create_app
 from tests.conftest import HOUSEHOLD_ID, FakeFoodLineSource
+from tests.recipe_fakes import batch_responses, model_answer
 
 
 def _inventory() -> list[dict[str, Any]]:
@@ -33,7 +36,7 @@ def _inventory() -> list[dict[str, Any]]:
 
 
 def _recipe(title: str) -> dict[str, Any]:
-    return {
+    recipe = {
         "title": title,
         "description": "Test recipe",
         "servings": 2,
@@ -48,6 +51,7 @@ def _recipe(title: str) -> dict[str, Any]:
             }
         ],
     }
+    return model_answer(recipe, _inventory())
 
 
 class StubRetriever:
@@ -194,7 +198,7 @@ def test_zero_valid_generation_late_in_budget_skips_the_quality_retry(
     with TestClient(app) as client:
         response = _post_session(client, signing_key)
 
-    assert provider.calls == 1
+    assert provider.calls == RECIPE_FEED_INITIAL_HEAD_BATCH_CEILING
     assert response.status_code == 200
     assert response.json()["data"]["recipes"] == []
     assert response.json()["data"]["empty_reason"] == "INVENTORY_UNSUPPORTED"
@@ -228,11 +232,12 @@ async def test_refill_deadline_observes_provider_failure_during_cancellation(
         calls = 0
 
         def __init__(self):
-            self.started = asyncio.Event()
+            self.all_started = asyncio.Event()
 
         async def generate_content(self, **kwargs):
             self.calls += 1
-            self.started.set()
+            if self.calls == RECIPE_FEED_REFILL_BATCH_CEILING:
+                self.all_started.set()
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError as exc:
@@ -254,7 +259,7 @@ async def test_refill_deadline_observes_provider_failure_during_cancellation(
         app,
         FakeProvider(
             [
-                {"recipes": [_recipe("Initial")]},
+                *batch_responses(_recipe("Initial")),
                 {
                     "checks": [
                         {
@@ -262,7 +267,8 @@ async def test_refill_deadline_observes_provider_failure_during_cancellation(
                             "main_component": "vegetables",
                             "portion_reasoning": "complete meal",
                             "unlisted_foods": [],
-                            "is_full_meal": True,
+                            "dish_reasoning": "a meal on its own",
+                            "is_requested_dish": True,
                             "realistic_portions": True,
                             "coherent_method": True,
                         }
@@ -303,7 +309,7 @@ async def test_refill_deadline_observes_provider_failure_during_cancellation(
                 )
             )
             if cancel_request:
-                await models.started.wait()
+                await models.all_started.wait()
                 request.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await request
@@ -311,7 +317,7 @@ async def test_refill_deadline_observes_provider_failure_during_cancellation(
                 response = await request
                 assert response.status_code == 503
                 assert response.json()["code"] == "AI_UNAVAILABLE"
-        assert models.calls == 1
+        assert models.calls == RECIPE_FEED_REFILL_BATCH_CEILING
         gc.collect()
         await asyncio.sleep(0)
         assert unobserved == []

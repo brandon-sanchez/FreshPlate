@@ -9,11 +9,12 @@ import pytest
 from app.ai.agents.graph import build_recipe_generation_graph, build_recipe_graph
 from app.ai.agents.meal_quality import MealChecklist, assess_meals, review_recipes
 from app.ai.agents.models import Recipe, RecipeGenerationResponse
-from app.ai.agents.nodes import analyze_inventory
+from app.ai.agents.nodes import MEAL_REVIEW_RESERVE_SECONDS, analyze_inventory
 from app.ai.llm.errors import ProviderError
 from app.ai.llm.providers import FakeProvider
 from app.ai.llm.retry import PipelineDeadline
 from app.inventory.units import table_unit
+from tests.recipe_fakes import model_answer
 
 CASES = json.loads(
     (Path(__file__).parents[1] / "app/ai/eval/meal_fixtures.json").read_text()
@@ -43,7 +44,7 @@ class EmptyRetriever:
 
 CHECKLIST_ANSWERS = {
     "eligible": {},
-    "insufficient": {"is_full_meal": False},
+    "wrong_dish": {"is_requested_dish": False},
     "thin_portions": {"realistic_portions": False},
     "incoherent": {"coherent_method": False},
     "unsupported_ingredient": {"unlisted_foods": ["cod"]},
@@ -54,9 +55,10 @@ def check(index, answers="eligible"):
     return {
         "candidate_index": index,
         "main_component": "Fixture main component",
+        "dish_reasoning": "Fixture dish",
         "portion_reasoning": "Fixture portions",
         "unlisted_foods": [],
-        "is_full_meal": True,
+        "is_requested_dish": True,
         "realistic_portions": True,
         "coherent_method": True,
         **CHECKLIST_ANSWERS[answers],
@@ -97,12 +99,15 @@ def inventory():
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case["name"])
 async def test_curated_meal_decisions_control_returned_recipes(case):
     recipe = Recipe.model_validate(case["recipe"])
-    provider = FakeProvider([assessment(case["expected_verdict"])])
+    provider = RecordingProvider([assessment(case["expected_verdict"])])
+    state = {"preferences": case.get("preferences", {})}
     valid, feedback, _ = await assess_meals(
-        [recipe], {}, provider, deadline=PipelineDeadline(30)
+        [recipe], state, provider, deadline=PipelineDeadline(30)
     )
     assert valid == ([recipe] if case["expected_verdict"] == "eligible" else [])
     assert (feedback is None) == (case["expected_verdict"] == "eligible")
+    payload = json.loads(provider.calls[0]["prompt"])
+    assert payload["requested_dish"] == case.get("requested_dish", "meal")
 
 
 @pytest.mark.asyncio
@@ -110,37 +115,49 @@ async def test_curated_meal_decisions_control_returned_recipes(case):
 async def test_both_graphs_regenerate_rejected_meals_under_one_deadline(refill):
     token, substantial = [case["recipe"] for case in CASES[:2]]
     provider = RecordingProvider([
-        {"recipes": [token]}, assessment("insufficient"),
-        {"recipes": [substantial]}, assessment("eligible"),
+        {"recipes": [model_answer(token, inventory())]}, assessment("wrong_dish"),
+        {"recipes": [model_answer(substantial, inventory())]}, assessment("eligible"),
     ])
-    state = {"inventory": inventory(), "metadata": {"trace_key": "keep"}}
+    state = {
+        "inventory": inventory(),
+        "metadata": {"trace_key": "keep"},
+        "batch_ceiling": 1,
+    }
     if refill:
         state.update(analyze_inventory(state))
         graph = build_recipe_generation_graph(provider)
     else:
         graph = build_recipe_graph(provider, EmptyRetriever())
     result = await graph.ainvoke(state)
-    assert [r.model_dump() for r in result["valid_recipes"]] == [substantial]
+    assert [r.model_dump() for r in result["valid_recipes"]] == [
+        Recipe.model_validate(substantial).model_dump()
+    ]
     assert result["retry_count"] == 1
     assert [_kind(call["response_model"]) for call in provider.calls] == [
         RecipeGenerationResponse, MealChecklist,
         RecipeGenerationResponse, MealChecklist,
     ]
-    assert all(call["deadline"] is result["deadline"] for call in provider.calls)
-    assert "insufficient" in provider.calls[2]["prompt"]
+    review_calls = provider.calls[1::2]
+    assert all(call["deadline"] is result["deadline"] for call in review_calls)
+    review_end = result["deadline"].remaining_seconds - MEAL_REVIEW_RESERVE_SECONDS
+    assert all(
+        abs(call["deadline"].remaining_seconds - review_end) < 0.5
+        for call in provider.calls[::2]
+    )
+    assert "wrong_dish: not a meal on its own" in provider.calls[2]["prompt"]
     assert result["metadata"]["trace_key"] == "keep"
-    assert result["metadata"]["assessment_prompt_version"] == 3
+    assert result["metadata"]["assessment_prompt_version"] == 4
 
 
 @pytest.mark.asyncio
 async def test_semantically_rejected_meals_exhaust_existing_retry_and_return_empty():
-    recipe = CASES[0]["recipe"]
+    recipe = model_answer(CASES[0]["recipe"], inventory())
     provider = RecordingProvider([
-        {"recipes": [recipe]}, assessment("insufficient"),
-        {"recipes": [recipe]}, assessment("incoherent"),
+        {"recipes": [recipe]}, assessment("wrong_dish"),
+        {"recipes": [recipe]}, assessment("wrong_dish"),
     ])
     result = await build_recipe_graph(provider, EmptyRetriever()).ainvoke(
-        {"inventory": inventory()}
+        {"inventory": inventory(), "batch_ceiling": 1}
     )
     assert result["valid_recipes"] == []
     assert result["retry_count"] == 1
@@ -167,10 +184,10 @@ async def test_quality_feedback_keeps_inventory_and_semantic_rejections():
     )]
     state = {**analyze_inventory({"inventory": inventory()}),
              "generated_recipes": [invalid, recipe]}
-    provider = RecordingProvider([assessment("insufficient")])
+    provider = RecordingProvider([assessment("wrong_dish")])
     result = await review_recipes(state, provider, deadline=PipelineDeadline(30))
     assert "missing inventory" in result["quality_feedback"]
-    assert "insufficient" in result["quality_feedback"]
+    assert "wrong_dish" in result["quality_feedback"]
     assert len(json.loads(provider.calls[0]["prompt"])["candidates"]) == 1
 
 
@@ -178,7 +195,7 @@ async def test_quality_feedback_keeps_inventory_and_semantic_rejections():
 @pytest.mark.parametrize(
     ("answers", "verdict"),
     [
-        ("insufficient", "insufficient"),
+        ("wrong_dish", "wrong_dish"),
         ("thin_portions", "insufficient"),
         ("incoherent", "incoherent"),
         ("unsupported_ingredient", "unsupported_ingredient"),
@@ -312,3 +329,27 @@ async def test_assessment_cannot_release_a_response_after_deadline():
             [Recipe.model_validate(CASES[0]["recipe"])], {},
             LateProvider(), deadline=deadline,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("preferences", "dish"),
+    [
+        ({}, "meal"),
+        ({"meal": "Dinner"}, "meal"),
+        ({"meal": "Snack"}, "snack"),
+        ({"meal": "Dessert"}, "dessert"),
+    ],
+)
+async def test_a_failed_dish_check_names_the_dish_the_cook_asked_for(
+    preferences, dish
+):
+    recipe = Recipe.model_validate(CASES[1]["recipe"])
+    provider = RecordingProvider([{"checks": [check(0, "wrong_dish")]}])
+    valid, feedback, _ = await assess_meals(
+        [recipe], {"preferences": preferences}, provider,
+        deadline=PipelineDeadline(30),
+    )
+    assert valid == []
+    assert f"wrong_dish: not a {dish} on its own" in feedback
+    assert json.loads(provider.calls[0]["prompt"])["requested_dish"] == dish

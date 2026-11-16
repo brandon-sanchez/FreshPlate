@@ -5,12 +5,13 @@ from __future__ import annotations
 import pytest
 
 from app.ai.agents.models import Recipe
-from app.ai.images.prompts import recipe_image_prompt
+from app.ai.images.prompts import RECIPE_PHOTO_STYLE_VERSION, recipe_image_prompt
 from app.services.image_service import ImageService
 
 # The photo key of `_omelet("Eggs", "Frozen peas")`. A different value means
-# every cached recipe photo gets a new key and is generated and paid for again.
-_OMELET_PHOTO_KEY = "d657c9ee2f1b9257d42db48d581f3d87809cfc13b5ed93c49947638bcb8762e8"
+# every cached recipe photo gets a new key and is generated and paid for again,
+# so change it only along with a `RECIPE_PHOTO_STYLE_VERSION` bump.
+_OMELET_PHOTO_KEY = "9cb3ff4226056468daf49191585e30d3f2c44edf36a06029dae97b343bbc5065"
 
 
 def _omelet(*names: str) -> Recipe:
@@ -103,9 +104,10 @@ def test_prompt_directs_a_cooked_plated_dish_without_packaging_or_ice():
 
 def test_cache_key_uses_the_stored_title_and_ingredient_names():
     stored = _omelet("Eggs", "Frozen peas")
+    assert RECIPE_PHOTO_STYLE_VERSION == 2
     assert ImageService.recipe_key(stored) == _OMELET_PHOTO_KEY
-    # The prompt merges these two names but the key does not, because changing
-    # the key would orphan every cached photo. Each recipe pays for its own.
+    # The prompt merges these two names but the key holds the stored names,
+    # so each recipe pays for its own photo.
     assert ImageService.recipe_key(stored) != ImageService.recipe_key(
         _omelet("Eggs", "peas")
     )

@@ -8,9 +8,11 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
+from app.ai.images.prompts import RECIPE_PHOTO_STYLE_VERSION
 from app.ai.llm.errors import ProviderError
 from app.ai.llm.retry import PipelineDeadline
 from app.core.config import Settings
+from app.services import image_service
 from app.services.image_service import FoodIdentity, ImagePolicy, ImageService
 from tests.image_fakes import POLICY, FakeProvider, FakeStore, png, recipe
 
@@ -111,6 +113,24 @@ async def test_recipe_key_changes_with_the_ingredient_set_or_the_title(variant):
     assert ImageService.recipe_key(
         recipe(**{**_BASE, **variant})
     ) != ImageService.recipe_key(recipe(**_BASE))
+
+
+async def test_recipe_photo_style_version_changes_every_key(monkeypatch):
+    dishes = [
+        recipe(**_BASE),
+        recipe(**{**_BASE, "title": "Tomato soup"}),
+        recipe(**{**_BASE, "ingredients": _ingredients("spaghetti", "zucchini")}),
+    ]
+    same_dish = recipe(**{**_BASE, "ingredients": _ingredients("Tomato", "Spaghetti")})
+    before = [ImageService.recipe_key(dish) for dish in dishes]
+
+    monkeypatch.setattr(
+        image_service, "RECIPE_PHOTO_STYLE_VERSION", RECIPE_PHOTO_STYLE_VERSION + 1
+    )
+    after = [ImageService.recipe_key(dish) for dish in dishes]
+
+    assert not set(before) & set(after)
+    assert ImageService.recipe_key(same_dish) == after[0]
 
 
 async def test_recipes_from_different_households_share_a_photo():

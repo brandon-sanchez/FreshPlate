@@ -36,7 +36,7 @@ const recipe: RecipeSuggestion = {
       use_amount: 100,
       unit: "g",
     },
-    { name: "Garlic", inventory_item_id: null, use_amount: 2, unit: "cloves" },
+    { name: "Garlic", inventory_item_id: null, use_amount: 0.25, unit: "head" },
   ],
   steps: ["Prep the greens\nRinse the spinach.", "Sauté and serve."],
   saves_expiring: ["Spinach"],
@@ -104,6 +104,7 @@ it("renders the selected snapshot and sends its identity to the shared save acti
   );
   expect(screen.getByText("Spinach skillet")).toBeTruthy();
   expect(screen.getByText("100 g")).toBeTruthy();
+  expect(screen.getByText("¼ head")).toBeTruthy();
   expect(screen.queryByText("In fridge")).toBeNull();
   expect(screen.queryByText("Buy")).toBeNull();
   expect(screen.getByText("Prep the greens")).toBeTruthy();

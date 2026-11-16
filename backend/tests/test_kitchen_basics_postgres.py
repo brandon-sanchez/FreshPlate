@@ -32,7 +32,7 @@ def database():
             "20260804220854_recipe_feed_sessions.sql",
             "20260805190000_recipe_feed_retrieval_cursor.sql",
             "20260905063603_secure_atomic_recipe_feed_refills.sql",
-            "20261116110000_add_kitchen_basics.sql",
+            "20261116140000_add_kitchen_basics.sql",
         )
     )
 

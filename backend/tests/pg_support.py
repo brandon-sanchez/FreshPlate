@@ -95,22 +95,23 @@ def disposable_database(migrations: tuple[str, ...]) -> Iterator[DB]:
     db = DB(urlunsplit(parsed._replace(path="/" + name)))
     try:
         # Stand-ins for what Supabase provides, including its default grants of
-        # every new public object to anon and authenticated.
+        # every new public object to anon, authenticated and service_role.
         db.run(f"""
-          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated;
-          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated;
-          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated;
-          GRANT USAGE ON SCHEMA public TO anon, authenticated;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+          GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
           CREATE EXTENSION pgcrypto;
           CREATE SCHEMA auth;
           CREATE TABLE auth.users(id uuid primary key);
           CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
-          GRANT USAGE ON SCHEMA auth TO anon, authenticated;
+          GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
           GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
-          CREATE TABLE public.households(id uuid primary key);
+          CREATE TABLE public.households(id uuid primary key, created_by uuid);
           CREATE TABLE public.household_members(
             household_id uuid references public.households(id) on delete cascade,
-            user_id uuid references auth.users(id)
+            user_id uuid references auth.users(id),
+            role text NOT NULL DEFAULT 'member'
           );
           INSERT INTO auth.users VALUES ({q(USER)}), ({q(OTHER)});
         """)

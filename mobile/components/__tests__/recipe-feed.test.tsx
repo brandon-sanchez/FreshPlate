@@ -15,6 +15,7 @@ import {
 } from "react-native-gesture-handler/jest-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { RecipeSuggestion } from "@/types/recipes";
+import type { RecipeFeedEnding } from "@/lib/recipes";
 
 const mockFetchRecipeImage = jest.fn();
 jest.mock("@/lib/supabase", () => ({ supabase: {} }));
@@ -135,6 +136,7 @@ const defaultProps = {
   onRetryMore: jest.fn(),
   onAddItems: jest.fn(),
   onEditAnswers: jest.fn(),
+  ending: { kind: "empty", dish: "meal" } as RecipeFeedEnding,
   onCook: jest.fn(),
 };
 
@@ -609,6 +611,52 @@ describe("RecipeFeed", () => {
 
     expect(onAddItems).toHaveBeenCalledTimes(1);
     expect(onEditAnswers).toHaveBeenCalledTimes(1);
+  });
+
+  it("says the kitchen can't make a full meal and suggests what to add", () => {
+    const { getByText } = render(
+      <RecipeFeed
+        {...defaultProps}
+        preferences={{ diet: "Vegan" }}
+        isExhausted
+        recipes={[]}
+      />,
+    );
+
+    expect(getByText("Not enough for a full meal")).toBeTruthy();
+    expect(
+      getByText(
+        "Add a main to build a meal around, such as beans, tofu, lentils or pasta, or change your answers.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("names the dish an empty snack or dessert feed couldn't make", () => {
+    const { getByText } = render(
+      <RecipeFeed
+        {...defaultProps}
+        ending={{ kind: "empty", dish: "dessert" }}
+        isExhausted
+        recipes={[]}
+      />,
+    );
+
+    expect(getByText("Not enough for a dessert")).toBeTruthy();
+  });
+
+  it("says the cook has seen them all after dismissing every card", () => {
+    const { getByText, getByTestId } = render(
+      <RecipeFeed
+        {...defaultProps}
+        ending={{ kind: "dismissed" }}
+        isExhausted
+        recipes={[]}
+      />,
+    );
+
+    expect(getByText("You've seen them all")).toBeTruthy();
+    expect(getByTestId("recipe-feed-add-items")).toBeTruthy();
+    expect(getByTestId("recipe-feed-edit-answers")).toBeTruthy();
   });
 
   it("uses the latest low-water callback after the feed grows", () => {
