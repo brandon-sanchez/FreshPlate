@@ -31,16 +31,21 @@ from app.ai.rag.retriever import RecipeRetriever
 from app.ai.rag.vector_store import SupabaseVectorStore
 from app.core.auth import CurrentUserId
 from app.core.config import settings
+from app.inventory.food_facts import FoodLine
 from app.models.recipes import (
     RecipeFeedData,
     RecipeFeedPageRequest,
     RecipeFeedResponse,
     RecipeFeedSessionRequest,
-    RecipeInventoryContext,
     RecipeSuggestion,
     RecipeSuggestionRequest,
     RecipeSuggestionsData,
     RecipeSuggestionsResponse,
+)
+from app.services.food_lines import (
+    FoodLinesError,
+    FoodLineSource,
+    SupabaseFoodLineSource,
 )
 from app.services.recipe_feed_store import (
     RecipeFeedSession,
@@ -80,23 +85,41 @@ def get_recipe_retriever(request: Request) -> RecipeRetrieverPort:
 
 def get_recipe_feed_store(request: Request) -> RecipeFeedStore:
     """Bind user-scoped reads and trusted writes to the shared HTTP client."""
-    authorization = request.headers.get("authorization", "")
-    scheme, _, token = authorization.partition(" ")
-    if scheme.casefold() != "bearer" or not token.strip():
-        raise _feed_unavailable()
     return SupabaseRecipeFeedStore(
-        token, http_client=request.app.state.supabase_http_client
+        _bearer_token(request, _feed_unavailable),
+        http_client=request.app.state.supabase_http_client,
     )
+
+
+def get_food_line_source(request: Request) -> FoodLineSource:
+    """Read the caller's household foods with the caller's own token."""
+    return SupabaseFoodLineSource(
+        _bearer_token(request, _ai_unavailable),
+        http_client=request.app.state.supabase_http_client,
+    )
+
+
+def _bearer_token(request: Request, unavailable: Callable[[], HTTPException]) -> str:
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    if scheme.casefold() != "bearer" or not token.strip():
+        raise unavailable()
+    return token
 
 
 @router.post("/suggestions", response_model=RecipeSuggestionsResponse)
 async def post_recipe_suggestions(
     payload: RecipeSuggestionRequest,
     _user_id: CurrentUserId,
+    foods: FoodLineSource = Depends(get_food_line_source),
     provider: LLMProvider = Depends(get_recipe_provider),
     retriever: RecipeRetrieverPort = Depends(get_recipe_retriever),
 ) -> RecipeSuggestionsResponse:
-    """Generate one authenticated, session-scoped batch of recipe suggestions."""
+    """Generate one authenticated, session-scoped batch of recipe suggestions.
+
+    Reads the household's foods as the caller, then runs the recipe graph.
+    Responds 503 ``AI_UNAVAILABLE`` when the foods can't be read or
+    generation fails.
+    """
     if payload.batch_ceiling == 0:
         return RecipeSuggestionsResponse(
             data=RecipeSuggestionsData(recipes=[]),
@@ -104,18 +127,31 @@ async def post_recipe_suggestions(
 
     deadline = PipelineDeadline.from_now(settings.ai_pipeline_budget_seconds)
     prompt = load_prompt("generate_recipes")
-    state = _initial_recipe_state(payload, deadline=deadline)
 
     try:
+        lines = await _within_recipe_deadline(
+            deadline, lambda: foods.list_food_lines(payload.household_id)
+        )
+        state = _initial_recipe_state(
+            lines,
+            preferences=payload.preferences,
+            exclude_titles=payload.exclude_titles,
+            batch_ceiling=payload.batch_ceiling,
+            deadline=deadline,
+        )
         result = await _invoke_recipe_graph(
             build_recipe_graph(provider, retriever, prompt=prompt),
             state,
             prompt,
         )
-        recipes = _build_suggestions(result, payload)
+        recipes = _build_suggestions(
+            result,
+            exclude_titles=payload.exclude_titles,
+            batch_ceiling=payload.batch_ceiling,
+        )
     except asyncio.CancelledError:
         raise
-    except (ProviderError, TimeoutError, ValueError) as exc:
+    except (ProviderError, TimeoutError, ValueError, FoodLinesError) as exc:
         raise _ai_unavailable() from exc
 
     return RecipeSuggestionsResponse(
@@ -128,21 +164,32 @@ async def post_recipe_feed_session(
     payload: RecipeFeedSessionRequest,
     _user_id: CurrentUserId,
     store: RecipeFeedStore = Depends(get_recipe_feed_store),
+    foods: FoodLineSource = Depends(get_food_line_source),
     provider: LLMProvider = Depends(get_recipe_provider),
     retriever: RecipeRetrieverPort = Depends(get_recipe_retriever),
 ) -> RecipeFeedResponse:
-    """Create a feed session and persist its first bounded candidate pool."""
-    suggestion_request = RecipeSuggestionRequest(
-        inventory=payload.inventory,
-        preferences=payload.preferences,
-        batch_ceiling=RECIPE_FEED_INITIAL_HEAD_BATCH_CEILING,
-    )
+    """Create a feed session and persist its first bounded candidate pool.
+
+    Reads the household's foods as the caller. Responds 503
+    ``RECIPE_FEED_UNAVAILABLE`` when the foods can't be read or the session
+    can't be stored, and 503 ``AI_UNAVAILABLE`` when generation fails or the
+    deadline runs out.
+    """
     prompt = load_prompt("generate_recipes")
     deadline = PipelineDeadline.from_now(settings.recipe_feed_initial_budget_seconds)
-    state: RecipeState = _initial_recipe_state(suggestion_request, deadline=deadline)
 
     started_at = time.monotonic()
     try:
+        lines = await _within_recipe_deadline(
+            deadline, lambda: foods.list_food_lines(payload.household_id)
+        )
+        state = _initial_recipe_state(
+            lines,
+            preferences=payload.preferences,
+            exclude_titles=[],
+            batch_ceiling=RECIPE_FEED_INITIAL_HEAD_BATCH_CEILING,
+            deadline=deadline,
+        )
         result = await _invoke_recipe_graph(
             build_recipe_graph(
                 provider,
@@ -164,12 +211,13 @@ async def post_recipe_feed_session(
             result.get("retry_count"),
             (result.get("quality_feedback") or "")[:200],
         )
-        recipes = _build_suggestions(result, suggestion_request)
-        session = _session_from_initial_result(
-            _user_id,
-            suggestion_request,
+        recipes = _build_suggestions(
             result,
-            len(recipes),
+            exclude_titles=[],
+            batch_ceiling=RECIPE_FEED_INITIAL_HEAD_BATCH_CEILING,
+        )
+        session = _session_from_initial_result(
+            _user_id, payload.preferences, result, len(recipes)
         )
         session = session.model_copy(
             update={
@@ -191,7 +239,7 @@ async def post_recipe_feed_session(
             exc,
         )
         raise _ai_unavailable() from exc
-    except RecipeFeedStoreError as exc:
+    except (RecipeFeedStoreError, FoodLinesError) as exc:
         logger.warning(
             "Recipe feed session store failure after %.2fs: %s",
             time.monotonic() - started_at,
@@ -339,15 +387,6 @@ async def _generate_claimed_recipe_refill(
     claim_id: UUID,
 ) -> tuple[RecipeFeedSession, bool]:
     """Generate and finalize the batch owned by one database reservation."""
-    inventory = [
-        RecipeInventoryContext.model_validate(item) for item in session.inventory
-    ]
-    suggestion_request = RecipeSuggestionRequest(
-        inventory=inventory,
-        preferences=session.preferences,
-        exclude_titles=session.exclude_titles,
-        batch_ceiling=RECIPE_FEED_REFILL_BATCH_CEILING,
-    )
     prompt = load_prompt("generate_recipes")
     retrieval_window = session.retrieved_recipes[
         session.retrieval_cursor : session.retrieval_cursor + GENERATION_DOCS_CEILING
@@ -371,7 +410,11 @@ async def _generate_claimed_recipe_refill(
         state,
         prompt,
     )
-    generated = _build_suggestions(result, suggestion_request)
+    generated = _build_suggestions(
+        result,
+        exclude_titles=session.exclude_titles,
+        batch_ceiling=RECIPE_FEED_REFILL_BATCH_CEILING,
+    )
     existing_titles = {_normalize_title(title) for title in session.exclude_titles}
     recipes = [
         recipe
@@ -436,25 +479,27 @@ async def _within_recipe_deadline(
 
 
 def _initial_recipe_state(
-    payload: RecipeSuggestionRequest,
+    lines: Sequence[FoodLine],
     *,
-    deadline: PipelineDeadline | None = None,
+    preferences: dict[str, Any],
+    exclude_titles: list[str],
+    batch_ceiling: int,
+    deadline: PipelineDeadline,
 ) -> RecipeState:
     return {
-        "inventory": [item.model_dump(mode="python") for item in payload.inventory],
-        "preferences": payload.preferences,
-        "exclude_titles": payload.exclude_titles,
-        "batch_ceiling": payload.batch_ceiling,
+        "inventory": [line.model_dump(mode="python") for line in lines],
+        "preferences": preferences,
+        "exclude_titles": exclude_titles,
+        "batch_ceiling": batch_ceiling,
         "retry_count": 0,
         "metadata": {},
-        "deadline": deadline
-        or PipelineDeadline.from_now(settings.ai_pipeline_budget_seconds),
+        "deadline": deadline,
     }
 
 
 def _session_from_initial_result(
     user_id: str,
-    payload: RecipeSuggestionRequest,
+    preferences: Mapping[str, Any],
     result: Mapping[str, Any],
     candidate_count: int,
 ) -> RecipeFeedSession:
@@ -469,10 +514,7 @@ def _session_from_initial_result(
     return RecipeFeedSession(
         id=uuid4(),
         user_id=user_id,
-        inventory=jsonable_encoder(
-            [item.model_dump(mode="json") for item in payload.inventory]
-        ),
-        preferences=jsonable_encoder(payload.preferences),
+        preferences=jsonable_encoder(preferences),
         usable_items=jsonable_encoder(list(usable_items)),
         retrieved_recipes=jsonable_encoder(list(retrieved_recipes)),
         retrieval_cursor=min(GENERATION_DOCS_CEILING, len(retrieved_recipes)),
@@ -522,7 +564,9 @@ def _invalid_feed_cursor() -> HTTPException:
 
 def _build_suggestions(
     result: Any,
-    payload: RecipeSuggestionRequest,
+    *,
+    exclude_titles: Sequence[str],
+    batch_ceiling: int,
 ) -> list[RecipeSuggestion]:
     if not isinstance(result, Mapping):
         raise ValueError("Recipe graph returned an invalid state")
@@ -537,7 +581,7 @@ def _build_suggestions(
         raise ValueError("Recipe graph returned an invalid recipe state")
 
     excluded_titles = {
-        _normalize_title(title) for title in payload.exclude_titles if title.strip()
+        _normalize_title(title) for title in exclude_titles if title.strip()
     }
     suggestions: list[RecipeSuggestion] = []
     for raw_recipe in raw_recipes:
@@ -552,7 +596,7 @@ def _build_suggestions(
                 saves_expiring=_expiring_item_names(recipe, raw_inventory),
             )
         )
-        if len(suggestions) >= payload.batch_ceiling:
+        if len(suggestions) >= batch_ceiling:
             break
     return suggestions
 

@@ -2,7 +2,6 @@ import {
   buildRecipeFeedSessionRequest,
   buildRecipeSuggestionRequest,
   recipeContextLabel,
-  toRecipeInventoryContext,
 } from "@/lib/recipes";
 
 describe("recipe request helpers", () => {
@@ -16,62 +15,17 @@ describe("recipe request helpers", () => {
     ).toBe("Tuned · 2 preferences");
   });
 
-  it("maps only the inventory fields accepted by the generation request", () => {
-    const items = [
-      {
-        id: "spinach",
-        food_id: "food-spinach",
-        name: "Baby Spinach",
-        quantity: 1,
-        unit: "bag",
-        expiration_date: "2026-08-06",
-        storage_location: "fridge" as const,
-        is_leftover: false,
-        notes: "wash first",
-        added_by: "user-1",
-        opened_at: null,
-        created_at: "2026-08-01T12:00:00+00:00",
-        category: { id: "produce", name: "Produce", icon: "leaf" },
-      },
-    ];
+  it("sends the household instead of an inventory snapshot", () => {
     const preferences = { meal: "Dinner" as const };
 
-    expect(toRecipeInventoryContext(items)).toEqual([
-      {
-        id: "spinach",
-        name: "Baby Spinach",
-        quantity: 1,
-        unit: "bag",
-        expiration_date: "2026-08-06",
-        category: "Produce",
-      },
-    ]);
-    expect(buildRecipeSuggestionRequest(items, preferences)).toEqual({
-      inventory: [
-        {
-          id: "spinach",
-          name: "Baby Spinach",
-          quantity: 1,
-          unit: "bag",
-          expiration_date: "2026-08-06",
-          category: "Produce",
-        },
-      ],
+    expect(buildRecipeSuggestionRequest("household-1", preferences)).toEqual({
+      household_id: "household-1",
       preferences,
       exclude_titles: [],
       batch_ceiling: 8,
     });
-    expect(buildRecipeFeedSessionRequest(items, preferences)).toEqual({
-      inventory: [
-        {
-          id: "spinach",
-          name: "Baby Spinach",
-          quantity: 1,
-          unit: "bag",
-          expiration_date: "2026-08-06",
-          category: "Produce",
-        },
-      ],
+    expect(buildRecipeFeedSessionRequest("household-1", preferences)).toEqual({
+      household_id: "household-1",
       preferences,
     });
   });

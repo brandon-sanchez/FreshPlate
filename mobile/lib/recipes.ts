@@ -1,6 +1,4 @@
-import type { InventoryItem } from "@/hooks/useInventoryItems";
 import type {
-  RecipeInventoryContext,
   RecipeFeedSessionRequest,
   RecipePreferences,
   RecipeSuggestionRequest,
@@ -23,37 +21,23 @@ export function recipeContextLabel(
   return `Tuned · ${answered} preference${answered === 1 ? "" : "s"}`;
 }
 
-export function toRecipeInventoryContext(
-  items: InventoryItem[],
-): RecipeInventoryContext[] {
-  return items.map((item) => ({
-    id: item.id,
-    name: item.name,
-    quantity: item.quantity,
-    unit: item.unit,
-    expiration_date: item.expiration_date,
-    category: item.category?.name ?? null,
-  }));
-}
-
+/** Returns the request body that asks for one batch of recipe suggestions. */
 export function buildRecipeSuggestionRequest(
-  items: InventoryItem[],
+  householdId: string,
   preferences: RecipePreferences,
 ): RecipeSuggestionRequest {
   return {
-    inventory: toRecipeInventoryContext(items),
+    household_id: householdId,
     preferences,
     exclude_titles: [],
     batch_ceiling: 8,
   };
 }
 
+/** Returns the request body that starts a recipe feed for the household. */
 export function buildRecipeFeedSessionRequest(
-  items: InventoryItem[],
+  householdId: string,
   preferences: RecipePreferences,
 ): RecipeFeedSessionRequest {
-  return {
-    inventory: toRecipeInventoryContext(items),
-    preferences,
-  };
+  return { household_id: householdId, preferences };
 }

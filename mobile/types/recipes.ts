@@ -13,24 +13,23 @@ export type RecipePreferences = Partial<
   Record<RecipePreferenceKey, string>
 >;
 
-export type RecipeInventoryContext = {
-  id: string;
-  name: string;
-  quantity: number;
-  unit: string;
-  expiration_date: string | null;
-  category: string | null;
-};
-
+/**
+ * Body of `POST /api/recipes/suggestions`. The backend reads
+ * `household_id`'s foods itself, so the request carries no inventory.
+ */
 export type RecipeSuggestionRequest = {
-  inventory: RecipeInventoryContext[];
+  household_id: string;
   preferences: RecipePreferences;
   exclude_titles: string[];
   batch_ceiling: number;
 };
 
+/**
+ * Body of `POST /api/recipes/sessions`. The backend reads `household_id`'s
+ * foods itself, so the request carries no inventory.
+ */
 export type RecipeFeedSessionRequest = {
-  inventory: RecipeInventoryContext[];
+  household_id: string;
   preferences: RecipePreferences;
 };
 
