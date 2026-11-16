@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import Toast, { type ToastShowParams } from "react-native-toast-message";
-import { supabase } from "@/lib/supabase";
+import Toast from "react-native-toast-message";
+import { ChangedElsewhereError, RETRY_HINT, callLotRpc, lotErrorToast } from "@/lib/lotRpc";
 import { showUndoToast } from "@/components/toastConfig";
 import { useAuthStore } from "@/stores/auth";
 
@@ -13,41 +13,6 @@ type RecordInput = {
   /** The food's name, shown in the toast. */
   name: string;
 };
-
-/**
- * Thrown when the database refuses a change because a batch is no longer in
- * the state the screen showed, which happens when another phone changed it
- * first.
- */
-export class ChangedElsewhereError extends Error {
-  constructor(code: string) {
-    super(code);
-    this.name = "ChangedElsewhereError";
-  }
-}
-
-/** The second toast line for a failure that a retry on a better connection could fix. */
-export const RETRY_HINT = "Check your connection and try again.";
-
-/**
- * Returns the error toast for a failed change to a food's batches. It says
- * whether another phone changed them first or the connection failed.
- */
-export function lotErrorToast(name: string, error: Error): ToastShowParams {
-  return error instanceof ChangedElsewhereError
-    ? { type: "error", text1: `${name} already changed`, text2: "It was updated on another phone." }
-    : { type: "error", text1: `Couldn't update ${name}`, text2: RETRY_HINT };
-}
-
-async function callLotRpc(
-  fn: "deplete_lots" | "restore_lots",
-  args: Record<string, unknown>,
-  staleCode: "LOT_NOT_LIVE" | "LOT_NOT_RESTORABLE",
-) {
-  const { error } = await supabase.rpc(fn, args);
-  if (!error) return;
-  throw error.message === staleCode ? new ChangedElsewhereError(staleCode) : error;
-}
 
 /**
  * Returns `record`, which marks batches of one food as used up or tossed
@@ -73,7 +38,7 @@ export function useLotOutcome() {
       callLotRpc(
         "restore_lots",
         { p_household_id: householdId, p_lot_ids: lotIds },
-        "LOT_NOT_RESTORABLE",
+        ["LOT_NOT_RESTORABLE"],
       ),
     onSettled: invalidate,
     onSuccess: () => Toast.show({ type: "success", text1: "Restored" }),
@@ -91,7 +56,7 @@ export function useLotOutcome() {
       callLotRpc(
         "deplete_lots",
         { p_household_id: householdId, p_lot_ids: lotIds, p_reason: outcome },
-        "LOT_NOT_LIVE",
+        ["LOT_NOT_LIVE"],
       ),
     onSettled: invalidate,
     onSuccess: (_data, { lotIds, outcome, name }) =>
