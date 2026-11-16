@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
@@ -11,10 +13,18 @@ from typing import Any, Literal, Protocol
 
 from pydantic import TypeAdapter, ValidationError
 
+from app.ai.agents.dish import RequestedDish, requested_dish
+from app.ai.agents.diversity import (
+    MAIN_COMPONENT_CATEGORIES,
+    drop_near_duplicate_titles,
+    recipe_directions,
+)
+from app.ai.agents.food_labels import FoodLabels
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING, MAX_BATCH_CEILING
 from app.ai.agents.models import (
     Recipe,
     RecipeGenerationResponse,
+    RecipeIngredient,
     recipe_batch_model,
 )
 from app.ai.agents.state import (
@@ -26,7 +36,9 @@ from app.ai.agents.state import (
     SteeringExample,
     UsableItem,
 )
+from app.ai.llm.errors import ProviderError
 from app.ai.llm.protocol import LLMProvider
+from app.ai.llm.providers import GEMINI_MIN_DEADLINE_SECONDS
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.prompts.loader import PromptTemplate, load_prompt
 from app.ai.rag.vector_store import (
@@ -35,18 +47,27 @@ from app.ai.rag.vector_store import (
     RetrievedRecipe,
 )
 from app.inventory.food_facts import FoodLine
-from app.inventory.units import Exact, FoodFacts, convertible_units, to_stock
+from app.inventory.units import (
+    Exact,
+    FoodFacts,
+    convertible_units,
+    normalize_unit,
+    to_stock,
+)
+
+logger = logging.getLogger("freshplate.ai.recipes")
 
 EXPIRING_WITHIN_DAYS = 5
 MAX_QUALITY_RETRIES = 1
 QUALITY_RETRY_MIN_BUDGET_SECONDS = 20.0
 GENERATION_DOCS_CEILING = 5
+_GROUNDING_CHECK_SECONDS = 1.0
+# Generation calls stop this long before the pipeline deadline so the meal
+# review can start: Gemini rejects a request deadline under its minimum.
+MEAL_REVIEW_RESERVE_SECONDS = GEMINI_MIN_DEADLINE_SECONDS + _GROUNDING_CHECK_SECONDS
 # Embedding every pantry item name blurs the retrieval query, so only the
 # highest-priority names are embedded.
 RETRIEVAL_QUERY_TERM_LIMIT = 30
-# Category names come from the food_categories seed in
-# supabase/migrations/20260329180000_create_inventory_tables.sql.
-MAIN_COMPONENT_CATEGORIES = frozenset({"meat & seafood"})
 WATER = "water"
 WATER_RULE = (
     "Water is always available: never list it as an ingredient, but steps may use "
@@ -54,6 +75,16 @@ WATER_RULE = (
     "seasoning or fat, must come from the listed inventory."
 )
 _QUERY_TERM_SEPARATOR = re.compile(r"[^\w]+", flags=re.UNICODE)
+# Mirrors COPIED_STEP_PREFIX in mobile/lib/recipe-format.ts. A bare number
+# needs ":", "." or ")" after it, so "2 eggs" and "2-inch pieces" stay.
+_COPIED_STEP_PREFIX = re.compile(
+    r"^\s*(?:step\s*\d+\s*[:.)\-–—]?|\d+\s*[:.)])\s*", flags=re.IGNORECASE
+)
+_DECIMAL_NUMBER = re.compile(r"\d*\.\d")
+_SPOKEN_AMOUNT = re.compile(
+    r"^\s*(?P<whole>\d+)?\s*(?P<fraction>[¼½¾⅓⅔⅛]|\d+/\d+)?\s*(?P<unit>[^\d(,]*)"
+)
+_GLYPHS = {"¼": 0.25, "½": 0.5, "¾": 0.75, "⅓": 1 / 3, "⅔": 2 / 3, "⅛": 0.125}
 _USABLE_ITEMS = TypeAdapter(list[UsableItem])
 
 
@@ -189,11 +220,28 @@ async def generate_recipes(
     prompt: PromptTemplate | None = None,
     deadline: PipelineDeadline | None = None,
 ) -> GenerationResult:
-    """Generate recipes while preserving provider amounts for validation.
+    """Generate a batch with one concurrent provider call per recipe.
 
-    The response schema limits each ingredient to one usable food and that
-    food's units. A kitchen with no usable food makes no provider call and
-    returns an empty batch.
+    Every call gets the same system instruction, schema and kitchen prompt,
+    so the provider can cache that shared prefix, followed by its own
+    direction from ``recipe_directions`` so the calls don't all write the
+    same dish. The directions shift with the number of shown titles, so a
+    feed refill doesn't repeat the first page's directions. The prompt names
+    each food by its ``FoodLabels`` label, and every recipe is mapped back
+    to real food ids before it is returned.
+
+    Calls stop ``MEAL_REVIEW_RESERVE_SECONDS`` before the pipeline deadline
+    when that still leaves them Gemini's minimum call time, so the meal
+    review can still run. A call that fails or is still running then drops
+    only its own recipe. A call
+    that returns no recipe is the model saying the kitchen can't make a
+    meal for its direction. A kitchen with no usable food or a batch
+    ceiling of zero makes no call.
+
+    Raises:
+        ProviderError: When at least one call fails and none returns a
+            recipe, so a provider outage never reads as an empty kitchen.
+        ValueError: When the state is malformed.
     """
     template = prompt or load_prompt("generate_recipes")
     batch_ceiling = _batch_ceiling(state)
@@ -204,30 +252,115 @@ async def generate_recipes(
         # so the counter must stay truthful: capping it here would let a
         # limit above the default retry forever.
         retry_count = retry_count + 1
-    if not usable_items:
+    if not usable_items or batch_ceiling == 0:
         return {"generated_recipes": [], "retry_count": retry_count}
-    active_deadline = deadline or _state_deadline(state)
-    response = await provider.generate(
-        _generation_prompt(state, usable_items),
-        response_model=recipe_batch_model(
-            batch_ceiling, {item["id"]: item["units"] for item in usable_items}
+
+    labels = FoodLabels(item["id"] for item in usable_items)
+    dish = requested_dish(state.get("preferences", {}))
+    shared_prompt = _generation_prompt(state, usable_items, labels, dish)
+    response_model = recipe_batch_model(
+        1, {item["id"]: item["units"] for item in usable_items}
+    )
+    calls_deadline = _generation_deadline(deadline or _state_deadline(state))
+    outcomes = await asyncio.gather(
+        *(
+            _generate_one(
+                provider,
+                f"{shared_prompt}\n\n{direction}",
+                response_model=response_model,
+                template=template,
+                labels=labels,
+                deadline=calls_deadline,
+            )
+            for direction in recipe_directions(
+                usable_items,
+                batch_ceiling,
+                offset=_shown_title_count(state),
+                dish=dish,
+            )
         ),
+        return_exceptions=True,
+    )
+
+    recipes: list[Recipe] = []
+    failures: list[BaseException] = []
+    for index, outcome in enumerate(outcomes):
+        if isinstance(outcome, ProviderError):
+            logger.warning(
+                "Recipe generation call %s/%s dropped: %r",
+                index + 1,
+                len(outcomes),
+                outcome,
+            )
+            failures.append(outcome)
+        elif isinstance(outcome, BaseException):
+            raise outcome
+        else:
+            recipes.extend(outcome)
+    if failures and not recipes:
+        # An empty batch tells the feed the kitchen can't make a meal, so
+        # only calls that all answered may say so.
+        raise ProviderError(
+            "No recipe generation call returned a recipe", cause=failures[0]
+        ) from failures[0]
+    return {"generated_recipes": recipes, "retry_count": retry_count}
+
+
+async def _generate_one(
+    provider: LLMProvider,
+    prompt: str,
+    *,
+    response_model: type[RecipeGenerationResponse],
+    template: PromptTemplate,
+    labels: FoodLabels,
+    deadline: PipelineDeadline | None,
+) -> list[Recipe]:
+    """Return the recipe one generation call writes, or an empty list."""
+    response = await provider.generate(
+        prompt,
+        response_model=response_model,
         system_instruction=template.system,
-        deadline=active_deadline,
+        deadline=deadline,
         thinking=template.thinking,
     )
-    validated_response = RecipeGenerationResponse.model_validate(response)
-    return {
-        "generated_recipes": validated_response.recipes[:batch_ceiling],
-        "retry_count": retry_count,
-    }
+    return [
+        labels.resolve(recipe)
+        for recipe in RecipeGenerationResponse.model_validate(response).recipes[:1]
+    ]
+
+
+def _shown_title_count(state: Mapping[str, Any]) -> int:
+    """Return how many titles the feed has shown, which grows every refill."""
+    titles = state.get("exclude_titles", [])
+    if isinstance(titles, Sequence) and not isinstance(titles, (str, bytes)):
+        return len(titles)
+    return 0
+
+
+def _generation_deadline(
+    deadline: PipelineDeadline | None,
+) -> PipelineDeadline | None:
+    """Return the deadline generation calls share.
+
+    The reserve applies only when it leaves the calls Gemini's minimum, so a
+    late retry still makes real calls instead of all being refused.
+    """
+    if deadline is None or (
+        deadline.remaining_seconds
+        < MEAL_REVIEW_RESERVE_SECONDS + GEMINI_MIN_DEADLINE_SECONDS
+    ):
+        return deadline
+    return deadline.ending_before(MEAL_REVIEW_RESERVE_SECONDS)
 
 
 def check_quality(state: Mapping[str, Any]) -> QualityResult:
     """Keep only complete recipes grounded in the analyzed inventory.
 
-    An empty batch is how the generator reports a kitchen that cannot
-    make a meal, so it produces no quality feedback and never triggers a retry.
+    Of the grounded recipes, one whose title repeats an earlier one's dish
+    is dropped without feedback, because the calls that wrote them could
+    not see each other. An empty batch is how the generator reports a
+    kitchen that cannot make a meal, so it produces no quality feedback and
+    never triggers a retry.
     """
     usable_items = _usable_items(state.get("usable_items", []))
     inventory_by_id = {item["id"]: item for item in usable_items}
@@ -251,10 +384,10 @@ def check_quality(state: Mapping[str, Any]) -> QualityResult:
         if issues:
             failures.append(f"Recipe '{recipe.title}': {'; '.join(issues)}")
         else:
-            valid_recipes.append(recipe)
+            valid_recipes.append(_tidy_generated_recipe(recipe))
 
     return {
-        "valid_recipes": valid_recipes,
+        "valid_recipes": drop_near_duplicate_titles(valid_recipes),
         "quality_feedback": "\n".join(failures) if failures else None,
     }
 
@@ -332,23 +465,25 @@ def _usable_items(raw_items: Any) -> list[UsableItem]:
 def _generation_prompt(
     state: Mapping[str, Any],
     usable_items: Sequence[UsableItem],
+    labels: FoodLabels,
+    dish: RequestedDish,
 ) -> str:
-    """Build the grounded user prompt for the versioned system instruction."""
-    ceiling = _batch_ceiling(state)
+    """Build the user prompt every call in a batch shares.
+
+    Nothing in it differs between the calls of one batch, so the provider
+    can cache it with the system instruction. Each call's direction goes
+    after it.
+    """
+    asked = "" if dish == "meal" else f"The cook asked for a {dish}. "
     lines = [
         (
-            f"Suggest up to {ceiling} distinct meals this kitchen can make. Each "
-            "recipe is a separate option the cook chooses between, so every recipe "
-            "may use the full listed inventory, including the same main ingredient "
-            "as another recipe. Make each one a different dish that varies in "
-            "cooking method or format, not a variation of another. If the kitchen "
-            f"cannot make a real meal, return an empty list. {WATER_RULE}"
+            f"{asked}Suggest one {dish} this kitchen can make. It is one of "
+            "several options the cook chooses between, so it may use the full "
+            "listed inventory, including the same main ingredient as another "
+            f"option. If the kitchen cannot make a real {dish}, return an empty "
+            f"list. {WATER_RULE}"
         ),
         "",
-        (
-            "Create up to the requested number of recipe suggestions from the "
-            "usable inventory."
-        ),
         (
             "Retrieved recipes are inspiration, not templates. Do not copy them "
             "as templates."
@@ -359,19 +494,18 @@ def _generation_prompt(
             "garnishes."
         ),
         (
-            "Every ingredient must map to one listed inventory_item_id. Write "
-            "its use_amount in whichever of that food's listed units a cook "
-            "would use, such as cloves of garlic or tablespoons of oil."
-        ),
-        (
-            "Use the full batch ceiling when distinct grounded recipes are "
-            "possible. Return fewer only when no additional grounded recipe "
-            "can be made from this inventory."
+            "Every ingredient must map to one listed food. Its "
+            "inventory_item_id is that food's short id, such as f1, from the "
+            "start of the food's line. Write the ingredient's use_amount in "
+            "whichever of that food's listed units a cook would use, such as "
+            "cloves of garlic or tablespoons of oil."
         ),
         "",
         "Usable inventory:",
     ]
-    lines.extend(_inventory_line(item) for item in usable_items)
+    lines.extend(
+        _inventory_line(item, labels.label(item["id"])) for item in usable_items
+    )
 
     lines.extend(("", "Retrieved recipe inspiration:"))
     retrieved_recipes = state.get("retrieved_recipes", [])
@@ -395,9 +529,8 @@ def _generation_prompt(
     if not rendered_retrieval:
         lines.append("- None")
 
-    preferences = state.get("preferences", {})
     lines.extend(("", "Session preferences:"))
-    lines.append(_json_value(preferences))
+    lines.append(_json_value(state.get("preferences", {})))
 
     exclude_titles = state.get("exclude_titles", [])
     if isinstance(exclude_titles, Sequence) and not isinstance(
@@ -407,7 +540,6 @@ def _generation_prompt(
         lines.append(", ".join(str(title) for title in exclude_titles) or "None")
 
     lines.extend(_steering_lines(state.get("steering")))
-    lines.extend(("", f"Maximum number of recipes: {ceiling}"))
     feedback = state.get("quality_feedback")
     if feedback:
         lines.extend(("", "Quality feedback from the previous attempt:", str(feedback)))
@@ -422,7 +554,8 @@ def _steering_lines(steering: RecipeSteering | None) -> list[str]:
         (
             "Steering from the cook. Two recipes are alike when they share at "
             "least two foods and the shared foods are at least half of all the "
-            "foods the two use."
+            "foods the two use. Follow this steering before the direction "
+            "below: change its lead or format when they disagree."
         ),
     ]
     if steering["more_like"]:
@@ -444,9 +577,9 @@ def _steering_example(example: SteeringExample) -> str:
     return f"- {example['title']} (uses {', '.join(example['foods'])})"
 
 
-def _inventory_line(item: UsableItem) -> str:
+def _inventory_line(item: UsableItem, label: str) -> str:
     parts = [
-        f"- {item['id']}: {item['name']}",
+        f"- {label}: {item['name']}",
         f"{_amount_text(item['quantity'])} {item['unit']}",
     ]
     if item["lot_count"] > 1:
@@ -510,13 +643,86 @@ def _quality_issues(
         item = inventory_by_id[item_id]
         if needed > Decimal(str(item["quantity"])):
             issues.append(
-                f"ingredients mapped to inventory item '{item_id}' need "
+                f"ingredients using {item['name']} need "
                 f"{_amount_text(needed)} {item['unit']} in total, more than the "
                 f"available {_amount_text(item['quantity'])} {item['unit']}"
             )
     if not grounded:
         issues.append("recipe has no grounded inventory ingredients")
     return issues
+
+
+def _tidy_generated_recipe(recipe: Recipe) -> Recipe:
+    """Fix the slips a grounded recipe should not be dropped for.
+
+    The model sometimes numbers steps despite the prompt, and a step's
+    ``uses`` may name a food the recipe does not list. Ingredients
+    are put in order of first use, because the model's order drifts. A spoken
+    amount that is a decimal or disagrees with ``use_amount`` is dropped,
+    because the cook flow deducts ``use_amount`` and the app formats it
+    instead. Active time is capped at total time.
+    """
+    listed = {item.inventory_item_id for item in recipe.ingredients}
+    steps = [
+        step.model_copy(
+            update={
+                "instruction": _COPIED_STEP_PREFIX.sub("", step.instruction, count=1)
+                or step.instruction,
+                "uses": [food_id for food_id in step.uses if food_id in listed],
+            }
+        )
+        for step in recipe.steps
+    ]
+    first_use: dict[str, int] = {}
+    for index, step in enumerate(steps):
+        for food_id in step.uses:
+            first_use.setdefault(food_id, index)
+    ingredients = sorted(
+        (
+            item
+            if _spoken_amount_fits(item)
+            else item.model_copy(update={"display_amount": None})
+            for item in recipe.ingredients
+        ),
+        key=lambda item: first_use.get(item.inventory_item_id or "", len(steps)),
+    )
+    active = recipe.active_minutes
+    if active is not None and recipe.total_minutes is not None:
+        active = min(active, recipe.total_minutes)
+    return recipe.model_copy(
+        update={"steps": steps, "ingredients": ingredients, "active_minutes": active}
+    )
+
+
+def _spoken_amount_fits(item: RecipeIngredient) -> bool:
+    """Return whether ``display_amount`` can be shown in place of ``use_amount``.
+
+    It fits when it has no decimal and, if it starts with a number in the
+    ingredient's own unit (or no unit), that number is within rounding of
+    ``use_amount``. A spoken amount in another unit, such as "1 cup" for
+    200 g, is trusted.
+    """
+    spoken = item.display_amount
+    if spoken is None:
+        return True
+    if _DECIMAL_NUMBER.search(spoken):
+        return False
+    match = _SPOKEN_AMOUNT.match(spoken)
+    if match is None or item.use_amount is None:
+        return True
+    whole, fraction, unit = match.group("whole", "fraction", "unit")
+    if whole is None and fraction is None:
+        return True
+    unit = unit.strip()
+    if unit and normalize_unit(unit) != normalize_unit(item.unit):
+        return True
+    value = float(whole or 0)
+    if fraction in _GLYPHS:
+        value += _GLYPHS[fraction]
+    elif fraction:
+        numerator, denominator = fraction.split("/")
+        value += int(numerator) / int(denominator) if int(denominator) else 0
+    return abs(value - item.use_amount) <= max(0.07, 0.1 * item.use_amount)
 
 
 def _amount_text(value: float | Decimal) -> str:

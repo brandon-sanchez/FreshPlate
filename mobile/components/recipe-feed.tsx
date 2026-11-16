@@ -20,6 +20,7 @@ import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useRecipeSweep } from "@/hooks/useRecipeSweep";
 import type { SteerDirection } from "@/lib/recipe-steering";
 import { useTheme } from "@/hooks/useTheme";
+import { recipeFeedEndingCopy, type RecipeFeedEnding } from "@/lib/recipes";
 import type { RecipePreferences, RecipeSuggestion } from "@/types/recipes";
 
 type RecipeFeedProps = {
@@ -29,6 +30,8 @@ type RecipeFeedProps = {
   isPrefetching: boolean;
   prefetchError: Error | null;
   isExhausted: boolean;
+  /** Why the feed ended, which picks the copy shown once it is exhausted. */
+  ending: RecipeFeedEnding;
   topInset: number;
   bottomInset: number;
   onAsk: () => void;
@@ -77,6 +80,7 @@ export default function RecipeFeed({
   isPrefetching,
   prefetchError,
   isExhausted,
+  ending,
   topInset,
   bottomInset,
   onAsk,
@@ -257,7 +261,8 @@ export default function RecipeFeed({
     />
   ) : isExhausted ? (
     <RecipeFeedTerminator
-      hasRecipes={recipes.length > 0}
+      ending={ending}
+      diet={preferences.diet}
       onAddItems={onAddItems}
       onEditAnswers={onEditAnswers}
     />
@@ -356,23 +361,22 @@ export default function RecipeFeed({
 }
 
 function RecipeFeedTerminator({
-  hasRecipes,
+  ending,
+  diet,
   onAddItems,
   onEditAnswers,
 }: {
-  hasRecipes: boolean;
+  ending: RecipeFeedEnding;
+  diet?: string;
   onAddItems: () => void;
   onEditAnswers: () => void;
 }) {
+  const copy = recipeFeedEndingCopy(ending, diet);
   return (
     <RecipeFeedMessage
-      icon={hasRecipes ? "check-circle" : "shopping-bag"}
-      title={hasRecipes ? "That's all for now" : "A little more to work with"}
-      message={
-        hasRecipes
-          ? "You've explored this set of recipe ideas. Add ingredients or edit your answers for a fresh set."
-          : "Your inventory can't support a coherent recipe yet. Add an ingredient or change your answers."
-      }
+      icon={ending.kind === "empty" ? "shopping-bag" : "check-circle"}
+      title={copy.title}
+      message={copy.message}
       actions={[
         {
           label: "Add items",

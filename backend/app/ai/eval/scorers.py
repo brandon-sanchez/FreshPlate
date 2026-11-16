@@ -51,7 +51,7 @@ def completeness_percent(recipe: Recipe) -> int:
         bool(recipe.title.strip()),
         bool(recipe.ingredients),
         all(item.name.strip() and item.unit.strip() for item in recipe.ingredients),
-        bool(recipe.steps) and all(step.strip() for step in recipe.steps),
+        bool(recipe.steps) and all(step.instruction for step in recipe.steps),
     )
     return round(sum(checks) * 100 / len(checks))
 
