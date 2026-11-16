@@ -47,7 +47,7 @@ async def test_generate_sends_fixed_recipe_parameters_and_png() -> None:
         "prompt": "meal",
         "n": 1,
         "size": "1536x1024",
-        "quality": "medium",
+        "quality": "low",
     }
 
 

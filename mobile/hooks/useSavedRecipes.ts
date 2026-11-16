@@ -39,13 +39,27 @@ function isRecipeSuggestion(value: unknown): value is RecipeSuggestion {
     recipe.saves_expiring.every((item) => typeof item === "string");
 }
 
+function savedRecipesKey(householdId: string | null) {
+  return ["saved-recipes", householdId] as const;
+}
+
+/**
+ * Returns the household cookbook from Supabase `saved_recipes`, cached under
+ * `['saved-recipes', householdId]`, with `savedIds` for quick lookups and
+ * `toggle` to save or remove a recipe.
+ *
+ * `toggle` updates the cache before the request, so `savedIds` flips on the
+ * next render and the bookmark animates without waiting for the network. A
+ * failed request undoes that change and rejects, and `toggle` also rejects
+ * when no one is signed in. Either way the query refetches in the background.
+ * Concurrent identical toggles share one request.
+ */
 export function useSavedRecipes() {
   const householdId = useAuthStore((state) => state.householdId);
   const queryClient = useQueryClient();
   const inflightToggles = useRef(new Map<string, Promise<void>>());
-  const queryKey = ["saved-recipes", householdId] as const;
   const query = useQuery({
-    queryKey,
+    queryKey: savedRecipesKey(householdId),
     enabled: !!householdId,
     queryFn: async (): Promise<SavedRecipe[]> => {
       if (!householdId) return [];
@@ -78,7 +92,42 @@ export function useSavedRecipes() {
         if (error) throw error;
       }
     },
-    onSuccess: (_data, variables) => queryClient.invalidateQueries({ queryKey: ["saved-recipes", variables.householdId] }),
+    onMutate: async ({ recipe, saved, householdId: targetHouseholdId, userId }) => {
+      const key = savedRecipesKey(targetHouseholdId);
+      await queryClient.cancelQueries({ queryKey: key });
+      const removed = queryClient
+        .getQueryData<SavedRecipe[]>(key)
+        ?.find((row) => row.recipe_id === recipe.recipe_id);
+      queryClient.setQueryData<SavedRecipe[]>(key, (rows = []) =>
+        saved
+          ? rows.filter((row) => row.recipe_id !== recipe.recipe_id)
+          : [
+              {
+                id: `pending-${recipe.recipe_id}`,
+                household_id: targetHouseholdId,
+                recipe_id: recipe.recipe_id,
+                recipe,
+                saved_by: userId,
+                created_at: new Date().toISOString(),
+              },
+              ...rows,
+            ],
+      );
+      return { removed };
+    },
+    // Undoes only this toggle's row. A snapshot of the whole list could be
+    // missing (the list never loaded) or older than another toggle's change.
+    onError: (_error, { recipe, saved, householdId: targetHouseholdId }, context) => {
+      queryClient.setQueryData<SavedRecipe[]>(savedRecipesKey(targetHouseholdId), (rows = []) => {
+        const others = rows.filter((row) => row.recipe_id !== recipe.recipe_id);
+        return saved && context?.removed ? [context.removed, ...others] : others;
+      });
+    },
+    // Not awaited, so a failure reaches the caller without waiting for the
+    // refetch and its retry.
+    onSettled: (_data, _error, { householdId: targetHouseholdId }) => {
+      void queryClient.invalidateQueries({ queryKey: savedRecipesKey(targetHouseholdId) });
+    },
   });
 
   const savedIds = new Set((query.data ?? []).map((item) => item.recipe_id));
