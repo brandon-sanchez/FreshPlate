@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -19,7 +19,8 @@ from app.ai.agents.nodes import (
     GENERATION_DOCS_CEILING,
     RecipeRetrieverPort,
 )
-from app.ai.agents.state import RecipeState
+from app.ai.agents.photos import RecipePhotoSource
+from app.ai.agents.state import RecipeState, RecipeSteering
 from app.ai.eval.scorers import ingredient_coverage_percent
 from app.ai.llm.errors import AI_UNAVAILABLE, ProviderError
 from app.ai.llm.protocol import LLMProvider
@@ -30,10 +31,13 @@ from app.ai.prompts.tracing import build_trace_config
 from app.ai.rag.embeddings import EmbeddingClient
 from app.ai.rag.retriever import RecipeRetriever
 from app.ai.rag.vector_store import SupabaseVectorStore
+from app.api.images import get_image_service
 from app.core.auth import CurrentUserId
 from app.core.config import settings
 from app.inventory.food_facts import FoodLine
+from app.models.images import ImageResult
 from app.models.recipes import (
+    RecipeFeedCard,
     RecipeFeedData,
     RecipeFeedPageRequest,
     RecipeFeedResponse,
@@ -48,12 +52,18 @@ from app.services.food_lines import (
     FoodLineSource,
     SupabaseFoodLineSource,
 )
+from app.services.image_service import (
+    ImageService,
+    ImageStoreError,
+    RequesterRecipePhotos,
+)
 from app.services.recipe_feed_store import (
     RecipeFeedSession,
     RecipeFeedStore,
     RecipeFeedStoreError,
     SupabaseRecipeFeedStore,
 )
+from app.services.recipe_steering import resolve_steering
 
 router = APIRouter(prefix="/api/recipes", tags=["recipes"])
 logger = logging.getLogger("freshplate.recipes")
@@ -168,10 +178,14 @@ async def post_recipe_feed_session(
     foods: FoodLineSource = Depends(get_food_line_source),
     provider: LLMProvider = Depends(get_recipe_provider),
     retriever: RecipeRetrieverPort = Depends(get_recipe_retriever),
+    images: ImageService = Depends(get_image_service),
 ) -> RecipeFeedResponse:
     """Create a feed session and persist its first bounded candidate pool.
 
-    Reads the household's foods as the caller. Responds 503
+    Reads the household's foods as the caller. Each card carries its photo:
+    the pipeline generates the batch's photos, charged to the caller, before
+    the session is stored and returned. A missing photo never fails the
+    request; its card carries a placeholder result. Responds 503
     ``RECIPE_FEED_UNAVAILABLE`` when the foods can't be read or the session
     can't be stored, and 503 ``AI_UNAVAILABLE`` when generation fails or the
     deadline runs out.
@@ -199,6 +213,7 @@ async def post_recipe_feed_session(
                 quality_retry_limit=RECIPE_FEED_INITIAL_QUALITY_RETRY_LIMIT,
                 retry_only_when_no_valid=RECIPE_FEED_INITIAL_RETRY_ONLY_WHEN_EMPTY,
                 retrieval_limit=RECIPE_FEED_RETRIEVAL_POOL_LIMIT,
+                photos=RequesterRecipePhotos(images, _user_id),
             ),
             state,
             prompt,
@@ -231,6 +246,9 @@ async def post_recipe_feed_session(
             deadline,
             lambda: store.create_session(session, recipes=recipes),
         )
+        cards = await _feed_cards(
+            recipes, result.get("recipe_photos", {}), images, _user_id, deadline
+        )
     except asyncio.CancelledError:
         raise
     except (ProviderError, TimeoutError, ValueError) as exc:
@@ -250,7 +268,7 @@ async def post_recipe_feed_session(
 
     return _feed_response(
         session,
-        recipes,
+        cards,
         cursor=0,
         empty_reason=(
             None if recipes else RECIPE_FEED_EMPTY_REASON_UNSUPPORTED_INVENTORY
@@ -268,9 +286,17 @@ async def post_recipe_feed_page(
     _user_id: CurrentUserId,
     store: RecipeFeedStore = Depends(get_recipe_feed_store),
     provider: LLMProvider = Depends(get_recipe_provider),
+    images: ImageService = Depends(get_image_service),
 ) -> RecipeFeedResponse:
-    """Return a stable cursor page, refilling the pool only at its tail."""
+    """Return a stable cursor page, refilling the pool only at its tail.
+
+    A refill generates its batch's photos before the batch is stored, as the
+    first session does. Cards read from the stored pool carry their stored
+    photo, or no image when there is none; this request never generates
+    photos for them.
+    """
     cursor = _parse_feed_cursor(payload.cursor)
+    photos: Mapping[str, ImageResult] = {}
     deadline = PipelineDeadline.from_now(settings.recipe_feed_page_budget_seconds)
     try:
         session = await _within_recipe_deadline(
@@ -292,12 +318,18 @@ async def post_recipe_feed_page(
             ),
         )
         if len(recipes) < payload.limit and session.has_more:
-            session, added = await _refill_recipe_feed_session(
+            steering = await _within_recipe_deadline(
+                deadline,
+                lambda: resolve_steering(store, _user_id, session, payload.steering),
+            )
+            session, added, photos = await _refill_recipe_feed_session(
                 session,
                 _user_id,
                 store,
                 provider,
+                RequesterRecipePhotos(images, _user_id),
                 deadline,
+                steering,
             )
             if added:
                 recipes = await _within_recipe_deadline(
@@ -309,6 +341,7 @@ async def post_recipe_feed_page(
                         limit=payload.limit,
                     ),
                 )
+        cards = await _feed_cards(recipes, photos, images, _user_id, deadline)
     except asyncio.CancelledError:
         raise
     except HTTPException:
@@ -320,7 +353,21 @@ async def post_recipe_feed_page(
         logger.warning("Recipe feed page store failure: %s", exc)
         raise _feed_unavailable() from exc
 
-    return _feed_response(session, recipes, cursor=cursor)
+    return _feed_response(session, cards, cursor=cursor)
+
+
+class _RefillOutcome(NamedTuple):
+    """What one refill attempt produced.
+
+    Attributes:
+        session: The session after the refill.
+        added: Whether the pool grew.
+        photos: Photos this request generated, by photo key.
+    """
+
+    session: RecipeFeedSession
+    added: bool
+    photos: Mapping[str, ImageResult]
 
 
 async def _refill_recipe_feed_session(
@@ -328,9 +375,16 @@ async def _refill_recipe_feed_session(
     user_id: str,
     store: RecipeFeedStore,
     provider: LLMProvider,
+    photo_source: RecipePhotoSource,
     deadline: PipelineDeadline,
-) -> tuple[RecipeFeedSession, bool]:
-    """Generate one tail batch using the session's cached retrieval context."""
+    steering: RecipeSteering,
+) -> _RefillOutcome:
+    """Generate one tail batch using the session's cached retrieval context.
+
+    A batch another request generated comes back with no photos, and its
+    cards are served with their stored photos. That batch was generated
+    without this request's ``steering``.
+    """
     original_count = session.candidate_count
     claim_id = uuid4()
     claimed = await _within_recipe_deadline(
@@ -353,15 +407,17 @@ async def _refill_recipe_feed_session(
             if current is None:
                 raise _feed_not_found()
             claimed = current
-        return claimed, claimed.candidate_count > original_count
+        return _RefillOutcome(claimed, claimed.candidate_count > original_count, {})
     try:
         return await _generate_claimed_recipe_refill(
             claimed,
             user_id,
             store,
             provider,
+            photo_source,
             deadline,
             claim_id,
+            steering,
         )
     except Exception:
         # Cleanup is conditional on the claim, so a lost finalize response cannot
@@ -384,9 +440,11 @@ async def _generate_claimed_recipe_refill(
     user_id: str,
     store: RecipeFeedStore,
     provider: LLMProvider,
+    photo_source: RecipePhotoSource,
     deadline: PipelineDeadline,
     claim_id: UUID,
-) -> tuple[RecipeFeedSession, bool]:
+    steering: RecipeSteering,
+) -> _RefillOutcome:
     """Generate and finalize the batch owned by one database reservation."""
     prompt = load_prompt("generate_recipes")
     retrieval_window = session.retrieved_recipes[
@@ -401,12 +459,14 @@ async def _generate_claimed_recipe_refill(
         "retry_count": 0,
         "metadata": {},
         "deadline": deadline,
+        "steering": steering,
     }
     result = await _invoke_recipe_graph(
         build_recipe_generation_graph(
             provider,
             prompt=prompt,
             quality_retry_limit=RECIPE_FEED_REFILL_QUALITY_RETRY_LIMIT,
+            photos=photo_source,
         ),
         state,
         prompt,
@@ -441,7 +501,7 @@ async def _generate_claimed_recipe_refill(
             retrieval_cursor=next_retrieval_cursor,
         ),
     )
-    return persisted, bool(recipes)
+    return _RefillOutcome(persisted, bool(recipes), result.get("recipe_photos", {}))
 
 
 async def _invoke_recipe_graph(
@@ -526,9 +586,43 @@ def _session_from_initial_result(
     )
 
 
+async def _feed_cards(
+    recipes: Sequence[RecipeSuggestion],
+    photos: Mapping[str, ImageResult],
+    images: ImageService,
+    user_id: str,
+    deadline: PipelineDeadline,
+) -> list[RecipeFeedCard]:
+    """Attach each recipe's photo from `photos`, or else from the photo cache."""
+
+    async def card(recipe: RecipeSuggestion) -> RecipeFeedCard:
+        image = photos.get(images.recipe_key(recipe))
+        if image is None:
+            image = await _stored_photo(recipe, images, user_id, deadline)
+        return RecipeFeedCard(**recipe.model_dump(), image=image)
+
+    return list(await asyncio.gather(*(card(recipe) for recipe in recipes)))
+
+
+async def _stored_photo(
+    recipe: RecipeSuggestion,
+    images: ImageService,
+    user_id: str,
+    deadline: PipelineDeadline,
+) -> ImageResult | None:
+    try:
+        result = await _within_recipe_deadline(
+            deadline,
+            lambda: images.recipe_image(recipe, user_id, generate=False),
+        )
+    except (ImageStoreError, TimeoutError):
+        return None
+    return result if result.status == "ready" else None
+
+
 def _feed_response(
     session: RecipeFeedSession,
-    recipes: Sequence[RecipeSuggestion],
+    recipes: Sequence[RecipeFeedCard],
     *,
     cursor: int,
     empty_reason: str | None = None,

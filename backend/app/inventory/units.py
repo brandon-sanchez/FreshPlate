@@ -49,7 +49,9 @@ PACKAGE_WORDS = frozenset(
 
 A profile's ``"each"`` weight is one whole item, such as one egg. It never
 sizes a package, such as a carton of eggs, so ``to_stock`` asks for the
-package's size instead. Every word is in ``normalize_unit`` form.
+package's size instead. ``fact_estimates`` uses the same set to never ask the
+model for a package's weight or store one on a shared profile, because one
+food comes in packages of many sizes. Every word is in ``normalize_unit`` form.
 """
 
 _MASS = {

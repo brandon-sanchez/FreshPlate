@@ -218,6 +218,7 @@ async def test_refill_deadline_observes_provider_failure_during_cancellation(
 
     import httpx
 
+    from app.ai.agents.photos import PHOTO_RESERVE_SECONDS
     from app.ai.llm.providers import FakeProvider, GeminiProvider
     from tests.test_recipe_feed import (
         InMemoryRecipeFeedStore,
@@ -245,8 +246,11 @@ async def test_refill_deadline_observes_provider_failure_during_cancellation(
                 ) from exc
 
     patch_jwks([signing_key])
+    generation_budget = 0.03
     monkeypatch.setattr(
-        settings, "recipe_feed_page_budget_seconds", 25 if cancel_request else 0.03
+        settings,
+        "recipe_feed_page_budget_seconds",
+        25 if cancel_request else PHOTO_RESERVE_SECONDS + generation_budget,
     )
     monkeypatch.setattr("app.ai.llm.providers.GEMINI_MIN_DEADLINE_SECONDS", 0)
     store = InMemoryRecipeFeedStore()

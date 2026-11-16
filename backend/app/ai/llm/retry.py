@@ -66,11 +66,11 @@ class PipelineDeadline:
     def ending_before(self, seconds: float) -> "PipelineDeadline":
         """Return a deadline on the same clock that ends ``seconds`` earlier.
 
-        Raises:
-            ValueError: When ``seconds`` or less remain, so the earlier
-                deadline has already passed.
+        It may already be expired when less than ``seconds`` remain.
         """
-        return PipelineDeadline(self.remaining_seconds - seconds, clock=self._clock)
+        earlier = PipelineDeadline(1.0, clock=self._clock)
+        earlier._deadline_at = self._deadline_at - seconds
+        return earlier
 
     @property
     def expired(self) -> bool:
