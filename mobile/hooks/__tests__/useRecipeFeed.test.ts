@@ -4,7 +4,9 @@ import {
   QueryClientProvider,
 } from "@tanstack/react-query";
 import { act, cleanupAsync, renderHook, waitFor } from "@testing-library/react-native";
+import type { ImageResult } from "@/types/images";
 import type {
+  RecipeFeedCard,
   RecipeFeedResponse,
   RecipeFeedSessionRequest,
   RecipeSuggestion,
@@ -13,9 +15,15 @@ import type {
 const mockCreateSession = jest.fn();
 const mockFetchPage = jest.fn();
 
+const mockLoadImage = jest.fn();
+
+jest.mock("expo-image", () => ({
+  Image: { loadAsync: (...args: unknown[]) => mockLoadImage(...args) },
+}));
+
 jest.mock("@/lib/recipe-feed-api", () => ({
   RECIPE_FEED_PAGE_SIZE: 5,
-  RECIPE_FEED_REQUEST_TIMEOUT_MS: 35_000,
+  RECIPE_FEED_REQUEST_TIMEOUT_MS: 50_000,
   createRecipeFeedSession: (...args: unknown[]) => mockCreateSession(...args),
   fetchRecipeFeedPage: (...args: unknown[]) => mockFetchPage(...args),
 }));
@@ -41,7 +49,7 @@ function recipe(recipeId: string, title: string): RecipeSuggestion {
 }
 
 function page(
-  recipes: RecipeSuggestion[],
+  recipes: (RecipeSuggestion | RecipeFeedCard)[],
   nextCursor: string | null,
   hasMore: boolean,
   readyCount = recipes.length,
@@ -49,12 +57,22 @@ function page(
   return {
     data: {
       session_id: "session-1",
-      recipes,
+      recipes: recipes.map((item) => ({ image: null, ...item })),
       next_cursor: nextCursor,
       has_more: hasMore,
       ready_count: readyCount,
       empty_reason: null,
     },
+  };
+}
+
+function photo(recipeId: string): ImageResult {
+  return {
+    status: "ready",
+    image_key: `key-${recipeId}`,
+    url: `https://cdn.test/${recipeId}.webp`,
+    expires_at: "2099-01-01T00:00:00Z",
+    reason: null,
   };
 }
 
@@ -64,6 +82,7 @@ function wrapper({ children }: { children: React.ReactNode }) {
     defaultOptions: { queries: { retry: false } },
   });
   queryClients.add(queryClient);
+  lastQueryClient = queryClient;
   return React.createElement(
     QueryClientProvider,
     { client: queryClient },
@@ -72,11 +91,14 @@ function wrapper({ children }: { children: React.ReactNode }) {
 }
 
 const queryClients = new Set<QueryClient>();
+let lastQueryClient: QueryClient | undefined;
 
 describe("useRecipeFeed", () => {
   beforeEach(() => {
     mockCreateSession.mockReset();
     mockFetchPage.mockReset();
+    mockLoadImage.mockReset();
+    mockLoadImage.mockResolvedValue({ release: jest.fn() });
   });
 
   afterEach(async () => {
@@ -148,7 +170,7 @@ describe("useRecipeFeed", () => {
     await waitFor(() => expect(result.current.isExhausted).toBe(true));
   });
 
-  it.each([1_000, 25_000, 35_000])(
+  it.each([1_000, 25_000, 45_000])(
     "preserves every card through six batches with %i ms refills and rapid tail scrolling",
     async (latencyMs) => {
       const batch = (run: number) => Array.from({ length: 5 }, (_, index) =>
@@ -420,6 +442,94 @@ describe("useRecipeFeed", () => {
     act(() => result.current.retryPrefetch());
     await waitFor(() => expect(result.current.recipes).toHaveLength(2));
     expect(mockFetchPage).toHaveBeenCalledTimes(3);
+  });
+
+  it("moves each card's photo into the recipe image cache", async () => {
+    mockCreateSession.mockResolvedValueOnce(
+      page(
+        [
+          { ...recipe("recipe-1", "Soup"), image: photo("recipe-1") },
+          { ...recipe("recipe-2", "Stew"), image: null },
+        ],
+        "2",
+        true,
+      ),
+    );
+    mockFetchPage.mockResolvedValueOnce(
+      page([{ ...recipe("recipe-3", "Salad"), image: photo("recipe-3") }], null, false),
+    );
+
+    const { result } = renderHook(() => useRecipeFeed(), { wrapper });
+    act(() => result.current.start(request));
+    await waitFor(() => expect(result.current.recipes).toHaveLength(3));
+
+    const images = (id: string) =>
+      lastQueryClient?.getQueryData(["recipe-image", id]);
+    expect(images("recipe-1")).toEqual(photo("recipe-1"));
+    expect(images("recipe-2")).toBeUndefined();
+    expect(images("recipe-3")).toEqual(photo("recipe-3"));
+    for (const card of result.current.recipes) expect(card).not.toHaveProperty("image");
+  });
+
+  it("adds a refill page's cards only after their photos are downloaded", async () => {
+    mockCreateSession.mockResolvedValueOnce(
+      page([recipe("recipe-1", "Soup"), recipe("recipe-2", "Stew")], "2", true),
+    );
+    mockFetchPage.mockResolvedValueOnce(
+      page([{ ...recipe("recipe-3", "Salad"), image: photo("recipe-3") }], null, false),
+    );
+    let finishDownload: () => void = () => undefined;
+    mockLoadImage.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishDownload = () => resolve({ release: jest.fn() });
+      }),
+    );
+
+    const { result } = renderHook(() => useRecipeFeed(), { wrapper });
+    act(() => result.current.start(request));
+    await waitFor(() =>
+      expect(mockLoadImage).toHaveBeenCalledWith({
+        uri: photo("recipe-3").url,
+        cacheKey: "key-recipe-3",
+      }),
+    );
+
+    expect(result.current.recipes.map((card) => card.recipe_id)).toEqual([
+      "recipe-1",
+      "recipe-2",
+    ]);
+    await act(async () => finishDownload());
+    await waitFor(() => expect(result.current.recipes).toHaveLength(3));
+  });
+
+  it("shows a page without waiting on a failed or stalled photo download", async () => {
+    jest.useFakeTimers();
+    try {
+      mockCreateSession.mockResolvedValueOnce(
+        page(
+          [
+            { ...recipe("recipe-1", "Soup"), image: photo("recipe-1") },
+            { ...recipe("recipe-2", "Stew"), image: photo("recipe-2") },
+          ],
+          null,
+          false,
+        ),
+      );
+      mockLoadImage
+        .mockRejectedValueOnce(new Error("download failed"))
+        .mockReturnValueOnce(new Promise(() => undefined));
+
+      const { result } = renderHook(() => useRecipeFeed(), { wrapper });
+      act(() => result.current.start(request));
+      await waitFor(() => expect(mockLoadImage).toHaveBeenCalledTimes(2));
+      await act(async () => jest.advanceTimersByTime(2_900));
+      expect(result.current.status).toBe("loading");
+
+      await act(async () => jest.advanceTimersByTime(100));
+      await waitFor(() => expect(result.current.recipes).toHaveLength(2));
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("removes dismissed cards while retaining the server cursor", async () => {

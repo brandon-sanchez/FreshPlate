@@ -267,12 +267,17 @@ def route_after_quality(
     *,
     quality_retry_limit: int = MAX_QUALITY_RETRIES,
     retry_only_when_no_valid: bool = False,
+    deadline: PipelineDeadline | None = None,
 ) -> Literal["retry", "finish"]:
-    """Retry only when generated recipes were rejected, within the retry budget."""
+    """Retry only when generated recipes were rejected, within the retry budget.
+
+    A retry also needs ``QUALITY_RETRY_MIN_BUDGET_SECONDS`` left on
+    ``deadline``, which defaults to the state's deadline.
+    """
     if retry_only_when_no_valid and state.get("valid_recipes"):
         return "finish"
     if state.get("quality_feedback") and _retry_count(state) < quality_retry_limit:
-        deadline = _state_deadline(state)
+        deadline = deadline or _state_deadline(state)
         if (
             deadline is not None
             and deadline.remaining_seconds < QUALITY_RETRY_MIN_BUDGET_SECONDS

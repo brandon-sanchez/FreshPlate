@@ -3,6 +3,7 @@ import {
   useMutation,
   useQueryClient,
   type InfiniteData,
+  type QueryClient,
 } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -11,6 +12,8 @@ import {
   RECIPE_FEED_PAGE_SIZE,
   RECIPE_FEED_REQUEST_TIMEOUT_MS,
 } from "@/lib/recipe-feed-api";
+import { preloadRecipePhotos } from "@/lib/recipe-photo-preload";
+import type { ImageResult } from "@/types/images";
 import type {
   RecipeFeedResponse,
   RecipeFeedSessionRequest,
@@ -23,6 +26,37 @@ export const RECIPE_FEED_MAX_RUNS = 6;
 export { RECIPE_FEED_REQUEST_TIMEOUT_MS };
 
 export type RecipeFeedStatus = "idle" | "loading" | "ready" | "error";
+
+/** A feed response whose photos have moved to the recipe image cache. */
+type RecipeFeedPage = {
+  data: Omit<RecipeFeedResponse["data"], "recipes"> & {
+    recipes: RecipeSuggestion[];
+  };
+};
+
+/**
+ * Seeds each card's photo under `['recipe-image', recipe_id]`, the key
+ * `useRecipeImage` reads, so a card shows its photo without another request.
+ * Resolves once the photos are downloaded or the preload cap passes, so a
+ * page's cards never join the feed with a photo still downloading.
+ * The photo is left off the returned recipes, because saved recipes and cook
+ * events store the recipe as a snapshot and a signed URL must not go with it.
+ */
+async function unpackPhotos(
+  queryClient: QueryClient,
+  response: RecipeFeedResponse,
+): Promise<RecipeFeedPage> {
+  const images: ImageResult[] = [];
+  const recipes = response.data.recipes.map(({ image, ...recipe }) => {
+    if (image) {
+      queryClient.setQueryData(["recipe-image", recipe.recipe_id], image);
+      images.push(image);
+    }
+    return recipe;
+  });
+  await preloadRecipePhotos(images);
+  return { data: { ...response.data, recipes } };
+}
 
 type StartMutationInput = {
   request: RecipeFeedSessionRequest;
@@ -48,6 +82,17 @@ function uniqueRecipes(recipes: RecipeSuggestion[]): RecipeSuggestion[] {
   });
 }
 
+/**
+ * Runs one recipe feed session: creates it, pages through its cards and
+ * keeps an unseen reserve loaded ahead of the user.
+ *
+ * Calls `POST /api/recipes/sessions` and
+ * `POST /api/recipes/sessions/{id}/pages`, caching pages under
+ * `['recipe-feed', sessionId]`. Each card's photo is seeded under
+ * `['recipe-image', recipe_id]` and its bytes are downloaded before the
+ * page's cards are returned, so cards show photos without a request of their
+ * own. Starting a new session cancels and removes the previous one.
+ */
 export function useRecipeFeed() {
   const queryClient = useQueryClient();
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -69,15 +114,16 @@ export function useRecipeFeed() {
   const dismissedIdsRef = useRef(new Set<string>());
   const activeStartControllerRef = useRef<AbortController | null>(null);
 
-  const createMutation = useMutation<RecipeFeedResponse, Error, StartMutationInput>({
-    mutationFn: ({ request, signal }) => createRecipeFeedSession(request, signal),
+  const createMutation = useMutation<RecipeFeedPage, Error, StartMutationInput>({
+    mutationFn: async ({ request, signal }) =>
+      unpackPhotos(queryClient, await createRecipeFeedSession(request, signal)),
     retry: false,
   });
 
   const feedQuery = useInfiniteQuery<
-    RecipeFeedResponse,
+    RecipeFeedPage,
     Error,
-    InfiniteData<RecipeFeedResponse, string>,
+    InfiniteData<RecipeFeedPage, string>,
     [string, string | null],
     string
   >({
@@ -87,7 +133,12 @@ export function useRecipeFeed() {
     queryFn: async ({ pageParam, signal }) => {
       if (!sessionId) throw new Error("Recipe feed session is not ready");
       const started = Date.now();
-      const page = await fetchRecipeFeedPage({ sessionId, cursor: pageParam, signal });
+      const page = await unpackPhotos(
+        queryClient,
+        await fetchRecipeFeedPage({ sessionId, cursor: pageParam, signal }),
+      );
+      // The photo preload counts toward latency, because the buffer must
+      // cover the whole wait until a page's cards can show.
       if (sessionIdRef.current === sessionId) {
         pageLatencyMsRef.current = Math.max(1_000, Date.now() - started);
       }
