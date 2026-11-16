@@ -37,9 +37,9 @@ class MealCheck(BaseModel):
         "amount per serving."
     )
     dish_reasoning: str = Field(
-        description="What kind of dish is this: a meal, a snack, a side dish, a "
-        "garnish plate or something else? Would most people eat it on its own as "
-        "the requested_dish?"
+        description="What kind of dish is this: a meal, a snack, a dessert, a "
+        "side dish, a garnish plate or something else? Would most people eat it "
+        "on its own as the requested_dish?"
     )
     portion_reasoning: str = Field(
         description="Is the amount of food per serving what a person would eat as "
@@ -56,7 +56,8 @@ class MealCheck(BaseModel):
         "requested_dish. False for a side dish, a garnish plate, vegetables that "
         "are not built into a full dish, a plain or lightly flavored grain or "
         "starch with a few vegetables, or one ingredient plus seasoning. When the "
-        "requested_dish is a meal, also False for a snack or a snack plate."
+        "requested_dish is a meal, also False for a snack, a snack plate or a "
+        "dessert."
     )
     realistic_portions: bool
     coherent_method: bool = Field(
@@ -97,9 +98,9 @@ async def assess_meals(
 ) -> tuple[list[Recipe], str | None, dict[str, Any]]:
     """Keep the recipes a Gemini judge finds to be the dish the cook asked for.
 
-    Makes one provider call for the whole batch. The judge is told whether
-    the session asks for a meal or a snack, from ``requested_dish``, and
-    sees only the kitchen items each recipe uses.
+    Makes one provider call for the whole batch. The judge is told which
+    dish the session asks for, from ``requested_dish``, and sees only the
+    kitchen items each recipe uses.
 
     Args:
         recipes: Recipes that already passed the inventory checks.

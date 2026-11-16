@@ -298,5 +298,94 @@
     },
     "expected_verdict": "eligible",
     "reason": "The same chickpeas and carrots become a meal once built into a curry over rice."
+  },
+  {
+    "name": "real dessert when asked",
+    "preferences": {
+      "meal": "Dessert"
+    },
+    "requested_dish": "dessert",
+    "recipe": {
+      "title": "Apple oat crumble",
+      "cook_time_minutes": 45,
+      "servings": 4,
+      "ingredients": [
+        {
+          "name": "Apples",
+          "inventory_item_id": "apple",
+          "use_amount": 4,
+          "unit": "each"
+        },
+        {
+          "name": "Honey",
+          "inventory_item_id": "honey",
+          "use_amount": 3,
+          "unit": "tbsp"
+        },
+        {
+          "name": "Rolled oats",
+          "inventory_item_id": "oats",
+          "use_amount": 100,
+          "unit": "g"
+        },
+        {
+          "name": "Butter",
+          "inventory_item_id": "butter",
+          "use_amount": 60,
+          "unit": "g"
+        }
+      ],
+      "steps": [
+        "Fill the dish\nToss the sliced apples with 1 tbsp honey in an 8-inch baking dish.",
+        "Make the topping\nRub the butter into the oats with the rest of the honey until it clumps, then scatter it over the apples.",
+        "Bake\nBake at 375°F for 30–35 minutes until the topping is golden and the apples bubble at the edges."
+      ]
+    },
+    "expected_verdict": "eligible",
+    "reason": "An apple oat crumble is a dessert most people recognise."
+  },
+  {
+    "name": "dessert when a meal was asked",
+    "preferences": {
+      "meal": "Dinner"
+    },
+    "recipe": {
+      "title": "Apple oat crumble",
+      "cook_time_minutes": 45,
+      "servings": 4,
+      "ingredients": [
+        {
+          "name": "Apples",
+          "inventory_item_id": "apple",
+          "use_amount": 4,
+          "unit": "each"
+        },
+        {
+          "name": "Honey",
+          "inventory_item_id": "honey",
+          "use_amount": 3,
+          "unit": "tbsp"
+        },
+        {
+          "name": "Rolled oats",
+          "inventory_item_id": "oats",
+          "use_amount": 100,
+          "unit": "g"
+        },
+        {
+          "name": "Butter",
+          "inventory_item_id": "butter",
+          "use_amount": 60,
+          "unit": "g"
+        }
+      ],
+      "steps": [
+        "Fill the dish\nToss the sliced apples with 1 tbsp honey in an 8-inch baking dish.",
+        "Make the topping\nRub the butter into the oats with the rest of the honey until it clumps, then scatter it over the apples.",
+        "Bake\nBake at 375°F for 30–35 minutes until the topping is golden and the apples bubble at the edges."
+      ]
+    },
+    "expected_verdict": "wrong_dish",
+    "reason": "A crumble is a dessert, and the cook asked for dinner."
   }
 ]

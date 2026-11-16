@@ -467,7 +467,7 @@ def _generation_prompt(
     can cache it with the system instruction. Each call's direction goes
     after it.
     """
-    asked = "The cook asked for a snack. " if dish == "snack" else ""
+    asked = "" if dish == "meal" else f"The cook asked for a {dish}. "
     lines = [
         (
             f"{asked}Suggest one {dish} this kitchen can make. It is one of "

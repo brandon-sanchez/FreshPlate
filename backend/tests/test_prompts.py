@@ -151,14 +151,14 @@ def test_meal_judge_prompt_is_a_minimal_thinking_checklist() -> None:
     assert "Water is always available" in prompt.system
 
 
-def test_generate_prompt_defines_a_meal_and_a_snack_only_when_asked() -> None:
+def test_generate_prompt_allows_a_snack_or_dessert_only_when_asked() -> None:
     system = load_prompt("generate_recipes").system.lower()
 
-    assert "a real snack only when the cook asks for a snack" in system
+    assert "a real snack or a real dessert only when the cook asks for one" in system
     assert "a meal has a main component" in system
     assert "a mix of two vegetables is not a meal" in system
     assert "celery with peanut butter" in system
-    assert "never pass off a side dish or a snack as a meal" in system
+    assert "never pass off a side dish, a snack, or a dessert as a meal" in system
 
 
 def test_meal_judge_asks_whether_people_would_eat_it_on_its_own() -> None:
@@ -181,7 +181,12 @@ def test_generator_and_judge_share_one_definition_of_a_meal() -> None:
         "crackers"
     )
 
+    dessert = (
+        "a fruit crumble, rice pudding, or yogurt with berries and honey"
+    )
+
     for name in ("generate_recipes", "assess_meals"):
         system = load_prompt(name).system
         assert meal in system, name
         assert snack in system, name
+        assert dessert in system, name

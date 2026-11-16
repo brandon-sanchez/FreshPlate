@@ -430,3 +430,49 @@ async def test_the_which_meal_answer_wins_over_the_free_text(
     await generate_recipes(_state(preferences=preferences), provider)
 
     assert all(call["prompt"].startswith(opening) for call in provider.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "preferences",
+    [
+        {"meal": "Dessert"},
+        {"occasion": "A dessert for date night"},
+        {"occasion": "Something sweet after the movie"},
+    ],
+)
+async def test_a_dessert_request_asks_every_call_for_a_real_dessert(
+    preferences: dict[str, str],
+) -> None:
+    provider = ScriptedProvider(_one_recipe_each)
+
+    await generate_recipes(_state(preferences=preferences), provider)
+
+    for call in provider.calls:
+        prompt = call["prompt"]
+        assert prompt.startswith("The cook asked for a dessert. Suggest one dessert")
+        assert "cannot make a real dessert, return an empty list" in prompt
+        assert "soup, stew" not in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "occasion", ["Dinner, no dessert", "Not a dessert tonight", "Without sweets"]
+)
+async def test_a_request_that_rules_out_dessert_still_asks_for_a_meal(
+    occasion: str,
+) -> None:
+    provider = ScriptedProvider(_one_recipe_each)
+
+    await generate_recipes(_state(preferences={"occasion": occasion}), provider)
+
+    assert all(call["prompt"].startswith("Suggest one meal") for call in provider.calls)
+
+
+def test_dessert_directions_never_lead_with_meat() -> None:
+    analysis = analyze_inventory({"inventory": FOODS}, today=date(2026, 8, 3))
+
+    directions = recipe_directions(analysis["usable_items"], 4, dish="dessert")
+
+    assert not any("Chicken thighs" in d or "Salmon" in d for d in directions)
+    assert all("into a real dessert" in d for d in directions)

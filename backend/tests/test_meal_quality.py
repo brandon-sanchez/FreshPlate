@@ -315,7 +315,12 @@ async def test_assessment_cannot_release_a_response_after_deadline():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("preferences", "dish"),
-    [({}, "meal"), ({"meal": "Dinner"}, "meal"), ({"meal": "Snack"}, "snack")],
+    [
+        ({}, "meal"),
+        ({"meal": "Dinner"}, "meal"),
+        ({"meal": "Snack"}, "snack"),
+        ({"meal": "Dessert"}, "dessert"),
+    ],
 )
 async def test_a_failed_dish_check_names_the_dish_the_cook_asked_for(
     preferences, dish
