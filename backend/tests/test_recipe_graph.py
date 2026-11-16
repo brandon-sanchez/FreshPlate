@@ -249,7 +249,7 @@ async def test_generation_lists_one_line_per_food_with_its_units() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generation_schema_limits_each_ingredient_to_its_foods_units() -> None:
+async def test_generation_schema_limits_units_to_the_kitchens_units() -> None:
     provider = RecordingProvider([{"recipes": []}])
     garlic = _usable_item(
         "garlic",
@@ -264,29 +264,66 @@ async def test_generation_schema_limits_each_ingredient_to_its_foods_units() -> 
     )
 
     schema = provider.calls[0]["response_model"].model_json_schema()
-    recipe_schema = schema["$defs"]["KitchenRecipe"]
-    variants = recipe_schema["properties"]["ingredients"]["items"]["anyOf"]
-    allowed = {
-        variant["properties"]["inventory_item_id"]["enum"][0]: variant["properties"][
-            "unit"
-        ]["enum"]
-        for variant in variants
+    recipe_schema = schema["properties"]["recipes"]["items"]
+    ingredient = recipe_schema["properties"]["ingredients"]["items"]
+    assert ingredient["properties"]["inventory_item_id"] == {"type": "string"}
+    assert ingredient["properties"]["unit"] == {
+        "type": "string",
+        "enum": ["each", "tsp", "tbsp", "pinch", "dash", "head", "clove"],
     }
-    assert allowed == {
-        "tomatoes": ["each", "tsp", "tbsp", "pinch", "dash"],
-        "garlic": [
-            "head",
-            "clove",
-            "tsp",
-            "tbsp",
-            "pinch",
-            "dash",
-        ],  # fmt: skip
-    }
-    assert all(
-        variant["required"] == ["name", "inventory_item_id", "use_amount", "unit"]
-        for variant in variants
+    assert ingredient["required"] == [
+        "name",
+        "inventory_item_id",
+        "use_amount",
+        "unit",
+        "display_amount",
+        "prep",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generation_schema_asks_for_a_cookbook_recipe_with_structured_steps() -> (
+    None
+):
+    provider = RecordingProvider([{"recipes": []}])
+    garlic = _usable_item("garlic", name="Garlic", quantity=1, each_label="head")
+
+    await generate_recipes(
+        {"usable_items": [_usable_item(), garlic], "batch_ceiling": 1}, provider
     )
+
+    schema = provider.calls[0]["response_model"].model_json_schema()
+    recipe_schema = schema["properties"]["recipes"]["items"]
+    assert recipe_schema["required"] == [
+        "title",
+        "headnote",
+        "servings",
+        "active_minutes",
+        "total_minutes",
+        "equipment",
+        "ingredients",
+        "steps",
+    ]
+    assert "cook_time_minutes" not in recipe_schema["properties"]
+    assert recipe_schema["properties"]["headnote"] == {"type": "string"}
+    assert recipe_schema["properties"]["total_minutes"] == {
+        "type": "integer",
+        "minimum": 1,
+    }
+    steps_schema = recipe_schema["properties"]["steps"]
+    assert steps_schema["minItems"] == 1
+    assert "maxItems" not in steps_schema
+    step_schema = steps_schema["items"]
+    assert step_schema["required"] == [
+        "phase",
+        "instruction",
+        "doneness_cue",
+        "why",
+        "uses",
+    ]
+    assert step_schema["properties"]["phase"] == {"type": "string"}
+    assert step_schema["properties"]["minutes"] == {"type": "integer"}
+    assert step_schema["properties"]["uses"]["items"] == {"type": "string"}
 
 
 @pytest.mark.asyncio
@@ -546,7 +583,7 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
     assert all(call["deadline"] is deadline for call in provider.calls)
     assert retriever.calls[0]["deadline"] is deadline
     assert result["metadata"]["prompt_name"] == "generate_recipes"
-    assert result["metadata"]["prompt_version"] == 5
+    assert result["metadata"]["prompt_version"] == 6
     assert result["metadata"]["request_id"] == "request-123"
 
 
@@ -858,3 +895,118 @@ def test_check_quality_rejects_overuse_after_unit_conversion() -> None:
         "'tomatoes' need 2500 g in total, more than the available 2000 g"
         in result["quality_feedback"]
     )
+
+
+def test_check_quality_tidies_a_generated_recipe_into_cookbook_order() -> None:
+    garlic = _usable_item("garlic", name="Garlic", quantity=1, each_label="head")
+    recipe = {
+        "title": "Garlic Tomatoes",
+        "headnote": "Blistered tomatoes with a little garlic.",
+        "servings": 2,
+        "active_minutes": 40,
+        "total_minutes": 25,
+        "equipment": ["large skillet"],
+        "ingredients": [
+            {
+                **_ingredient(
+                    "Garlic", inventory_item_id="garlic", use_amount=0.25, unit="head"
+                ),
+                "display_amount": "0.25 head",
+                "prep": "minced",
+            },
+            {
+                **_ingredient(
+                    "Tomatoes", inventory_item_id="tomatoes", use_amount=2, unit="each"
+                ),
+                "display_amount": "2",
+                "prep": "",
+            },
+        ],
+        "steps": [
+            {
+                "instruction": "Step 1: Blister the tomatoes\nCook them on high.",
+                "doneness_cue": "Ready when the skins split.",
+                "minutes": 5,
+                "why": "",
+                "uses": ["tomatoes", "pasta"],
+            },
+            {
+                "instruction": "2. Add the garlic\nStir it in for 30 seconds.",
+                "doneness_cue": "Ready when it smells fragrant.",
+                "why": "Garlic burns if it goes in first.",
+                "uses": ["garlic"],
+            },
+        ],
+    }
+
+    result = check_quality(
+        {"usable_items": [_usable_item(), garlic], "generated_recipes": [recipe]}
+    )
+
+    [tidied] = result["valid_recipes"]
+    assert [step.instruction for step in tidied.steps] == [
+        "Blister the tomatoes\nCook them on high.",
+        "Add the garlic\nStir it in for 30 seconds.",
+    ]
+    assert tidied.steps[0].uses == ["tomatoes"]
+    assert [item.name for item in tidied.ingredients] == ["Tomatoes", "Garlic"]
+    assert [item.display_amount for item in tidied.ingredients] == ["2", None]
+    assert tidied.ingredients[0].prep is None
+    assert tidied.steps[0].why is None
+    assert (tidied.active_minutes, tidied.total_minutes) == (25, 25)
+    assert tidied.cook_time_minutes == 25
+
+
+@pytest.mark.parametrize(
+    ("use_amount", "unit", "display_amount", "shown"),
+    [
+        (2, "clove", "3 cloves", None),
+        (3, "clove", "3 cloves", "3 cloves"),
+        (200, "g", "1 cup (200 g)", "1 cup (200 g)"),
+        (0.5, "head", "½ head", "½ head"),
+        (1.5, "head", "1 1/2 heads", "1 1/2 heads"),
+        (1, "head", "2", None),
+    ],
+)
+def test_check_quality_shows_a_spoken_amount_only_when_it_matches_the_deduction(
+    use_amount: float, unit: str, display_amount: str, shown: str | None
+) -> None:
+    garlic = _usable_item(
+        "garlic",
+        name="Garlic",
+        quantity=2,
+        each_label="head",
+        stock_base="each",
+        household_units={"clove": 0.1},
+        profile_unit_grams={"clove": 3, "head": 40},
+        profile_key="garlic",
+    )
+    ingredient = {
+        **_ingredient(
+            "Garlic", inventory_item_id="garlic", use_amount=use_amount, unit=unit
+        ),
+        "display_amount": display_amount,
+    }
+
+    result = check_quality(
+        {"usable_items": [garlic], "generated_recipes": [_recipe(ingredient)]}
+    )
+
+    [recipe] = result["valid_recipes"]
+    assert recipe.ingredients[0].display_amount == shown
+
+
+def test_check_quality_keeps_a_step_that_starts_with_a_measurement() -> None:
+    recipe = _recipe(
+        _ingredient("Tomatoes", inventory_item_id="tomatoes", use_amount=2, unit="each")
+    )
+    recipe["steps"] = ["2-inch pieces\nCut the tomatoes.", "Step 2 - Serve"]
+
+    result = check_quality(
+        {"usable_items": [_usable_item()], "generated_recipes": [recipe]}
+    )
+
+    assert [step.instruction for step in result["valid_recipes"][0].steps] == [
+        "2-inch pieces\nCut the tomatoes.",
+        "Serve",
+    ]

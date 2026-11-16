@@ -120,7 +120,9 @@ async def test_both_graphs_regenerate_rejected_meals_under_one_deadline(refill):
     else:
         graph = build_recipe_graph(provider, EmptyRetriever())
     result = await graph.ainvoke(state)
-    assert [r.model_dump() for r in result["valid_recipes"]] == [substantial]
+    assert [r.model_dump() for r in result["valid_recipes"]] == [
+        Recipe.model_validate(substantial).model_dump()
+    ]
     assert result["retry_count"] == 1
     assert [_kind(call["response_model"]) for call in provider.calls] == [
         RecipeGenerationResponse, MealChecklist,
