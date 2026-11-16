@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
 
+from app.ai.agents.dish import requested_dish
 from app.ai.agents.graph import build_recipe_generation_graph, build_recipe_graph
 from app.ai.agents.models import Recipe
 from app.ai.agents.nodes import (
@@ -542,6 +543,7 @@ def _feed_response(
             has_more=has_more,
             ready_count=session.candidate_count,
             empty_reason=empty_reason,
+            requested_dish=requested_dish(session.preferences),
         )
     )
 

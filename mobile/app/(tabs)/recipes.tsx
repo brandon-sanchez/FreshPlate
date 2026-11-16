@@ -238,6 +238,7 @@ export default function RecipesScreen() {
         isPrefetching={feed.isPrefetching}
         prefetchError={feed.prefetchError}
         isExhausted={feed.isExhausted}
+        ending={feed.ending}
         topInset={insets.top}
         bottomInset={tabBarHeight + 28}
         onAsk={() => setFlowOpen(true)}

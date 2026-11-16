@@ -16,6 +16,7 @@ import type {
   RecipeFeedSessionRequest,
   RecipeSuggestion,
 } from "@/types/recipes";
+import type { RecipeFeedEnding } from "@/lib/recipes";
 
 export const RECIPE_FEED_READY_POOL_TARGET = 10;
 export const RECIPE_FEED_PREFETCH_BATCH_CEILING = RECIPE_FEED_PAGE_SIZE;
@@ -187,6 +188,13 @@ export function useRecipeFeed() {
     [allRecipes, dismissedVersion, requestVersion],
   );
 
+  const ending = useMemo<RecipeFeedEnding>(() => {
+    if (recipes.length > 0) return { kind: "showing" };
+    if (allRecipes.length > 0) return { kind: "dismissed" };
+    const dish = feedQuery.data?.pages[0]?.data.requested_dish ?? "meal";
+    return { kind: "empty", dish };
+  }, [allRecipes.length, feedQuery.data, recipes.length]);
+
   const prefetchError =
     status === "ready" && feedQuery.error ? toError(feedQuery.error) : null;
   const isPrefetching = feedQuery.isFetchingNextPage;
@@ -273,6 +281,7 @@ export function useRecipeFeed() {
     isBootstrapping,
     isPrefetching,
     isExhausted,
+    ending,
     runCount: feedQuery.data?.pages.length ?? 0,
     start,
     retry,

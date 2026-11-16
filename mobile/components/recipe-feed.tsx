@@ -22,6 +22,11 @@ import {
 } from "@/components/recipe-screen-header";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
+import {
+  recipeFeedEndingCopy,
+  type RecipeFeedEnding,
+  type RecipeFeedEndingCopy,
+} from "@/lib/recipes";
 import type { RecipePreferences, RecipeSuggestion } from "@/types/recipes";
 
 type RecipeFeedProps = {
@@ -31,6 +36,8 @@ type RecipeFeedProps = {
   isPrefetching: boolean;
   prefetchError: Error | null;
   isExhausted: boolean;
+  /** Why the feed ended, which picks the copy shown once it is exhausted. */
+  ending: RecipeFeedEnding;
   topInset: number;
   bottomInset: number;
   onAsk: () => void;
@@ -57,6 +64,7 @@ export default function RecipeFeed({
   isPrefetching,
   prefetchError,
   isExhausted,
+  ending,
   topInset,
   bottomInset,
   onAsk,
@@ -190,7 +198,7 @@ export default function RecipeFeed({
     </View>
   ) : isExhausted ? (
     <RecipeFeedTerminator
-      hasRecipes={recipes.length > 0}
+      copy={recipeFeedEndingCopy(ending, preferences.diet)}
       onAddItems={onAddItems}
       onEditAnswers={onEditAnswers}
     />
@@ -728,11 +736,11 @@ function RecipeSkeletonCard({
 }
 
 function RecipeFeedTerminator({
-  hasRecipes,
+  copy,
   onAddItems,
   onEditAnswers,
 }: {
-  hasRecipes: boolean;
+  copy: RecipeFeedEndingCopy;
   onAddItems: () => void;
   onEditAnswers: () => void;
 }) {
@@ -755,7 +763,7 @@ function RecipeFeedTerminator({
           textAlign: "center",
         }}
       >
-        {hasRecipes ? "That's all for now" : "Not enough for a full meal"}
+        {copy.title}
       </Text>
       <Text
         style={[
@@ -763,9 +771,7 @@ function RecipeFeedTerminator({
           { fontFamily: fonts.body, color: colors.textMuted },
         ]}
       >
-        {hasRecipes
-          ? "You've explored this set of recipe ideas. Add ingredients or edit your answers for a fresh set."
-          : "Add a main to build a meal around, such as a protein, pasta or rice, or change your answers."}
+        {copy.message}
       </Text>
       <RecipeActionButton
         label="Add items"

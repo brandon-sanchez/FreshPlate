@@ -966,3 +966,34 @@ def test_failed_refill_can_retry_without_refunding_its_run(signing_key, patch_jw
     assert retry.status_code == 200
     assert retry.json()["data"]["recipes"][0]["title"] == "Retry"
     assert store.sessions[session_id].generation_runs == 3
+
+
+@pytest.mark.parametrize(
+    ("preferences", "dish"),
+    [({}, "meal"), ({"meal": "Snack"}, "snack"), ({"meal": "Dessert"}, "dessert")],
+)
+def test_an_empty_session_names_the_dish_the_cook_asked_for(
+    signing_key: SigningKey,
+    patch_jwks,
+    preferences: dict[str, str],
+    dish: str,
+) -> None:
+    patch_jwks([signing_key])
+    app = create_app()
+    _install_dependencies(
+        app,
+        FakeProvider(batch_responses()),
+        StubRetriever(),
+        InMemoryRecipeFeedStore(),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": preferences},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["empty_reason"] == "INVENTORY_UNSUPPORTED"
+    assert response.json()["data"]["requested_dish"] == dish
