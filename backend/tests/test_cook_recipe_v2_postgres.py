@@ -39,7 +39,7 @@ MIGRATIONS = (
     *FOODS_MIGRATIONS,
     "20261113120000_add_cook_recipe_v2.sql",
     "20261113130000_add_cook_event_lines.sql",
-    "20261114130000_restrict_cook_event_writes.sql",
+    "20261115180000_restrict_cook_event_writes.sql",
 )
 
 
