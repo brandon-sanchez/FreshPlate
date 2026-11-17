@@ -2,6 +2,7 @@ import React from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { SectionList } from "react-native";
 
 const mockLots = { current: [] as unknown[] };
 const mockRpc = jest.fn();
@@ -35,6 +36,11 @@ jest.mock("expo-router", () => ({
 }));
 jest.mock("@react-navigation/bottom-tabs", () => ({ useBottomTabBarHeight: () => 0 }));
 jest.mock("@expo/vector-icons/FontAwesome", () => () => null);
+jest.mock("@/hooks/useReducedMotion", () => ({ useReducedMotion: () => true }));
+const mockFetchFoodImage = jest.fn((..._args: unknown[]) => new Promise(() => {}));
+jest.mock("@/lib/image-api", () => ({
+  fetchFoodImage: (...args: unknown[]) => mockFetchFoodImage(...args),
+}));
 
 import InventoryScreen from "@/app/(tabs)/inventory";
 
@@ -84,6 +90,7 @@ function renderScreen() {
 }
 
 beforeEach(() => {
+  mockFetchFoodImage.mockClear();
   mockPush.mockClear();
   mockRpc.mockReset();
   mockRpc.mockResolvedValue({ error: null });
@@ -259,4 +266,24 @@ it("keeps Fresh collapsed when nothing was just added", async () => {
   await screen.findByText("3 items · 1 expired");
 
   expect(screen.queryByText("Butter")).toBeNull();
+});
+
+it("asks for a row's photo only once the row has been on screen", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+  expect(mockFetchFoodImage).not.toHaveBeenCalled();
+
+  const list = screen.UNSAFE_getByType(SectionList);
+  const milkRow = list.props.sections
+    .flatMap((section: { data: { foodId: string }[] }) => section.data)
+    .find((row: { foodId: string }) => row.foodId === "food-milk");
+  act(() =>
+    list.props.onViewableItemsChanged({
+      viewableItems: [{ item: milkRow, key: "milk", index: 0, isViewable: true }],
+      changed: [],
+    }),
+  );
+
+  await waitFor(() => expect(mockFetchFoodImage).toHaveBeenCalledTimes(1));
+  expect(mockFetchFoodImage.mock.calls[0][0]).toBe("food-milk");
 });

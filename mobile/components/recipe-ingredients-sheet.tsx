@@ -6,11 +6,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RecipePressable } from "@/components/recipe-motion";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
+import { useIsActiveCook } from "@/hooks/useActiveCook";
 import type { RecipeSuggestion } from "@/types/recipes";
 import RecipePhoto from "@/components/recipe-photo";
 import RecipeStats from "@/components/recipe-stats";
 import RecipeSteps from "@/components/recipe-steps";
 import { formatIngredientAmount } from "@/lib/recipe-format";
+import { isKitchenBasic } from "@/lib/recipes";
 
 type RecipeIngredientsSheetProps = {
   /** The recipe to preview; `null` hides the sheet. */
@@ -19,13 +21,18 @@ type RecipeIngredientsSheetProps = {
   onClose: () => void;
   /** Opens the full recipe after a drag up on the handle or its accessibility action. */
   onOpenDetail?: (recipe: RecipeSuggestion) => void;
-  /** Starts a cook of `recipe` from the "Cook this" button, after the sheet closes. */
+  /**
+   * Called by the primary button after the sheet closes: "Cook this" to start
+   * a cook of `recipe`, or "Continue cooking" when `recipe` is already the
+   * active cook.
+   */
   onCook: (recipe: RecipeSuggestion) => void;
 };
 
 /**
  * A bottom sheet that previews a recipe's ingredients and steps. Its primary
- * button starts a cook, and dragging the handle up opens the full recipe.
+ * button starts a cook, or continues it when the recipe is the active cook.
+ * Dragging the handle up opens the full recipe.
  */
 export default function RecipeIngredientsSheet({
   recipe,
@@ -36,6 +43,7 @@ export default function RecipeIngredientsSheet({
   const { colors, fonts } = useTheme();
   const insets = useSafeAreaInsets();
   const reducedMotion = useReducedMotion();
+  const cooking = useIsActiveCook(recipe?.recipe_id);
   const startY = useRef(0);
   const recipeRef = useRef(recipe);
   recipeRef.current = recipe;
@@ -200,6 +208,17 @@ export default function RecipeIngredientsSheet({
                   >
                     {ingredient.name}
                   </Text>
+                  {isKitchenBasic(ingredient) ? (
+                    <Text
+                      style={{
+                        fontFamily: fonts.body,
+                        color: colors.textSubtle,
+                        fontSize: 12,
+                      }}
+                    >
+                      Kitchen basic
+                    </Text>
+                  ) : null}
                 </View>
                 <Text
                   selectable
@@ -233,7 +252,11 @@ export default function RecipeIngredientsSheet({
                 onCook(recipe);
               }}
               accessibilityRole="button"
-              accessibilityLabel={`Cook ${recipe.title}`}
+              accessibilityLabel={
+                cooking
+                  ? `Continue cooking ${recipe.title}`
+                  : `Cook ${recipe.title}`
+              }
               testID="recipe-preview-cook"
               style={{
                 margin: 20,
@@ -254,7 +277,7 @@ export default function RecipeIngredientsSheet({
                   fontSize: 16,
                 }}
               >
-                Cook this
+                {cooking ? "Continue cooking" : "Cook this"}
               </Text>
             </RecipePressable>
           )}
