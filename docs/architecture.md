@@ -192,7 +192,7 @@ The function guarantees these properties:
 - **Lines for Cook Again.** Each line in `cook_events.lines` keeps the recipe's amount and unit next to the live food, its stock base, the batches it drew from and its shortfall. A food used by several lines splits its draws across them in recipe order: each line takes its converted amount, and the last takes the rest, such as a can rounded up. Cook Again can then re-plan the recipe's own units against current stock instead of comparing bare numbers in different units. Every deduction needs a line that draws from it, and every drawing line needs a deduction.
 - **No hard deletes.** A lot that reaches zero gets `depleted_at`. The function never deletes a row.
 
-The function runs as `SECURITY DEFINER`, because members can't change lot quantities directly. It checks household membership first and reads only foods and lots of that household. The cook screens that call the endpoint are in progress in [#27](https://github.com/brandon-sanchez/FreshPlate/issues/27) and [#30](https://github.com/brandon-sanchez/FreshPlate/issues/30).
+The function runs as `SECURITY DEFINER`, because members can't change lot quantities directly. It checks household membership first and reads only foods and lots of that household. The app's done-cooking checklist (`mobile/components/cook-checklist.tsx`) calls both cook endpoints: it plans the recipe, lets the user adjust each amount or add a food the recipe didn't list, and confirms in one tap. On `STOCK_CHANGED` it plans again, marks each line whose food now has less than the line expected ("Only 2 eggs left now"), and keeps the cook active.
 
 ## Image generation has a spending cap before it has images
 

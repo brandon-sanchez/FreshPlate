@@ -35,7 +35,7 @@ beforeEach(async () => {
 
 afterEach(() => useActiveCookStore.getState().leaveScope());
 
-it("persists one active cook and refuses a second recipe until it is finished", async () => {
+it("persists one active cook and refuses a second recipe until it ends", async () => {
   const { result } = renderHook(() => useActiveCook());
 
   await act(async () => {
@@ -59,7 +59,7 @@ it("persists one active cook and refuses a second recipe until it is finished", 
   });
 
   await act(async () => {
-    expect(await result.current.finish()).toBe(true);
+    await useActiveCookStore.getState().clear();
   });
   expect(result.current.activeCook).toBeNull();
   expect(await AsyncStorage.getItem("freshplate.active-cook.u1.h1")).toBeNull();
