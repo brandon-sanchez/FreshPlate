@@ -21,12 +21,16 @@ export type ListChangeKind = (typeof ListChange)[keyof typeof ListChange];
 const ROW_FADE_IN_MS = 200;
 const ROW_FADE_OUT_MS = 120;
 const ROW_STAGGER_MS = 20;
-/** How many rows of an opening section fade in one after another; later rows join the last. */
+/** How many rows of an opening section fade in one after another. Later rows fade in with the last of them. */
 export const MAX_STAGGERED_ROWS = 6;
 const GROUP_SLIDE_IN = 24;
 const GROUP_SLIDE_OUT = 16;
 // TAB_SPRING comes within a pixel of rest in about 500 ms.
 const REORDER_SETTLE_MS = 600;
+
+// Rows mount and unmount on every scroll of a virtualized list, so a row
+// that isn't part of an animated change skips the animation work entirely.
+const NO_ANIMATION = { initialValues: {}, animations: {} };
 
 /** A change a list can be told to animate: every {@link ListChange} but `none`. */
 export type AnimatedListChange = Exclude<ListChangeKind, typeof ListChange.none>;
@@ -85,10 +89,10 @@ export function listLayout(
 
 /**
  * Returns the entering animation for the row or section header at `index`
- * in its section. Rows that a filter reveals fade in; rows of a section that
+ * in its section. Rows that a filter reveals fade in. Rows of a section that
  * opens fade in one after another, 20 ms apart. The rows of a newly chosen
  * grouping fade in while sliding 24 points in from the side of the chosen
- * tab with the tab spring; `direction` is 1 when that tab is right of the
+ * tab with the tab spring. `direction` is 1 when that tab is right of the
  * last one and -1 when it is left. Rows that appear for any other reason,
  * such as a scroll mounting them, show at once. With `reducedMotion` on,
  * every animated entrance is a short fade.
@@ -102,6 +106,7 @@ export function rowEntering(
   return () => {
     "worklet";
     const kind = change.value;
+    if (kind === ListChange.none) return NO_ANIMATION;
     if (kind === ListChange.group && !reducedMotion) {
       return {
         initialValues: {
@@ -114,12 +119,7 @@ export function rowEntering(
         },
       };
     }
-    const duration =
-      kind === ListChange.none
-        ? 0
-        : reducedMotion
-          ? REDUCED_FADE_MS
-          : ROW_FADE_IN_MS;
+    const duration = reducedMotion ? REDUCED_FADE_MS : ROW_FADE_IN_MS;
     const delay =
       kind === ListChange.collapse && !reducedMotion
         ? Math.min(index, MAX_STAGGERED_ROWS) * ROW_STAGGER_MS
@@ -144,7 +144,8 @@ export function rowExiting(
   return () => {
     "worklet";
     const kind = change.value;
-    const timing = { duration: kind === ListChange.none ? 0 : ROW_FADE_OUT_MS };
+    if (kind === ListChange.none) return NO_ANIMATION;
+    const timing = { duration: ROW_FADE_OUT_MS };
     const slide =
       kind === ListChange.group && !reducedMotion
         ? -direction.value * GROUP_SLIDE_OUT

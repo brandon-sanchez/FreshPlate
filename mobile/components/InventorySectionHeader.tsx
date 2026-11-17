@@ -5,8 +5,8 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSpring,
+  type EntryExitAnimationFunction,
 } from "react-native-reanimated";
-import type { ListMotion } from "@/hooks/useListMotion";
 import { useTheme } from "@/hooks/useTheme";
 import type { FoodSection } from "@/lib/foodRows";
 import { TAB_SPRING } from "@/lib/motion";
@@ -20,8 +20,10 @@ type InventorySectionHeaderProps = {
   onToggle: (key: string) => void;
   /** Shows a Review link in the header when set. */
   onReview?: () => void;
-  /** The animations the header enters and leaves with. */
-  motion: ListMotion;
+  /** The animation the header mounts with. */
+  entering: EntryExitAnimationFunction;
+  /** The animation the header unmounts with. */
+  exiting: EntryExitAnimationFunction;
 };
 
 /**
@@ -34,7 +36,8 @@ function InventorySectionHeader({
   open,
   onToggle,
   onReview,
-  motion,
+  entering,
+  exiting,
 }: InventorySectionHeaderProps) {
   const { colors, fonts } = useTheme();
   const turn = useSharedValue(open ? 90 : 0);
@@ -55,8 +58,8 @@ function InventorySectionHeader({
 
   return (
     <Animated.View
-      entering={motion.rowEntering(0)}
-      exiting={motion.rowExiting}
+      entering={entering}
+      exiting={exiting}
       style={{
         flexDirection: "row",
         alignItems: "center",

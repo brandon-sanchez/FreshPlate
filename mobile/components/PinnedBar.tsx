@@ -24,7 +24,7 @@ type PinnedBarProps = {
 
 /**
  * The background of controls pinned to the top of a list, such as the header
- * {@link StickyListHeader} pins. A hairline and a soft shadow fade in over
+ * {@link PinnedSectionList} pins. A hairline and a soft shadow fade in over
  * the first 8 points that content passes under the bar.
  */
 export default function PinnedBar({ scrollY, top, children }: PinnedBarProps) {

@@ -63,15 +63,13 @@ export function useListMotion(reducedMotion: boolean) {
     [animate, direction],
   );
 
-  // One entering animation per stagger step, so a memoized row gets the
-  // same animation object on every render.
   const motion = useMemo<ListMotion>(() => {
-    const entering = Array.from({ length: MAX_STAGGERED_ROWS + 1 }, (_, index) =>
+    const enteringByStaggerStep = Array.from({ length: MAX_STAGGERED_ROWS + 1 }, (_, index) =>
       rowEntering(change, direction, reducedMotion, index),
     );
     return {
       layout: listLayout(change, reducedMotion),
-      rowEntering: (index) => entering[Math.min(index, MAX_STAGGERED_ROWS)],
+      rowEntering: (index) => enteringByStaggerStep[Math.min(index, MAX_STAGGERED_ROWS)],
       rowExiting: rowExiting(change, direction, reducedMotion),
     };
   }, [change, direction, reducedMotion]);
