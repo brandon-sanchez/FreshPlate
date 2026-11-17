@@ -39,6 +39,8 @@ jest.mock("@expo/vector-icons/FontAwesome", () => {
 });
 
 import RecipeFeed from "@/components/recipe-feed";
+import { ToastHost } from "@/components/toastConfig";
+import Toast from "@/lib/toast";
 import { motionDuration, motionStagger } from "@/constants/motion";
 
 function render(ui: React.ReactElement) {
@@ -138,6 +140,7 @@ const defaultProps = {
   onEditAnswers: jest.fn(),
   ending: { kind: "empty", dish: "meal" } as RecipeFeedEnding,
   onCook: jest.fn(),
+  onRestore: jest.fn(),
 };
 
 describe("RecipeFeed", () => {
@@ -153,6 +156,7 @@ describe("RecipeFeed", () => {
   });
 
   afterEach(() => {
+    act(() => Toast.hide());
     cleanup();
     jest.clearAllTimers();
     jest.useRealTimers();
@@ -178,24 +182,159 @@ describe("RecipeFeed", () => {
     expect(screen.getByLabelText("View full recipe")).toBeTruthy();
   });
 
+  function flushRunOnJS() {
+    act(() => jest.advanceTimersByTime(0));
+  }
+
+  function swipe(
+    translationX: number,
+    velocityX = 0,
+    endState: State = State.END,
+  ) {
+    fireGestureHandler(getByGestureTestId("recipe-card-swipe-recipe-1"), [
+      { state: State.BEGAN, translationX: 0, velocityX: 0 },
+      { state: State.ACTIVE, translationX: translationX / 2, velocityX },
+      { state: endState, translationX, velocityX },
+    ]);
+    flushRunOnJS();
+  }
+
+  function renderWithToasts(
+    props: Partial<React.ComponentProps<typeof RecipeFeed>>,
+  ) {
+    return render(
+      <>
+        <RecipeFeed {...defaultProps} recipes={[baseRecipe]} {...props} />
+        <ToastHost bottomInset={0} />
+      </>,
+    );
+  }
+
   it("starts cooking on a full right swipe and ignores a short one", () => {
     const onCook = jest.fn();
     render(
       <RecipeFeed {...defaultProps} recipes={[baseRecipe]} onCook={onCook} />,
     );
-    const swipe = getByGestureTestId("recipe-card-cook-swipe-recipe-1");
-    fireGestureHandler(swipe, [
-      { state: State.BEGAN, translationX: 0 },
-      { state: State.ACTIVE, translationX: 40 },
-      { state: State.END, translationX: 60 },
-    ]);
+    swipe(60);
     expect(onCook).not.toHaveBeenCalled();
-    fireGestureHandler(swipe, [
-      { state: State.BEGAN, translationX: 0 },
-      { state: State.ACTIVE, translationX: 80 },
-      { state: State.END, translationX: 140 },
-    ]);
+    swipe(140);
     expect(onCook).toHaveBeenCalledWith(baseRecipe);
+  });
+
+  it("starts cooking on a quick flick right", () => {
+    const onCook = jest.fn();
+    render(
+      <RecipeFeed {...defaultProps} recipes={[baseRecipe]} onCook={onCook} />,
+    );
+    swipe(48, 1200);
+    expect(onCook).toHaveBeenCalledWith(baseRecipe);
+  });
+
+  it("discards a card on a full left swipe once it slides off, with an Undo", () => {
+    const onDismiss = jest.fn();
+    const onRestore = jest.fn();
+    const screen = renderWithToasts({ onDismiss, onRestore });
+    swipe(-140);
+    expect(onDismiss).not.toHaveBeenCalled();
+    act(() => jest.advanceTimersByTime(motionDuration.throw));
+    expect(onDismiss).toHaveBeenCalledWith(["recipe-1"]);
+    expect(screen.getByText("Recipe discarded")).toBeTruthy();
+    fireEvent.press(screen.getByRole("button", { name: "Undo" }));
+    expect(onRestore).toHaveBeenCalledWith(["recipe-1"]);
+  });
+
+  it("springs a short left swipe back without discarding", () => {
+    const onDismiss = jest.fn();
+    const onSteer = jest.fn();
+    renderWithToasts({ onDismiss, onSteer });
+    swipe(-60);
+    act(() => jest.advanceTimersByTime(motionDuration.throw));
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(onSteer).not.toHaveBeenCalled();
+  });
+
+  it("ignores a swipe that the feed's scroll cancels", () => {
+    const onCook = jest.fn();
+    const onDismiss = jest.fn();
+    renderWithToasts({ onCook, onDismiss });
+    swipe(-140, 0, State.CANCELLED);
+    swipe(140, 0, State.CANCELLED);
+    act(() => jest.advanceTimersByTime(motionDuration.throw));
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(onCook).not.toHaveBeenCalled();
+  });
+
+  it("finishes a discard when the card is grabbed again as it leaves", () => {
+    const onCook = jest.fn();
+    const onDismiss = jest.fn();
+    renderWithToasts({ onCook, onDismiss });
+    swipe(-140);
+    swipe(140);
+    act(() => jest.advanceTimersByTime(motionDuration.throw));
+    expect(onCook).not.toHaveBeenCalled();
+    expect(onDismiss).toHaveBeenCalledWith(["recipe-1"]);
+  });
+
+  it("springs back when the release flicks against a long swipe", () => {
+    const onCook = jest.fn();
+    const onDismiss = jest.fn();
+    renderWithToasts({ onCook, onDismiss });
+    swipe(-110, 1200);
+    swipe(110, -1200);
+    act(() => jest.advanceTimersByTime(motionDuration.throw));
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(onCook).not.toHaveBeenCalled();
+  });
+
+  it("discards a card from the stacked carousel", () => {
+    const onDismiss = jest.fn();
+    const screen = renderWithToasts({ onDismiss });
+    fireEvent(screen.getByTestId("recipe-feed-viewport"), "layout", {
+      nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 650 } },
+    });
+    expect(screen.getByTestId("recipe-carousel")).toBeTruthy();
+    swipe(-140);
+    act(() => jest.advanceTimersByTime(motionDuration.throw));
+    expect(onDismiss).toHaveBeenCalledWith(["recipe-1"]);
+  });
+
+  it("discards on a quick flick left", () => {
+    const onDismiss = jest.fn();
+    renderWithToasts({ onDismiss });
+    swipe(-48, -1200);
+    act(() => jest.advanceTimersByTime(motionDuration.throw));
+    expect(onDismiss).toHaveBeenCalledWith(["recipe-1"]);
+  });
+
+  it("discards with a short fade when Reduce Motion is on", () => {
+    mockReducedMotion.mockReturnValue(true);
+    const onDismiss = jest.fn();
+    renderWithToasts({ onDismiss });
+    swipe(-140);
+    act(() => jest.advanceTimersByTime(motionDuration.instant));
+    expect(onDismiss).toHaveBeenCalledWith(["recipe-1"]);
+  });
+
+  it("offers cook and discard as screen reader actions on the card", () => {
+    const onCook = jest.fn();
+    const onDismiss = jest.fn();
+    const screen = renderWithToasts({ onCook, onDismiss });
+    const summary = screen.getByTestId("recipe-card-preview-recipe-1");
+    // VoiceOver on the New Architecture reads an action's name, not its label.
+    expect(
+      summary.props.accessibilityActions.map(
+        (action: { name: string }) => action.name,
+      ),
+    ).toEqual(expect.arrayContaining(["Cook this", "Not this"]));
+    fireEvent(summary, "accessibilityAction", {
+      nativeEvent: { actionName: "Cook this" },
+    });
+    expect(onCook).toHaveBeenCalledWith(baseRecipe);
+    fireEvent(summary, "accessibilityAction", {
+      nativeEvent: { actionName: "Not this" },
+    });
+    expect(onDismiss).toHaveBeenCalledWith(["recipe-1"]);
+    expect(screen.getByText("Recipe discarded")).toBeTruthy();
   });
 
   it("closes the preview sheet when cooking starts from it", () => {

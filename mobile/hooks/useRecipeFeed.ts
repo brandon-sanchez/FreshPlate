@@ -117,7 +117,8 @@ function uniqueRecipes(recipes: RecipeSuggestion[]): RecipeSuggestion[] {
  * {@link keepSteeredCards}. A "More like this" press also requests the next
  * page at once, or as soon as a page already loading lands. Pressing it again
  * on the same recipe while that page is on its way changes nothing. The
- * caller removes the swept cards on screen with `dismiss`.
+ * caller removes the swept cards on screen with `dismiss`, and `restore` puts
+ * dismissed cards back in their places in the feed, as an undo does.
  */
 export function useRecipeFeed() {
   const queryClient = useQueryClient();
@@ -390,6 +391,13 @@ export function useRecipeFeed() {
     setDismissedVersion((value) => value + 1);
   }, []);
 
+  const restore = useCallback((recipeIds: readonly string[]) => {
+    const back = recipeIds.filter((id) => dismissedIdsRef.current.has(id));
+    if (back.length === 0) return;
+    for (const id of back) dismissedIdsRef.current.delete(id);
+    setDismissedVersion((value) => value + 1);
+  }, []);
+
   const retry = useCallback(() => {
     if (requestRef.current) start(requestRef.current);
   }, [start]);
@@ -412,6 +420,7 @@ export function useRecipeFeed() {
     retry,
     retryPrefetch,
     dismiss,
+    restore,
     steer,
     maybePrefetch,
   };

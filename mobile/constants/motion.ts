@@ -7,6 +7,8 @@
 export const motionDuration = {
   instant: 80,
   fast: 180,
+  /** A swiped card thrown off the screen. */
+  throw: 260,
   normal: 350,
 } as const;
 
@@ -20,6 +22,8 @@ export const motionSpring = {
 export const motionScale = {
   /** Where a toggled icon starts before it springs back to full size. */
   toggle: 0.8,
+  /** How far a card shrinks for a moment to confirm a swipe that started a cook. */
+  press: 0.96,
 } as const;
 
 /** Delays between staggered items, in milliseconds. */
