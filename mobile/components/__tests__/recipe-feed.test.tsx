@@ -21,6 +21,7 @@ const mockFetchRecipeImage = jest.fn();
 jest.mock("@/lib/supabase", () => ({ supabase: {} }));
 jest.mock("@/lib/image-api", () => ({
   fetchRecipeImage: (...args: unknown[]) => mockFetchRecipeImage(...args),
+  fetchFoodImage: () => new Promise(() => {}),
 }));
 
 const mockReducedMotion = jest.fn(() => false);

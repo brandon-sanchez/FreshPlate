@@ -8,6 +8,7 @@ import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsActiveCook } from "@/hooks/useActiveCook";
 import type { RecipeSuggestion } from "@/types/recipes";
+import FoodPhoto from "@/components/food-photo";
 import RecipePhoto from "@/components/recipe-photo";
 import RecipeStats from "@/components/recipe-stats";
 import RecipeSteps from "@/components/recipe-steps";
@@ -189,14 +190,19 @@ export default function RecipeIngredientsSheet({
               <View
                 key={`${ingredient.name}-${index}`}
                 style={{
-                  paddingVertical: 16,
-                  gap: 8,
+                  paddingVertical: 10,
+                  gap: 12,
                   borderTopWidth: 0.5,
                   borderColor: colors.border,
                   flexDirection: "row",
-                  alignItems: "flex-start",
+                  alignItems: "center",
                 }}
               >
+                <FoodPhoto
+                  foodId={ingredient.inventory_item_id}
+                  size={36}
+                  enabled
+                />
                 <View style={{ flex: 1, gap: 5 }}>
                   <Text
                     selectable

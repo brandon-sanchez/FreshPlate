@@ -14,10 +14,22 @@ jest.mock("expo-crypto", () => ({
   randomUUID: () => "11111111-1111-4111-8111-111111111111",
 }));
 const mockFetchRecipeImage = jest.fn();
+const mockFetchFoodImage = jest.fn();
 jest.mock("@/lib/supabase", () => ({ supabase: {} }));
 jest.mock("@/lib/image-api", () => ({
   fetchRecipeImage: (...args: unknown[]) => mockFetchRecipeImage(...args),
+  fetchFoodImage: (...args: unknown[]) => mockFetchFoodImage(...args),
 }));
+
+function readyFoodPhoto(foodId: unknown) {
+  return Promise.resolve({
+    status: "ready",
+    image_key: `ingredient:${String(foodId)}`,
+    url: `https://storage.test/${String(foodId)}.webp?token=1`,
+    expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+    reason: null,
+  });
+}
 
 const readyPhoto = {
   status: "ready",
@@ -80,6 +92,8 @@ describe("recipe preview sheet", () => {
     mockFetchRecipeImage.mockReset();
     mockFetchRecipeImage.mockReturnValue(new Promise(() => {}));
     await AsyncStorage.clear();
+    mockFetchFoodImage.mockReset();
+    mockFetchFoodImage.mockReturnValue(new Promise(() => {}));
   });
 
   afterEach(() => act(() => useActiveCookStore.getState().leaveScope()));
@@ -92,6 +106,15 @@ describe("recipe preview sheet", () => {
     expect(tree.indexOf("Photo of Pasta")).toBeLessThan(
       tree.indexOf('"Tomato"'),
     );
+  });
+
+  it("shows each ingredient's photo beside its name", async () => {
+    mockFetchFoodImage.mockImplementation(readyFoodPhoto);
+    const screen = renderSheet();
+    expect(
+      await screen.findByTestId("food-photo-image", { includeHiddenElements: true }),
+    ).toBeTruthy();
+    expect(mockFetchFoodImage.mock.calls[0][0]).toBe("t1");
   });
 
   it("renders the payload and expands from the accessible button", () => {
