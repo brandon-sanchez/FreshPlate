@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Text, View } from "react-native";
+import { Platform, Text, View } from "react-native";
 import Animated, {
   interpolateColor,
   useAnimatedStyle,
@@ -34,6 +34,14 @@ type InventoryRowProps = {
 // Holds the press shrink back briefly, so a scroll that starts on a row
 // does not shrink and spring the card.
 const PRESS_FEEDBACK_DELAY_MS = 100;
+const CARD_RADIUS = 14;
+// Android draws a foreground ripple over the pressable's whole box, so the
+// box is rounded and clipped there to keep the ripple inside the card's
+// corners. iOS has no ripple and keeps the card's pulse unclipped.
+const ANDROID_RIPPLE_CLIP =
+  Platform.OS === "android"
+    ? { borderRadius: CARD_RADIUS, overflow: "hidden" as const }
+    : undefined;
 
 /**
  * Renders one food as an inventory card: the food's photo, name, total
@@ -93,11 +101,13 @@ function InventoryRow({
       disabled={!onPress}
       accessibilityRole={onPress ? "button" : undefined}
       accessibilityLabel={accessibilitySummary(row)}
+      android_ripple={{ color: colors.border, foreground: true }}
+      style={ANDROID_RIPPLE_CLIP}
     >
       <Animated.View
         style={[
           {
-            borderRadius: 14,
+            borderRadius: CARD_RADIUS,
             borderWidth: 1,
             overflow: "hidden",
             shadowColor: card.shadowColor,
