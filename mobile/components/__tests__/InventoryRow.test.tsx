@@ -1,10 +1,20 @@
 import React from "react";
-import { fireEvent, render } from "@testing-library/react-native";
+import { fireEvent, render, userEvent } from "@testing-library/react-native";
 import type { InventoryItem } from "@/hooks/useInventoryItems";
 import { stackLots } from "@/lib/foodRows";
 import InventoryRow from "@/components/InventoryRow";
 
 jest.mock("@expo/vector-icons/FontAwesome", () => () => null);
+// On iOS, LotOutcomeSwipe's tap gesture keeps a gesture-handler RectButton
+// inside it from firing onPress. This RectButton drops onPress the same way,
+// so a row that relies on one fails to open.
+jest.mock("react-native-gesture-handler", () => {
+  const { View } = jest.requireActual("react-native");
+  return {
+    ...jest.requireActual("react-native-gesture-handler"),
+    RectButton: ({ onPress, ...props }: { onPress?: () => void }) => <View {...props} />,
+  };
+});
 
 const TODAY = new Date(2026, 10, 8, 12);
 
@@ -99,4 +109,22 @@ it("labels a row expired once every batch has expired", () => {
 
   expect(screen.getByText("2000 ml · 2 batches · Fridge")).toBeTruthy();
   expect(screen.getByText("Expired")).toBeTruthy();
+});
+
+it("opens on a tap without a gesture-handler button, which the swipe actions block on iOS", async () => {
+  jest.useRealTimers();
+  const [row] = stackLots([lot({})]);
+  const onPress = jest.fn();
+  const screen = render(<InventoryRow row={row} onPress={onPress} />);
+
+  await userEvent.press(screen.getByText("Spinach"));
+
+  expect(onPress).toHaveBeenCalledWith(row);
+});
+
+it("is not announced as a button when it has no onPress", () => {
+  const [row] = stackLots([lot({})]);
+  const screen = render(<InventoryRow row={row} />);
+
+  expect(screen.queryByRole("button")).toBeNull();
 });
