@@ -5,7 +5,14 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Pressable, RefreshControl, Text, TextInput, View } from "react-native";
+import {
+  Pressable,
+  RefreshControl,
+  SectionList,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
@@ -21,16 +28,22 @@ import { useInventoryItems } from "@/hooks/useInventoryItems";
 import { useInventoryView } from "@/hooks/useInventoryView";
 import { useListMotion } from "@/hooks/useListMotion";
 import InventoryViewControls from "@/components/InventoryViewControls";
-import InventorySection from "@/components/InventorySection";
+import InventorySectionHeader from "@/components/InventorySectionHeader";
+import InventoryListRow from "@/components/InventoryListRow";
 import PinnedBar from "@/components/PinnedBar";
-import InventoryRow from "@/components/InventoryRow";
-import LotOutcomeSwipe from "@/components/LotOutcomeSwipe";
+import StickyListHeader, {
+  StickyListCell,
+  StickyListContext,
+  type StickyListFrame,
+} from "@/components/StickyListHeader";
+import { useSeenKeys } from "@/hooks/useSeenKeys";
 import LoadingState from "@/components/LoadingState";
 import EmptyState from "@/components/EmptyState";
 import ErrorState from "@/components/ErrorState";
 import {
   GROUP_BYS,
   type FoodRow,
+  type FoodSection,
   type GroupBy,
   groupFoodRows,
   stackLots,
@@ -44,6 +57,36 @@ import {
   type InventoryFilters,
 } from "@/lib/inventoryFilters";
 import { ListChange } from "@/lib/listMotion";
+
+// Enough cells to fill a tall phone screen; the rest mount as the list scrolls.
+const INITIAL_CELLS = 12;
+const CELLS_PER_BATCH = 8;
+// Screens of rows kept mounted around the visible one, counting it.
+const WINDOW_SCREENS = 7;
+
+type ListSection =
+  | { kind: "controls"; key: string; data: readonly FoodRow[] }
+  | {
+      kind: "food";
+      key: string;
+      /** The rows the list shows: none while the section is closed. */
+      data: readonly FoodRow[];
+      /** The section with all of its rows. */
+      food: FoodSection;
+      open: boolean;
+    };
+
+// The controls ride in a section of their own, with no rows, so they pin to
+// the top while each food section's header sticks below them.
+const CONTROLS_SECTION: ListSection = {
+  kind: "controls",
+  key: "controls",
+  data: [],
+};
+const NO_ROWS: readonly FoodRow[] = [];
+const AnimatedSectionList = Animated.createAnimatedComponent(
+  SectionList<FoodRow, ListSection>,
+);
 
 export default function InventoryScreen() {
   const { colors, fonts } = useTheme();
@@ -59,6 +102,7 @@ export default function InventoryScreen() {
    * clears so subsequent re-renders don't replay the animation. */
   const { added } = useLocalSearchParams<{ added?: string }>();
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const seenRows = useSeenKeys<FoodRow>((row) => row.foodId);
   useEffect(() => {
     if (!added) return;
     setHighlightId(added);
@@ -78,16 +122,22 @@ export default function InventoryScreen() {
   });
 
   const scrollY = useSharedValue(0);
+  const pinTop = useSharedValue(0);
   const pinHeight = useSharedValue(0);
-  const listTop = useSharedValue(0);
-  const sticky = useMemo(
-    () => ({ scrollY, listTop, pinHeight }),
-    [scrollY, listTop, pinHeight],
-  );
   const onScroll = useAnimatedScrollHandler((event) => {
     scrollY.value = event.contentOffset.y;
   });
   const { motion, animate, slideToward } = useListMotion(reducedMotion);
+  const stickyFrame = useMemo<StickyListFrame>(
+    () => ({
+      scrollY,
+      pinTop,
+      pinHeight,
+      pinnedItem: CONTROLS_SECTION,
+      layout: motion.layout,
+    }),
+    [scrollY, pinTop, pinHeight, motion.layout],
+  );
 
   const items = useMemo(() => inventory.data ?? [], [inventory.data]);
   const options = useMemo(() => filterOptions(items), [items]);
@@ -98,6 +148,25 @@ export default function InventoryScreen() {
         sortBy,
       ),
     [items, deferredQuery, filters, groupBy, sortBy],
+  );
+  const listSections = useMemo<ListSection[]>(
+    () => [
+      CONTROLS_SECTION,
+      ...sections
+        .filter((section) => section.data.length > 0)
+        .map((section): ListSection => {
+          const open = openGroups[section.key] !== false;
+          return {
+            kind: "food",
+            // A new grouping gets new keys, so its rows mount and slide in.
+            key: `${groupBy}:${section.key}`,
+            data: open ? section.data : NO_ROWS,
+            food: section,
+            open,
+          };
+        }),
+    ],
+    [sections, openGroups, groupBy],
   );
 
   const chooseGroup = (next: GroupBy) => {
@@ -114,10 +183,13 @@ export default function InventoryScreen() {
     animate(ListChange.reorder);
     setFilters(update);
   };
-  const toggleSection = (key: string) => {
-    animate(ListChange.collapse);
-    setOpenGroups((g) => ({ ...g, [key]: !(g[key] !== false) }));
-  };
+  const toggleSection = useCallback(
+    (key: string) => {
+      animate(ListChange.collapse);
+      setOpenGroups((g) => ({ ...g, [key]: !(g[key] !== false) }));
+    },
+    [animate],
+  );
 
   /* Auto-open the collapsible section containing the highlighted row so the
    * pulse animation isn't hidden behind a closed group. */
@@ -136,10 +208,24 @@ export default function InventoryScreen() {
   const activeFilterCount = countActiveFilters(filters);
   const allRows = useMemo(() => stackLots(items), [items]);
   const expiredCount = allRows.filter((r) => r.expiredLots > 0).length;
-  const openReview = () => router.push("/review-expired");
+  const openReview = useCallback(() => router.push("/review-expired"), [router]);
   const openFood = useCallback(
     (row: FoodRow) => router.push(`/food/${row.foodId}`),
     [router],
+  );
+  const { seen } = seenRows;
+  const renderRow = useCallback(
+    ({ item: row, index }: { item: FoodRow; index: number }) => (
+      <InventoryListRow
+        row={row}
+        index={index}
+        highlight={highlightId !== null && holdsLot(row, highlightId)}
+        photoEnabled={seen.has(row.foodId)}
+        onPress={openFood}
+        motion={motion}
+      />
+    ),
+    [highlightId, seen, openFood, motion],
   );
 
   if (inventory.isPending || !view.hydrated) {
@@ -182,122 +268,106 @@ export default function InventoryScreen() {
     );
   }
 
-  const shown = sections.filter((s) => s.data.length > 0);
+  const renderSectionHeader = ({ section }: { section: ListSection }) =>
+    section.kind === "controls" ? (
+      <PinnedBar scrollY={scrollY} top={pinTop}>
+        <InventoryViewControls
+          groupBy={groupBy}
+          onGroupByChange={chooseGroup}
+          sortBy={sortBy}
+          onSortChange={chooseSort}
+          filters={filters}
+          onFiltersChange={changeFilters}
+          options={options}
+          totalCount={allRows.length}
+        />
+      </PinnedBar>
+    ) : (
+      <InventorySectionHeader
+        section={section.food}
+        open={section.open}
+        onToggle={toggleSection}
+        onReview={
+          groupBy === "Urgency" && section.food.key === "expired"
+            ? openReview
+            : undefined
+        }
+        motion={motion}
+      />
+    );
 
   return (
     <View
       style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}
     >
-      {/* A ScrollView rather than a SectionList: native sticky section headers
-          stick at the top edge, where the pinned controls cover them, and
-          SectionList moves whole cells, which defeats per-row layout
-          animations. A household's foods number in the tens to low hundreds. */}
-      <Animated.ScrollView
-        onScroll={onScroll}
-        scrollEventThrottle={16}
-        keyboardDismissMode="on-drag"
-        keyboardShouldPersistTaps="handled"
-        automaticallyAdjustKeyboardInsets
-        contentContainerStyle={{ paddingBottom: tabBarHeight + 24 }}
-        refreshControl={
-          <RefreshControl
-            refreshing={inventory.isFetching && !inventory.isPending}
-            onRefresh={() => inventory.refetch()}
-            tintColor={colors.accent}
-          />
-        }
-      >
-        <View
-          style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6 }}
-        >
-          <TopBar
-            title="Inventory"
-            subtitle={
-              <>
-                {`${allRows.length} item${allRows.length === 1 ? "" : "s"} · `}
-                <Text
-                  style={expiredCount > 0 ? { color: colors.crit } : undefined}
-                >
-                  {`${expiredCount} expired`}
-                </Text>
-              </>
-            }
-            onSubtitlePress={expiredCount > 0 ? openReview : undefined}
-            subtitleLabel={`${expiredCount} expired. Review expired batches`}
-            colors={colors}
-            fonts={fonts}
-            padded={false}
-          />
-          <SearchField initialValue={query} onChange={setQuery} />
-        </View>
-
-        <PinnedBar scrollY={scrollY} height={pinHeight}>
-          <InventoryViewControls
-            groupBy={groupBy}
-            onGroupByChange={chooseGroup}
-            sortBy={sortBy}
-            onSortChange={chooseSort}
-            filters={filters}
-            onFiltersChange={changeFilters}
-            options={options}
-            totalCount={allRows.length}
-          />
-        </PinnedBar>
-
+      <StickyListContext.Provider value={stickyFrame}>
         <LayoutAnimationConfig skipEntering>
-          <Animated.View
-            key={groupBy}
-            entering={motion.groupEntering}
-            exiting={motion.groupExiting}
-            onLayout={(event) => {
-              listTop.value = event.nativeEvent.layout.y;
-            }}
-            style={{ paddingHorizontal: 16 }}
-          >
-            {shown.map((section) => {
-              const open = openGroups[section.key] !== false;
-              return (
-                <InventorySection
-                  key={section.key}
-                  section={section}
-                  open={open}
-                  onToggle={() => toggleSection(section.key)}
-                  onReview={
-                    groupBy === "Urgency" && section.key === "expired"
-                      ? openReview
+          <AnimatedSectionList
+            sections={listSections}
+            keyExtractor={(row) => `${groupBy}:${row.key}`}
+            renderItem={renderRow}
+            renderSectionHeader={renderSectionHeader}
+            stickySectionHeadersEnabled
+            StickyHeaderComponent={StickyListHeader}
+            CellRendererComponent={StickyListCell}
+            {...seenRows.listProps}
+            initialNumToRender={INITIAL_CELLS}
+            maxToRenderPerBatch={CELLS_PER_BATCH}
+            windowSize={WINDOW_SCREENS}
+            onScroll={onScroll}
+            scrollEventThrottle={16}
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+            automaticallyAdjustKeyboardInsets
+            contentContainerStyle={{ paddingBottom: tabBarHeight + 24 }}
+            refreshControl={
+              <RefreshControl
+                refreshing={inventory.isFetching && !inventory.isPending}
+                onRefresh={() => inventory.refetch()}
+                tintColor={colors.accent}
+              />
+            }
+            ListHeaderComponent={
+              <View
+                style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6 }}
+              >
+                <TopBar
+                  title="Inventory"
+                  subtitle={
+                    <>
+                      {`${allRows.length} item${allRows.length === 1 ? "" : "s"} · `}
+                      <Text
+                        style={
+                          expiredCount > 0 ? { color: colors.crit } : undefined
+                        }
+                      >
+                        {`${expiredCount} expired`}
+                      </Text>
+                    </>
+                  }
+                  onSubtitlePress={expiredCount > 0 ? openReview : undefined}
+                  subtitleLabel={`${expiredCount} expired. Review expired batches`}
+                  colors={colors}
+                  fonts={fonts}
+                  padded={false}
+                />
+                <SearchField initialValue={query} onChange={setQuery} />
+              </View>
+            }
+            ListFooterComponent={
+              listSections.length === 1 ? (
+                <NoMatches
+                  onClear={
+                    activeFilterCount > 0
+                      ? () => changeFilters(() => EMPTY_FILTERS)
                       : undefined
                   }
-                  sticky={sticky}
-                  motion={motion}
-                  renderRow={(row) => (
-                    <LotOutcomeSwipe
-                      lotIds={row.countedLots.map((lot) => lot.id)}
-                      name={row.name}
-                    >
-                      <InventoryRow
-                        row={row}
-                        highlight={
-                          highlightId !== null && holdsLot(row, highlightId)
-                        }
-                        onPress={openFood}
-                      />
-                    </LotOutcomeSwipe>
-                  )}
                 />
-              );
-            })}
-            {shown.length === 0 ? (
-              <NoMatches
-                onClear={
-                  activeFilterCount > 0
-                    ? () => changeFilters(() => EMPTY_FILTERS)
-                    : undefined
-                }
-              />
-            ) : null}
-          </Animated.View>
+              ) : null
+            }
+          />
         </LayoutAnimationConfig>
-      </Animated.ScrollView>
+      </StickyListContext.Provider>
     </View>
   );
 }

@@ -20,7 +20,7 @@ from app.models.images import ImageResult
 from app.services.image_service import ImageService, RequesterRecipePhotos
 from tests.image_fakes import POLICY, FakeStore
 from tests.image_fakes import FakeProvider as FakeImageProvider
-from tests.recipe_fakes import batch_responses
+from tests.recipe_fakes import NO_BASICS, batch_responses
 
 pytestmark = pytest.mark.asyncio
 
@@ -122,8 +122,11 @@ class RecordingPhotos:
 
 
 def _refill_state(deadline: PipelineDeadline) -> dict[str, Any]:
-    analysis = analyze_inventory({"inventory": [TOMATOES]}, today=date(2026, 8, 3))
+    analysis = analyze_inventory(
+        {"kitchen_basics": NO_BASICS, "inventory": [TOMATOES]}, today=date(2026, 8, 3)
+    )
     return {
+        "kitchen_basics": NO_BASICS,
         "usable_items": analysis["usable_items"],
         "retrieved_recipes": [],
         "preferences": {},
@@ -173,6 +176,7 @@ async def test_first_session_graph_also_ends_with_photos():
 
     result = await graph.ainvoke(
         {
+            "kitchen_basics": NO_BASICS,
             "inventory": [TOMATOES],
             "batch_ceiling": 5,
             "deadline": PipelineDeadline(45),

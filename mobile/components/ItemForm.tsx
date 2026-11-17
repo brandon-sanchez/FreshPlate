@@ -10,7 +10,8 @@ import {
 import Slider from "@react-native-community/slider";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import AmountField from "@/components/AmountField";
-import Chip from "@/components/Chip";
+import Chip, { CHIP_LEADING_SIZE } from "@/components/Chip";
+import FoodPhoto from "@/components/food-photo";
 import ContainerPicker from "@/components/ContainerPicker";
 import Field from "@/components/Field";
 import SegmentedControl from "@/components/SegmentedControl";
@@ -333,6 +334,17 @@ function ItemForm({
                   key={suggestion.id}
                   label={suggestion.name}
                   onPress={() => handlePickSuggestion(suggestion)}
+                  leading={
+                    <FoodPhoto
+                      foodId={suggestion.id}
+                      size={CHIP_LEADING_SIZE}
+                      icon={
+                        categories?.find((c) => c.id === suggestion.categoryId)
+                          ?.icon
+                      }
+                      enabled
+                    />
+                  }
                 />
               ))}
             </View>
@@ -382,7 +394,7 @@ function ItemForm({
         {container === null ? (
           <Field label="Storage">
             <SegmentedControl
-              options={[...STORAGE_OPTIONS]}
+              options={STORAGE_OPTIONS}
               selected={storageLabel}
               onSelect={handleStorageSelect}
             />

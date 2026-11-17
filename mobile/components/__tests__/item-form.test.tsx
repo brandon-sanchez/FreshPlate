@@ -1,6 +1,12 @@
 import React from "react";
 import { View } from "react-native";
-import { fireEvent, render, screen } from "@testing-library/react-native";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react-native";
 import type { FoodCategory } from "@/hooks/useFoodCategories";
 import type { KnownFood } from "@/lib/knownFood";
 
@@ -10,6 +16,12 @@ jest.mock("@expo/vector-icons/FontAwesome", () => {
 });
 
 jest.mock("@/lib/supabase", () => ({ supabase: {} }));
+jest.mock("@/hooks/useReducedMotion", () => ({ useReducedMotion: () => true }));
+
+const mockFetchFoodImage = jest.fn((..._args: unknown[]) => new Promise(() => {}));
+jest.mock("@/lib/image-api", () => ({
+  fetchFoodImage: (...args: unknown[]) => mockFetchFoodImage(...args),
+}));
 
 const mockFoods: { current: KnownFood[] } = { current: [] };
 jest.mock("@/hooks/useHouseholdFoods", () => ({
@@ -77,9 +89,20 @@ function form(onSubmit: jest.Mock, defaults?: ItemFormDefaults, key = 0) {
   );
 }
 
+function withQueryClient() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  });
+  return {
+    wrapper: ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  };
+}
+
 function renderForm(defaults?: ItemFormDefaults) {
   const onSubmit = jest.fn();
-  render(form(onSubmit, defaults));
+  render(form(onSubmit, defaults), withQueryClient());
   return onSubmit;
 }
 
@@ -88,6 +111,8 @@ const submit = () => fireEvent.press(screen.getByText("Add to inventory"));
 
 describe("ItemForm", () => {
   beforeEach(() => {
+    mockFetchFoodImage.mockReset();
+    mockFetchFoodImage.mockReturnValue(new Promise(() => {}));
     mockFoods.current = [milk];
     jest.useFakeTimers({ now: new Date(2026, 10, 8, 12) });
   });
@@ -300,7 +325,7 @@ describe("ItemForm", () => {
 
   it("starts from the defaults again when remounted after an add", () => {
     const onSubmit = jest.fn();
-    const { rerender } = render(form(onSubmit));
+    const { rerender } = render(form(onSubmit), withQueryClient());
     fireEvent.press(button("Milk"));
     expect(screen.getByLabelText("Package size").props.value).toBe("1");
 
@@ -311,5 +336,31 @@ describe("ItemForm", () => {
       screen.getByRole("button", { name: "each", selected: true }),
     ).toBeTruthy();
     expect(screen.queryByLabelText("Package size")).toBeNull();
+  });
+
+  it("shows each suggested food's photo beside its name", async () => {
+    mockFoods.current = [milk, egg];
+    mockFetchFoodImage.mockImplementation((foodId: unknown) =>
+      Promise.resolve({
+        status: "ready",
+        image_key: `ingredient:${String(foodId)}`,
+        url: `https://storage.test/${String(foodId)}.webp?token=1`,
+        expires_at: "2026-11-08T13:00:00Z",
+        reason: null,
+      }),
+    );
+    renderForm();
+
+    await waitFor(() =>
+      expect(
+        screen.getAllByTestId("food-photo-image", { includeHiddenElements: true }),
+      ).toHaveLength(2),
+    );
+    expect(button("Milk")).toBeTruthy();
+    expect(button("Egg")).toBeTruthy();
+    expect(mockFetchFoodImage.mock.calls.map(([id]) => id).sort()).toEqual([
+      "food-egg",
+      "food-milk",
+    ]);
   });
 });

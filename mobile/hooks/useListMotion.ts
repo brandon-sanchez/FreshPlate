@@ -1,37 +1,34 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useSharedValue } from "react-native-reanimated";
 import {
-  groupEntering,
-  groupExiting,
+  type AnimatedListChange,
   ListChange,
   type ListChangeKind,
   listLayout,
+  MAX_STAGGERED_ROWS,
   rowEntering,
   rowExiting,
   settleTime,
 } from "@/lib/listMotion";
 
-/** The animations a list's sections and rows take, from {@link useListMotion}. */
+/** The animations a list's rows and section headers take, from {@link useListMotion}. */
 export type ListMotion = {
-  /** The layout transition for sections, row groups and rows. */
+  /** The layout transition for list cells and section headers. */
   layout: ReturnType<typeof listLayout>;
   /** Returns the entering animation for the row at an index in its section. */
   rowEntering: (index: number) => ReturnType<typeof rowEntering>;
-  /** The exiting animation for rows. */
+  /** The exiting animation for rows and section headers. */
   rowExiting: ReturnType<typeof rowExiting>;
-  /** The entering animation for the list of a newly chosen grouping. */
-  groupEntering: ReturnType<typeof groupEntering>;
-  /** The exiting animation for the list of the grouping being left. */
-  groupExiting: ReturnType<typeof groupExiting>;
 };
 
 /**
  * Returns the inventory list's animations and two calls that pick them.
  * `animate(kind)` makes the next list update a re-sort or a collapse, and
  * holds that kind for {@link settleTime} so the animation finishes; later
- * updates, such as a typed search, land at once. `slideToward(from, to)`
- * sets which side the next grouping's list slides in from, by tab index.
- * Call either just before the state update it describes.
+ * updates, such as a typed search or a scroll that mounts rows, land at
+ * once. `slideToward(from, to)` makes the next update a change of grouping
+ * whose rows slide in from the side of the chosen tab, by tab index. Call
+ * either just before the state update it describes.
  *
  * @param reducedMotion - Whether Reduce Motion is on; the animations become
  * short fades and the layout lands at once.
@@ -48,7 +45,7 @@ export function useListMotion(reducedMotion: boolean) {
   );
 
   const animate = useCallback(
-    (kind: typeof ListChange.reorder | typeof ListChange.collapse) => {
+    (kind: AnimatedListChange) => {
       change.value = kind;
       if (settle.current) clearTimeout(settle.current);
       settle.current = setTimeout(() => {
@@ -61,20 +58,23 @@ export function useListMotion(reducedMotion: boolean) {
   const slideToward = useCallback(
     (from: number, to: number) => {
       direction.value = Math.sign(to - from) || 1;
+      animate(ListChange.group);
     },
-    [direction],
+    [animate, direction],
   );
 
-  const motion = useMemo<ListMotion>(
-    () => ({
+  // One entering animation per stagger step, so a memoized row gets the
+  // same animation object on every render.
+  const motion = useMemo<ListMotion>(() => {
+    const entering = Array.from({ length: MAX_STAGGERED_ROWS + 1 }, (_, index) =>
+      rowEntering(change, direction, reducedMotion, index),
+    );
+    return {
       layout: listLayout(change, reducedMotion),
-      rowEntering: (index) => rowEntering(change, reducedMotion, index),
-      rowExiting: rowExiting(change),
-      groupEntering: groupEntering(direction, reducedMotion),
-      groupExiting: groupExiting(direction, reducedMotion),
-    }),
-    [change, direction, reducedMotion],
-  );
+      rowEntering: (index) => entering[Math.min(index, MAX_STAGGERED_ROWS)],
+      rowExiting: rowExiting(change, direction, reducedMotion),
+    };
+  }, [change, direction, reducedMotion]);
 
   return { motion, animate, slideToward };
 }

@@ -1,4 +1,4 @@
-import { Easing, ReduceMotion } from "react-native-reanimated";
+import { Easing } from "react-native-reanimated";
 
 /**
  * The spring the tab bar's selection pill uses, critically damped so it
@@ -7,12 +7,6 @@ import { Easing, ReduceMotion } from "react-native-reanimated";
  * every selection moves the same way.
  */
 export const TAB_SPRING = { stiffness: 320, damping: 30, mass: 0.7 } as const;
-
-/** {@link TAB_SPRING} for Reanimated values, landing at once when Reduce Motion is on. */
-export const SELECTION_SPRING = {
-  ...TAB_SPRING,
-  reduceMotion: ReduceMotion.System,
-} as const;
 
 /** The spring a dropdown menu opens with, overshooting by about 3 percent. */
 export const MENU_SPRING = { stiffness: 380, damping: 26, mass: 0.8 } as const;

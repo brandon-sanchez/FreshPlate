@@ -24,7 +24,7 @@ import Animated, {
 } from "react-native-reanimated";
 import SegmentedControl from "@/components/SegmentedControl";
 import SortFilterMenu from "@/components/SortFilterMenu";
-import PressableScale from "@/components/PressableScale";
+import { RecipePressable } from "@/components/recipe-motion";
 import { useTheme } from "@/hooks/useTheme";
 import type { WindowRect } from "@/lib/anchoredFrame";
 import { GROUP_BYS, type GroupBy } from "@/lib/foodRows";
@@ -231,7 +231,7 @@ function FilterButton({
   }));
 
   return (
-    <PressableScale
+    <RecipePressable
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel="Sort and filter"
@@ -291,6 +291,6 @@ function FilterButton({
           </Text>
         </Animated.View>
       ) : null}
-    </PressableScale>
+    </RecipePressable>
   );
 }

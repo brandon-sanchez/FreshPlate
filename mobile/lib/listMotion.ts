@@ -10,9 +10,10 @@ import { COLLAPSE, REDUCED_FADE_MS, TAB_SPRING } from "@/lib/motion";
 
 /**
  * The change the inventory list is animating. A list that holds `none`
- * moves at once, which is what typing a search or a refetch should do.
+ * moves at once, which is what typing a search, a refetch or a scroll that
+ * mounts rows should do.
  */
-export const ListChange = { none: 0, reorder: 1, collapse: 2 } as const;
+export const ListChange = { none: 0, reorder: 1, collapse: 2, group: 3 } as const;
 
 /** One value of {@link ListChange}. */
 export type ListChangeKind = (typeof ListChange)[keyof typeof ListChange];
@@ -20,21 +21,23 @@ export type ListChangeKind = (typeof ListChange)[keyof typeof ListChange];
 const ROW_FADE_IN_MS = 200;
 const ROW_FADE_OUT_MS = 120;
 const ROW_STAGGER_MS = 20;
-const MAX_STAGGERED_ROWS = 6;
+/** How many rows of an opening section fade in one after another; later rows join the last. */
+export const MAX_STAGGERED_ROWS = 6;
 const GROUP_SLIDE_IN = 24;
 const GROUP_SLIDE_OUT = 16;
 // TAB_SPRING comes within a pixel of rest in about 500 ms.
 const REORDER_SETTLE_MS = 600;
 
+/** A change a list can be told to animate: every {@link ListChange} but `none`. */
+export type AnimatedListChange = Exclude<ListChangeKind, typeof ListChange.none>;
+
 /**
- * Returns how long a `reorder` or `collapse` change keeps animating, in
- * milliseconds: the longest of its layout, stagger and fade timings, with a
- * little slack. A list should hold the change at least this long.
+ * Returns how long a change keeps animating, in milliseconds: the longest of
+ * its layout, slide, stagger and fade timings, with a little slack. A list
+ * should hold the change at least this long.
  */
-export function settleTime(
-  kind: typeof ListChange.reorder | typeof ListChange.collapse,
-): number {
-  return kind === ListChange.reorder
+export function settleTime(kind: AnimatedListChange): number {
+  return kind !== ListChange.collapse
     ? REORDER_SETTLE_MS
     : Math.max(
         COLLAPSE.duration,
@@ -81,19 +84,36 @@ export function listLayout(
 }
 
 /**
- * Returns the entering animation for the row at `index` in its section.
- * Rows that a filter reveals fade in; rows of a section that opens fade in
- * one after another, 20 ms apart. Rows that appear for any other reason show
- * at once.
+ * Returns the entering animation for the row or section header at `index`
+ * in its section. Rows that a filter reveals fade in; rows of a section that
+ * opens fade in one after another, 20 ms apart. The rows of a newly chosen
+ * grouping fade in while sliding 24 points in from the side of the chosen
+ * tab with the tab spring; `direction` is 1 when that tab is right of the
+ * last one and -1 when it is left. Rows that appear for any other reason,
+ * such as a scroll mounting them, show at once. With `reducedMotion` on,
+ * every animated entrance is a short fade.
  */
 export function rowEntering(
   change: SharedValue<ListChangeKind>,
+  direction: SharedValue<number>,
   reducedMotion: boolean,
   index: number,
 ): EntryExitAnimationFunction {
   return () => {
     "worklet";
     const kind = change.value;
+    if (kind === ListChange.group && !reducedMotion) {
+      return {
+        initialValues: {
+          opacity: 0,
+          transform: [{ translateX: direction.value * GROUP_SLIDE_IN }],
+        },
+        animations: {
+          opacity: withTiming(1, { duration: ROW_FADE_IN_MS }),
+          transform: [{ translateX: withSpring(0, TAB_SPRING) }],
+        },
+      };
+    }
     const duration =
       kind === ListChange.none
         ? 0
@@ -111,74 +131,29 @@ export function rowEntering(
   };
 }
 
-/** Returns the exiting animation for rows: a short fade during a re-sort, filter or collapse. */
+/**
+ * Returns the exiting animation for rows and section headers: a 120 ms fade
+ * during a re-sort, filter or collapse. Rows of the grouping being left also
+ * slide 16 points away from the chosen tab unless `reducedMotion` is on.
+ */
 export function rowExiting(
   change: SharedValue<ListChangeKind>,
-): EntryExitAnimationFunction {
-  return () => {
-    "worklet";
-    const duration = change.value === ListChange.none ? 0 : ROW_FADE_OUT_MS;
-    return {
-      initialValues: { opacity: 1 },
-      animations: { opacity: withTiming(0, { duration }) },
-    };
-  };
-}
-
-/**
- * Returns the entering animation for the list of a newly chosen grouping.
- * It fades in while sliding 24 points in from the side of the chosen tab
- * with the tab spring. `direction` is 1 when the chosen tab is right of the
- * last one and -1 when it is left. With Reduce Motion on, it only fades.
- */
-export function groupEntering(
   direction: SharedValue<number>,
   reducedMotion: boolean,
 ): EntryExitAnimationFunction {
   return () => {
     "worklet";
-    if (reducedMotion) {
-      return {
-        initialValues: { opacity: 0 },
-        animations: { opacity: withTiming(1, { duration: REDUCED_FADE_MS }) },
-      };
-    }
-    return {
-      initialValues: {
-        opacity: 0,
-        transform: [{ translateX: direction.value * GROUP_SLIDE_IN }],
-      },
-      animations: {
-        opacity: withTiming(1, { duration: ROW_FADE_IN_MS }),
-        transform: [{ translateX: withSpring(0, TAB_SPRING) }],
-      },
-    };
-  };
-}
-
-/**
- * Returns the exiting animation for the list of the grouping being left: a
- * 120 ms fade that slides 16 points away from the chosen tab. With Reduce
- * Motion on, it only fades.
- */
-export function groupExiting(
-  direction: SharedValue<number>,
-  reducedMotion: boolean,
-): EntryExitAnimationFunction {
-  return () => {
-    "worklet";
-    const timing = { duration: ROW_FADE_OUT_MS };
+    const kind = change.value;
+    const timing = { duration: kind === ListChange.none ? 0 : ROW_FADE_OUT_MS };
+    const slide =
+      kind === ListChange.group && !reducedMotion
+        ? -direction.value * GROUP_SLIDE_OUT
+        : 0;
     return {
       initialValues: { opacity: 1, transform: [{ translateX: 0 }] },
       animations: {
         opacity: withTiming(0, timing),
-        transform: [
-          {
-            translateX: reducedMotion
-              ? withTiming(0, timing)
-              : withTiming(-direction.value * GROUP_SLIDE_OUT, timing),
-          },
-        ],
+        transform: [{ translateX: withTiming(slide, timing) }],
       },
     };
   };

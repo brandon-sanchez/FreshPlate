@@ -11,6 +11,7 @@ from typing import Any
 
 from app.ai.agents.food_labels import FoodLabels
 from app.ai.agents.graph import build_recipe_graph
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.meal_quality import MealChecklist
 from app.ai.agents.models import Recipe, RecipeIngredient, RecipeStep
 from app.ai.agents.nodes import analyze_inventory
@@ -21,13 +22,24 @@ from app.ai.rag.vector_store import RetrievedRecipe
 from app.inventory.food_facts import FoodLine
 
 DATASET = Path(__file__).parents[1] / "app/ai/eval/dataset.json"
+# Mirrors public.default_kitchen_basics() in
+# supabase/migrations/20261116140000_add_kitchen_basics.sql, so evals cook
+# with the basics a new household has.
+_DEFAULT_BASICS = KitchenBasics(
+    ("Salt", "Black pepper", "Neutral oil", "Olive oil", "Water")
+)
 
 
 def _fixture_recipe(case: dict[str, Any]) -> Recipe:
     """Return the offline model's answer: a recipe of the first usable food."""
-    usable = analyze_inventory({"inventory": case["inventory"]})["usable_items"]
+    analysis = analyze_inventory(
+        {"inventory": case["inventory"], "kitchen_basics": _DEFAULT_BASICS}
+    )
+    usable = analysis["usable_items"]
     item = FoodLine.model_validate(usable[0]["food"])
-    food_label = FoodLabels(food["id"] for food in usable).label(item.id)
+    food_label = FoodLabels(
+        (food["id"] for food in usable), analysis["kitchen_basics"]
+    ).label(item.id)
     return Recipe(
         title=case["name"].title(),
         headnote="A deterministic offline fixture built from the first usable food.",
@@ -110,6 +122,7 @@ async def run(mode: str, experiment: str) -> dict[str, float | int | str]:
         result = await graph.ainvoke(
             {
                 "inventory": case["inventory"],
+                "kitchen_basics": _DEFAULT_BASICS,
                 "preferences": {"request": case["name"]},
                 "batch_ceiling": 1,
             }
@@ -123,7 +136,9 @@ async def run(mode: str, experiment: str) -> dict[str, float | int | str]:
         rows.append(
             {
                 "name": case["name"],
-                "coverage": ingredient_coverage_percent(recipe, case["inventory"]),
+                "coverage": ingredient_coverage_percent(
+                    recipe, case["inventory"], result["kitchen_basics"]
+                ),
                 "completeness": completeness_percent(recipe),
                 "preference": judge.preference_alignment,
                 "violations": len(judge.quantity_violations),
@@ -201,13 +216,20 @@ async def _run_live(cases: list[dict[str, Any]], experiment: str) -> dict[str, A
 
     async def target(inputs: dict[str, Any]) -> dict[str, Any]:
         """Adapt graph output to LangSmith's evaluator target contract."""
-        result = await graph.ainvoke({**inputs, "batch_ceiling": 1})
+        result = await graph.ainvoke(
+            {
+                **inputs,
+                "kitchen_basics": _DEFAULT_BASICS,
+                "batch_ceiling": 1,
+            }
+        )
         recipes = result.get("valid_recipes", [])
         if not recipes:
             raise ValueError("recipe pipeline returned no valid recipes")
         return {
             "recipe": recipes[0].model_dump(mode="json"),
             "inventory": inputs.get("inventory", []),
+            "kitchen_basics": list(result["kitchen_basics"].names),
             "request": inputs.get("preferences", {}).get("request", ""),
         }
 
@@ -333,7 +355,11 @@ def build_live_evaluators(provider: Any) -> list[Any]:
         recipe = Recipe.model_validate(outputs["recipe"])
         return {
             "key": "coverage",
-            "score": ingredient_coverage_percent(recipe, outputs.get("inventory", [])),
+            "score": ingredient_coverage_percent(
+                recipe,
+                outputs.get("inventory", []),
+                KitchenBasics(outputs.get("kitchen_basics", [])),
+            ),
         }
 
     async def judge(

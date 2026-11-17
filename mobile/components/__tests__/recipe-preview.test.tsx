@@ -1,18 +1,35 @@
 import React from "react";
-import { fireEvent, render } from "@testing-library/react-native";
+import { act, fireEvent, render } from "@testing-library/react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PanResponder } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import RecipeIngredientsSheet from "@/components/recipe-ingredients-sheet";
+import { useActiveCookStore } from "@/stores/activeCook";
 
 jest.mock("@expo/vector-icons/Feather", () => () => null);
 jest.mock("@expo/vector-icons/FontAwesome", () => () => null);
 jest.mock("@/hooks/useReducedMotion", () => ({ useReducedMotion: () => true }));
+jest.mock("expo-crypto", () => ({
+  randomUUID: () => "11111111-1111-4111-8111-111111111111",
+}));
 const mockFetchRecipeImage = jest.fn();
+const mockFetchFoodImage = jest.fn();
 jest.mock("@/lib/supabase", () => ({ supabase: {} }));
 jest.mock("@/lib/image-api", () => ({
   fetchRecipeImage: (...args: unknown[]) => mockFetchRecipeImage(...args),
+  fetchFoodImage: (...args: unknown[]) => mockFetchFoodImage(...args),
 }));
+
+function readyFoodPhoto(foodId: unknown) {
+  return Promise.resolve({
+    status: "ready",
+    image_key: `ingredient:${String(foodId)}`,
+    url: `https://storage.test/${String(foodId)}.webp?token=1`,
+    expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+    reason: null,
+  });
+}
 
 const readyPhoto = {
   status: "ready",
@@ -31,6 +48,7 @@ const recipe = {
   saves_expiring: [],
   ingredients: [
     { name: "Tomato", inventory_item_id: "t1", use_amount: 2, unit: "each" },
+    { name: "Olive oil", inventory_item_id: null, use_amount: 1, unit: "tbsp" },
   ],
   steps: ["Boil pasta", "Add tomato"],
 };
@@ -64,11 +82,21 @@ const renderSheet = (
     { wrapper: queryWrapper() },
   );
 
+async function startCooking(target: typeof recipe) {
+  await useActiveCookStore.getState().hydrate("u1", "h1");
+  await useActiveCookStore.getState().start("u1", "h1", target);
+}
+
 describe("recipe preview sheet", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     mockFetchRecipeImage.mockReset();
     mockFetchRecipeImage.mockReturnValue(new Promise(() => {}));
+    await AsyncStorage.clear();
+    mockFetchFoodImage.mockReset();
+    mockFetchFoodImage.mockReturnValue(new Promise(() => {}));
   });
+
+  afterEach(() => act(() => useActiveCookStore.getState().leaveScope()));
 
   it("shows the recipe photo above the ingredients", async () => {
     mockFetchRecipeImage.mockResolvedValue(readyPhoto);
@@ -78,6 +106,15 @@ describe("recipe preview sheet", () => {
     expect(tree.indexOf("Photo of Pasta")).toBeLessThan(
       tree.indexOf('"Tomato"'),
     );
+  });
+
+  it("shows each ingredient's photo beside its name", async () => {
+    mockFetchFoodImage.mockImplementation(readyFoodPhoto);
+    const screen = renderSheet();
+    expect(
+      await screen.findByTestId("food-photo-image", { includeHiddenElements: true }),
+    ).toBeTruthy();
+    expect(mockFetchFoodImage.mock.calls[0][0]).toBe("t1");
   });
 
   it("renders the payload and expands from the accessible button", () => {
@@ -100,6 +137,12 @@ describe("recipe preview sheet", () => {
     expect(onOpen).toHaveBeenCalledWith(recipe);
   });
 
+  it("marks an ingredient with no food as a kitchen basic", () => {
+    const screen = renderSheet();
+    expect(screen.getByText("Olive oil")).toBeTruthy();
+    expect(screen.getAllByText("Kitchen basic")).toHaveLength(1);
+  });
+
   it("closes and starts cooking the previewed recipe from its primary action", () => {
     const onOpen = jest.fn();
     const onClose = jest.fn();
@@ -109,6 +152,30 @@ describe("recipe preview sheet", () => {
     expect(onClose).toHaveBeenCalled();
     expect(onCook).toHaveBeenCalledWith(recipe);
     expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("offers to continue the active cook instead of starting it again", async () => {
+    await startCooking(recipe);
+    const onClose = jest.fn();
+    const onCook = jest.fn();
+    const screen = renderSheet(jest.fn(), onClose, onCook);
+
+    expect(screen.queryByText("Cook this")).toBeNull();
+    fireEvent.press(screen.getByLabelText("Continue cooking Pasta"));
+
+    expect(onClose).toHaveBeenCalled();
+    expect(onCook).toHaveBeenCalledWith(recipe);
+  });
+
+  it("still offers to cook another recipe while a different cook is active", async () => {
+    await startCooking({ ...recipe, recipe_id: "r2", title: "Soup" });
+    const onCook = jest.fn();
+    const screen = renderSheet(jest.fn(), jest.fn(), onCook);
+
+    expect(screen.getByText("Cook this")).toBeTruthy();
+    fireEvent.press(screen.getByLabelText("Cook Pasta"));
+
+    expect(onCook).toHaveBeenCalledWith(recipe);
   });
 
   it("closes without changing the payload", () => {

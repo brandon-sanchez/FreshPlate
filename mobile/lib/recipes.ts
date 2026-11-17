@@ -1,9 +1,19 @@
 import type {
   RecipeFeedSessionRequest,
+  RecipeIngredient,
   RecipePreferences,
   RecipeSuggestionRequest,
   RequestedDish,
 } from "@/types/recipes";
+
+/**
+ * Returns whether a recipe ingredient is one of the household's kitchen basics,
+ * such as salt. The backend gives an ingredient a null food id only when it is
+ * a basic (`FoodLabels.resolve`), so cooking never deducts these.
+ */
+export function isKitchenBasic(ingredient: RecipeIngredient): boolean {
+  return ingredient.inventory_item_id === null;
+}
 
 export function countAnsweredPreferences(
   preferences: RecipePreferences,

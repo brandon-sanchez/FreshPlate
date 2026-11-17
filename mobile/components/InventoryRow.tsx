@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { Text, View } from "react-native";
-import FontAwesome from "@expo/vector-icons/FontAwesome";
 import Animated, {
   interpolateColor,
   useAnimatedStyle,
@@ -11,8 +10,9 @@ import Animated, {
 } from "react-native-reanimated";
 import { useTheme } from "@/hooks/useTheme";
 import { getUrgency } from "@/constants/theme";
-import PressableScale from "@/components/PressableScale";
+import { RecipePressable } from "@/components/recipe-motion";
 import UrgencyBar from "@/components/UrgencyBar";
+import FoodPhoto from "@/components/food-photo";
 import type { FoodRow } from "@/lib/foodRows";
 import { formatAmount } from "@/lib/amount";
 
@@ -23,6 +23,12 @@ type InventoryRowProps = {
   onPress?: (row: FoodRow) => void;
   /** When true, the row pulses with the accent color once to draw the eye. */
   highlight?: boolean;
+  /**
+   * Whether to request the food's photo. The first request may start a paid
+   * generation, so pass `false` for a row that is not on screen yet; the
+   * category icon shows instead.
+   */
+  photoEnabled: boolean;
 };
 
 // Holds the press shrink back briefly, so a scroll that starts on a row
@@ -30,10 +36,16 @@ type InventoryRowProps = {
 const PRESS_FEEDBACK_DELAY_MS = 100;
 
 /**
- * Renders one food as an inventory card: name, total amount with batch count
- * and locations, and an urgency bar and label driven by `row.days`.
+ * Renders one food as an inventory card: the food's photo, name, total
+ * amount with batch count and locations, and an urgency bar and label driven
+ * by `row.days`. The category icon stands in until the photo loads.
  */
-function InventoryRow({ row, onPress, highlight }: InventoryRowProps) {
+function InventoryRow({
+  row,
+  onPress,
+  highlight,
+  photoEnabled,
+}: InventoryRowProps) {
   const { colors, fonts, card } = useTheme();
   const { days } = row;
   const urgencyLabel = days === null ? null : getUrgency(days).label;
@@ -45,10 +57,6 @@ function InventoryRow({ row, onPress, highlight }: InventoryRowProps) {
         : days <= 1
           ? colors.warn
           : colors.textMuted;
-
-  const iconName = (row.category?.icon ?? "circle-o") as React.ComponentProps<
-    typeof FontAwesome
-  >["name"];
 
   // Highlight pulse: ramp in 200ms, hold 600ms, ramp out 700ms — total ~1.5s.
   const pulse = useSharedValue(0);
@@ -79,10 +87,11 @@ function InventoryRow({ row, onPress, highlight }: InventoryRowProps) {
   // LotOutcomeSwipe, the swipeable's tap gesture keeps a RectButton's onPress
   // from firing on iOS, so the row would not open.
   return (
-    <PressableScale
+    <RecipePressable
       unstable_pressDelay={PRESS_FEEDBACK_DELAY_MS}
       onPress={onPress ? () => onPress(row) : undefined}
-      accessibilityRole="button"
+      disabled={!onPress}
+      accessibilityRole={onPress ? "button" : undefined}
       accessibilityLabel={accessibilitySummary(row)}
     >
       <Animated.View
@@ -108,18 +117,12 @@ function InventoryRow({ row, onPress, highlight }: InventoryRowProps) {
             padding: 12,
           }}
         >
-          <View
-            style={{
-              width: 48,
-              height: 48,
-              borderRadius: 12,
-              backgroundColor: colors.surfaceAlt,
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <FontAwesome name={iconName} size={22} color={colors.textMuted} />
-          </View>
+          <FoodPhoto
+            foodId={row.foodId}
+            size={48}
+            icon={row.category?.icon}
+            enabled={photoEnabled}
+          />
 
           <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
             <Text
@@ -162,7 +165,7 @@ function InventoryRow({ row, onPress, highlight }: InventoryRowProps) {
           ) : null}
         </View>
       </Animated.View>
-    </PressableScale>
+    </RecipePressable>
   );
 }
 

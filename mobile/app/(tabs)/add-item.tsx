@@ -50,7 +50,8 @@ export default function AddItemScreen() {
         <SegmentedControl
           options={ENTRY_MODES}
           selected={mode}
-          onSelect={(option) => setMode(option as EntryMode)}
+          onSelect={setMode}
+          role="tab"
         />
       </View>
 

@@ -20,10 +20,10 @@ import {
   type SortBy,
 } from "@/lib/foodSort";
 import type { FilterOption } from "@/lib/inventoryFilters";
-import { COLLAPSE, REDUCED_FADE_MS, SELECTION_SPRING } from "@/lib/motion";
+import { COLLAPSE, REDUCED_FADE_MS, TAB_SPRING } from "@/lib/motion";
 
 const MENU_ROW_HEIGHT = 44;
-const SPRING = SELECTION_SPRING;
+const SPRING = TAB_SPRING;
 const FADE = { duration: REDUCED_FADE_MS };
 const SWITCH_TRAVEL = 15;
 
@@ -128,7 +128,7 @@ export function SortList({
   useEffect(() => {
     offset.value = reducedMotion
       ? target.y
-      : withSpring(target.y, SELECTION_SPRING);
+      : withSpring(target.y, TAB_SPRING);
     height.value = target.height;
   }, [offset, height, target.y, target.height, reducedMotion]);
   const highlightStyle = useAnimatedStyle(() => ({

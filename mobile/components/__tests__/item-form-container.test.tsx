@@ -1,10 +1,17 @@
 import React from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react-native";
 import type { InventoryItem } from "@/hooks/useInventoryItems";
 import { dateInDays } from "@/lib/expiry";
 import type { KnownFood } from "@/lib/knownFood";
 
 jest.mock("@/lib/supabase", () => ({ supabase: {} }));
+jest.mock("@/hooks/useReducedMotion", () => ({ useReducedMotion: () => true }));
+
+const mockFetchFoodImage = jest.fn((..._args: unknown[]) => new Promise(() => {}));
+jest.mock("@/lib/image-api", () => ({
+  fetchFoodImage: (...args: unknown[]) => mockFetchFoodImage(...args),
+}));
 jest.mock("@expo/vector-icons/FontAwesome", () => () => null);
 jest.mock("@react-native-community/slider", () => () => null);
 
@@ -71,8 +78,19 @@ function formFor(existingLots?: InventoryItem[]) {
   );
 }
 
+function withQueryClient() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  });
+  return {
+    wrapper: ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  };
+}
+
 function renderForm(existingLots?: InventoryItem[]) {
-  const view = render(formFor(existingLots));
+  const view = render(formFor(existingLots), withQueryClient());
   fireEvent.changeText(screen.getByPlaceholderText("What are you adding?"), "  horchata ");
   return view;
 }

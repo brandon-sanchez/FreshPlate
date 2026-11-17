@@ -612,6 +612,35 @@ describe("useRecipeFeed", () => {
     expect(result.current.isExhausted).toBe(true);
   });
 
+  it("restores a dismissed card to its place in the feed", async () => {
+    mockCreateSession.mockResolvedValueOnce(
+      page(
+        [
+          recipe("recipe-1", "Spinach Pasta"),
+          recipe("recipe-2", "Soup"),
+          recipe("recipe-3", "Salad"),
+        ],
+        null,
+        false,
+      ),
+    );
+
+    const { result } = renderHook(() => useRecipeFeed(), { wrapper });
+    act(() => result.current.start(request));
+    await waitFor(() => expect(result.current.recipes).toHaveLength(3));
+
+    act(() => result.current.dismiss(["recipe-2"]));
+    await waitFor(() => expect(result.current.recipes).toHaveLength(2));
+    act(() => result.current.restore(["recipe-2"]));
+    await waitFor(() =>
+      expect(result.current.recipes.map((item) => item.title)).toEqual([
+        "Spinach Pasta",
+        "Soup",
+        "Salad",
+      ]),
+    );
+  });
+
   describe("steering", () => {
     const withFoods = (recipeId: string, foods: string[]): RecipeSuggestion => ({
       ...recipe(recipeId, recipeId),

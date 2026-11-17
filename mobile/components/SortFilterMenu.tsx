@@ -25,7 +25,7 @@ import {
   SortList,
   SwitchRow,
 } from "@/components/SortFilterMenuRows";
-import PressableScale from "@/components/PressableScale";
+import { RecipePressable } from "@/components/recipe-motion";
 import { useTheme } from "@/hooks/useTheme";
 import { anchoredFrame, type WindowRect } from "@/lib/anchoredFrame";
 import type { SortBy } from "@/lib/foodSort";
@@ -286,7 +286,7 @@ function MenuFooter({
           Clear filters
         </Text>
       </Pressable>
-      <PressableScale
+      <RecipePressable
         onPress={onDone}
         accessibilityRole="button"
         style={{
@@ -306,7 +306,7 @@ function MenuFooter({
         >
           Done
         </Text>
-      </PressableScale>
+      </RecipePressable>
     </View>
   );
 }

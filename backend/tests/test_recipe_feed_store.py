@@ -8,6 +8,7 @@ from uuid import UUID
 import httpx
 import pytest
 
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.models.recipes import RecipeSuggestion
 from app.services.recipe_feed_store import (
     RecipeFeedSession,
@@ -121,6 +122,41 @@ async def test_store_uses_scoped_reads_and_backend_only_atomic_writes() -> None:
     assert client.calls[3]["url"].endswith("/rpc/claim_recipe_feed_refill")
     assert client.calls[4]["url"].endswith("/rpc/finalize_recipe_feed_refill")
     assert client.calls[4]["json"]["p_claim_id"] == str(claim_id)
+
+
+@pytest.mark.asyncio
+async def test_store_round_trips_a_sessions_kitchen_basics() -> None:
+    session_id = UUID("00000000-0000-0000-0000-000000000020")
+    row = {**_session_row(session_id), "kitchen_basics": ["Salt", "Olive oil"]}
+    client = FakeHttpClient(
+        [httpx.Response(200, json=[row]), httpx.Response(200, json=[row])]
+    )
+    store = SupabaseRecipeFeedStore(
+        "user-jwt",
+        url="https://project.supabase.co",
+        publishable_key="publishable-key",
+        secret_key="backend-secret",
+        http_client=client,
+    )
+    session = RecipeFeedSession.model_validate(
+        {**row, "kitchen_basics": KitchenBasics(["Salt", " salt", "Olive oil"])}
+    )
+
+    await store.create_session(session, recipes=[_recipe()])
+    stored = await store.get_session(session.user_id, session_id)
+
+    sent = client.calls[0]["json"]["p_session"]["kitchen_basics"]
+    assert sent == ["Salt", "Olive oil"]
+    assert stored.kitchen_basics == KitchenBasics(["Salt", "Olive oil"])
+
+
+@pytest.mark.asyncio
+async def test_a_session_row_without_basics_refills_with_none() -> None:
+    session = RecipeFeedSession.model_validate(
+        _session_row(UUID("00000000-0000-0000-0000-000000000020"))
+    )
+
+    assert session.kitchen_basics == KitchenBasics(())
 
 
 @pytest.mark.asyncio

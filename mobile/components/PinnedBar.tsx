@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
+import { View } from "react-native";
 import Animated, {
   interpolate,
   useAnimatedStyle,
-  useSharedValue,
   type SharedValue,
 } from "react-native-reanimated";
 import { useTheme } from "@/hooks/useTheme";
@@ -14,30 +14,21 @@ const EDGE_SHADOW = {
 } as const;
 
 type PinnedBarProps = {
-  /** The scroll view's vertical offset, in points. */
+  /** The list's vertical scroll offset, in points. */
   scrollY: SharedValue<number>;
-  /** Receives the bar's height in points, for content that sticks below it. */
-  height: SharedValue<number>;
+  /** Where the bar sits in the list content, in points. */
+  top: SharedValue<number>;
   /** The controls to pin. */
   children: ReactNode;
 };
 
 /**
- * A bar inside a scroll view's content that scrolls with it until it reaches
- * the top, then stays there while the content passes under it. A hairline
- * and a soft shadow fade in over the first 8 points that content passes
- * under the bar. Place it before the content it should cover.
+ * The background of controls pinned to the top of a list, such as the header
+ * {@link StickyListHeader} pins. A hairline and a soft shadow fade in over
+ * the first 8 points that content passes under the bar.
  */
-export default function PinnedBar({
-  scrollY,
-  height,
-  children,
-}: PinnedBarProps) {
+export default function PinnedBar({ scrollY, top, children }: PinnedBarProps) {
   const { colors, colorScheme } = useTheme();
-  const top = useSharedValue(0);
-  const pinStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: Math.max(0, scrollY.value - top.value) }],
-  }));
   const edgeStyle = useAnimatedStyle(() => ({
     opacity: interpolate(
       scrollY.value - top.value,
@@ -48,21 +39,13 @@ export default function PinnedBar({
   }));
 
   return (
-    <Animated.View
-      onLayout={(event) => {
-        top.value = event.nativeEvent.layout.y;
-        height.value = event.nativeEvent.layout.height;
+    <View
+      style={{
+        paddingHorizontal: 16,
+        paddingTop: 6,
+        paddingBottom: 10,
+        backgroundColor: colors.bg,
       }}
-      style={[
-        {
-          zIndex: 10,
-          paddingHorizontal: 16,
-          paddingTop: 6,
-          paddingBottom: 10,
-          backgroundColor: colors.bg,
-        },
-        pinStyle,
-      ]}
     >
       <Animated.View
         pointerEvents="none"
@@ -82,6 +65,6 @@ export default function PinnedBar({
         ]}
       />
       {children}
-    </Animated.View>
+    </View>
   );
 }
