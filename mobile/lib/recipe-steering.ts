@@ -19,12 +19,15 @@ const MIN_SHARED_FOODS = 2;
 const MAX_STEERING_MORE_LIKE = 3;
 const MAX_STEERING_LESS_LIKE = 10;
 
+// Kitchen basics, the ingredients with no inventory id, season nearly every
+// recipe, so they say nothing about likeness. Mirrors `_examples` in
+// backend/app/services/recipe_steering.py.
 function recipeFoods(recipe: RecipeSuggestion): Set<string> {
   return new Set(
-    recipe.ingredients.map(
-      (ingredient) =>
-        ingredient.inventory_item_id ??
-        `name:${ingredient.name.trim().toLocaleLowerCase().split(/\s+/).join(" ")}`,
+    recipe.ingredients.flatMap((ingredient) =>
+      ingredient.inventory_item_id === null
+        ? []
+        : [ingredient.inventory_item_id],
     ),
   );
 }
@@ -32,7 +35,7 @@ function recipeFoods(recipe: RecipeSuggestion): Set<string> {
 /**
  * Returns whether two recipes are alike: they share at least two foods, and
  * the shared foods are at least half of all the foods the two use between
- * them. Foods match by inventory id, or by name when an ingredient has none.
+ * them. Foods match by inventory id, and kitchen basics don't count.
  */
 export function areRecipesSimilar(
   a: RecipeSuggestion,

@@ -14,7 +14,7 @@ def test_load_prompt_reads_the_versioned_generate_recipes_prompt() -> None:
     prompt = load_prompt("generate_recipes")
 
     assert prompt.name == "generate_recipes"
-    assert prompt.version == 8
+    assert prompt.version == 9
     assert prompt.model == "gemini-3.6-flash"
     assert prompt.thinking == "minimal"
     assert "inventory" in prompt.system.lower()
@@ -130,7 +130,7 @@ def test_trace_config_contains_prompt_and_request_metadata() -> None:
     assert set(config) == {"metadata"}
     assert config["metadata"] == {
         "prompt_name": "generate_recipes",
-        "prompt_version": 8,
+        "prompt_version": 9,
         "request_id": "request-123",
     }
 
@@ -145,10 +145,10 @@ def test_trace_config_rejects_an_empty_request_id() -> None:
 def test_meal_judge_prompt_is_a_minimal_thinking_checklist() -> None:
     prompt = load_prompt("assess_meals")
 
-    assert prompt.version == 3
+    assert prompt.version == 4
     assert prompt.thinking == "minimal"
     assert "reasoning fields before the yes/no fields" in prompt.system
-    assert "Water is always available" in prompt.system
+    assert "kitchen_basics are always available" in prompt.system
 
 
 def test_generate_prompt_allows_a_snack_or_dessert_only_when_asked() -> None:
