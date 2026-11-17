@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SectionList } from "react-native";
+import { swipeOpen } from "@/test-utils/swipe";
 
 const mockLots = { current: [] as unknown[] };
 const mockRpc = jest.fn();
@@ -90,9 +91,9 @@ function renderScreen() {
   );
 }
 
-function dragOpen(name: string) {
+async function dragOpen(name: string, lotIds: string) {
   const row = screen.getAllByTestId("swipe-row").find((r) => within(r).queryByText(name))!;
-  fireEvent(row, "swipeableOpenStartDrag", "left");
+  await swipeOpen(`lot-swipe:${lotIds}`);
   return row;
 }
 
@@ -128,7 +129,7 @@ it("builds a row's swipe actions only once the row is dragged", async () => {
   await screen.findByText("2 items · 1 expired");
   expect(screen.queryByLabelText("Toss")).toBeNull();
 
-  const eggsRow = dragOpen("Eggs");
+  const eggsRow = await dragOpen("Eggs", "eggs-1");
 
   expect(within(eggsRow).getByLabelText("Toss")).toBeTruthy();
   expect(screen.getAllByLabelText("Toss")).toHaveLength(1);
@@ -138,7 +139,7 @@ it("records every batch a row stacks when its swipe action is tapped", async () 
   renderScreen();
   await screen.findByText("2 items · 1 expired");
   fireEvent.press(screen.getByRole("tab", { name: "Category" }));
-  const milkRow = dragOpen("Milk");
+  const milkRow = await dragOpen("Milk", "milk-fridge,milk-freezer");
 
   fireEvent.press(within(milkRow!).getByLabelText("Toss"));
 
@@ -156,7 +157,7 @@ it("records a row once when its actions are tapped again before the first record
   mockRpc.mockReturnValue(new Promise((resolve) => (finish = resolve)));
   renderScreen();
   await screen.findByText("2 items · 1 expired");
-  const milkRow = dragOpen("Milk");
+  const milkRow = await dragOpen("Milk", "milk-fridge");
 
   fireEvent.press(within(milkRow!).getByLabelText("Used up"));
   fireEvent.press(within(milkRow!).getByLabelText("Used up"));
@@ -171,7 +172,7 @@ it("takes taps again after a record fails", async () => {
   renderScreen();
   await screen.findByText("2 items · 1 expired");
   fireEvent.press(screen.getByRole("tab", { name: "Category" }));
-  const milkRow = dragOpen("Milk");
+  const milkRow = await dragOpen("Milk", "milk-fridge,milk-freezer");
 
   fireEvent.press(within(milkRow!).getByLabelText("Used up"));
   await waitFor(() => expect(mockRpc).toHaveBeenCalledTimes(1));
@@ -250,7 +251,7 @@ it("swipes away only the unexpired batches of a row, leaving the expired one for
   ];
   renderScreen();
   await screen.findByText("1 item · 1 expired");
-  const milkRow = dragOpen("Milk");
+  const milkRow = await dragOpen("Milk", "milk-new");
 
   fireEvent.press(within(milkRow!).getByLabelText("Used up"));
 

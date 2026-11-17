@@ -1,14 +1,14 @@
-import { type ReactNode, useCallback, useRef, useState } from "react";
-import { Text, View } from "react-native";
-import { RectButton } from "react-native-gesture-handler";
-import ReanimatedSwipeable, {
-  type SwipeableMethods,
-} from "react-native-gesture-handler/ReanimatedSwipeable";
-import {
+import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import { StyleSheet, Text, View } from "react-native";
+import { Gesture, GestureDetector, RectButton } from "react-native-gesture-handler";
+import Animated, {
+  ReduceMotion,
   runOnJS,
   type SharedValue,
   useAnimatedReaction,
+  useAnimatedStyle,
   useSharedValue,
+  withSpring,
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
@@ -24,34 +24,92 @@ type LotOutcomeSwipeProps = {
   children: ReactNode;
 };
 
-/* ReanimatedSwipeable needs a fixed action width; `flex: 1` leaves the
- * snap-open animation without an anchor and the swipe stalls mid-drag. */
 const PILL_WIDTH = 84;
 const ACTIONS_WIDTH = PILL_WIDTH * 2;
 const PILL_RADIUS = 14;
 const HAPTIC_REARM_BELOW_PROGRESS = 0.35;
+const DRAG_START_DISTANCE = 10;
+const RELEASE_VELOCITY_SHARE = 0.05;
+const SNAP_SPRING = {
+  mass: 2,
+  damping: 1000,
+  stiffness: 700,
+  overshootClamping: true,
+  reduceMotion: ReduceMotion.System,
+};
 
 /**
  * Wraps a food row or batch card so that swiping left reveals "Used up" and
  * "Toss", which record what happened to the batches through
  * {@link useLotOutcome}. Swiping only opens the actions; tapping one commits
- * it, so a long swipe can never pick between them by accident.
+ * it, so a long swipe can never pick between them by accident. Tapping the
+ * row while it is open closes it.
  *
  * Only the first tap counts: the row stays on screen until the list refetches,
  * and a second record of the same batches would be refused. A failed record
  * closes the swipe and takes taps again.
  *
- * Until the row is first dragged open, an empty space as wide as the action
- * buttons stands in for them. The swipe measures it when a drag starts to
- * find where the row snaps open.
+ * The swipe is built here rather than with gesture-handler's
+ * ReanimatedSwipeable, which sets up about a dozen animated values and its
+ * action containers for every row it wraps.
  */
 export default function LotOutcomeSwipe({ lotIds, name, children }: LotOutcomeSwipeProps) {
   const { record } = useLotOutcome();
-  const swipeRef = useRef<SwipeableMethods>(null);
   const firedRef = useRef(false);
   const [actionsMounted, setActionsMounted] = useState(false);
-  // Stable, because a new callback rebuilds the swipe's pan gesture mid-drag.
-  const mountActions = useCallback(() => setActionsMounted(true), []);
+  const offset = useSharedValue(0);
+  const dragStart = useSharedValue(0);
+  const open = useSharedValue(false);
+
+  const snap = useCallback(
+    (toOpen: boolean, velocity = 0) => {
+      "worklet";
+      open.value = toOpen;
+      offset.value = withSpring(toOpen ? -ACTIONS_WIDTH : 0, {
+        ...SNAP_SPRING,
+        velocity,
+      });
+    },
+    [offset, open],
+  );
+
+  const gestureId = lotIds.join(",");
+  const { pan, tap } = useMemo(() => {
+    const mountActions = () => setActionsMounted(true);
+    return {
+      pan: Gesture.Pan()
+        .withTestId(`lot-swipe:${gestureId}`)
+        .activeOffsetX([-DRAG_START_DISTANCE, DRAG_START_DISTANCE])
+        .onStart(() => {
+          dragStart.value = offset.value;
+          runOnJS(mountActions)();
+        })
+        .onUpdate((event) => {
+          offset.value = Math.min(
+            0,
+            Math.max(-ACTIONS_WIDTH, dragStart.value + event.translationX),
+          );
+        })
+        .onEnd((event) => {
+          const travel =
+            event.translationX + RELEASE_VELOCITY_SHARE * event.velocityX;
+          snap(
+            open.value ? travel < ACTIONS_WIDTH / 2 : travel < -ACTIONS_WIDTH / 2,
+            event.velocityX,
+          );
+        }),
+      tap: Gesture.Tap()
+        .shouldCancelWhenOutside(true)
+        .onStart(() => {
+          if (open.value) snap(false);
+        }),
+    };
+  }, [gestureId, dragStart, offset, open, snap]);
+
+  const rowStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: offset.value }],
+    pointerEvents: open.value ? "box-only" : "auto",
+  }));
 
   const act = (outcome: LotOutcome) => {
     if (firedRef.current) return;
@@ -59,42 +117,37 @@ export default function LotOutcomeSwipe({ lotIds, name, children }: LotOutcomeSw
     fireHaptic(Haptics.ImpactFeedbackStyle.Medium);
     record({ lotIds, outcome, name }, () => {
       firedRef.current = false;
-      swipeRef.current?.close();
+      snap(false);
     });
   };
 
   return (
-    <ReanimatedSwipeable
-      ref={swipeRef}
-      friction={1}
-      rightThreshold={ACTIONS_WIDTH / 2}
-      overshootRight={false}
-      onSwipeableOpenStartDrag={mountActions}
-      renderRightActions={(progress) =>
-        actionsMounted ? (
-          <Actions progress={progress} onPress={act} />
-        ) : (
-          <View style={{ width: ACTIONS_WIDTH }} />
-        )
-      }
-    >
-      {children}
-    </ReanimatedSwipeable>
+    <GestureDetector gesture={pan} touchAction="pan-y">
+      <View testID="swipe-row" style={styles.container}>
+        {actionsMounted ? <Actions offset={offset} onPress={act} /> : null}
+        <GestureDetector gesture={tap} touchAction="pan-y">
+          <Animated.View style={rowStyle}>{children}</Animated.View>
+        </GestureDetector>
+      </View>
+    </GestureDetector>
   );
 }
 
 function Actions({
-  progress,
+  offset,
   onPress,
 }: {
-  progress: SharedValue<number>;
+  offset: SharedValue<number>;
   onPress: (outcome: LotOutcome) => void;
 }) {
   const { colors } = useTheme();
+  const hiddenWhileClosedStyle = useAnimatedStyle(() => ({
+    opacity: offset.value < 0 ? 1 : 0,
+  }));
 
   const openHapticFired = useSharedValue(false);
   useAnimatedReaction(
-    () => progress.value,
+    () => -offset.value / ACTIONS_WIDTH,
     (current, previous) => {
       if (current >= 1 && (previous ?? 0) < 1 && !openHapticFired.value) {
         openHapticFired.value = true;
@@ -106,7 +159,7 @@ function Actions({
   );
 
   return (
-    <View style={{ width: ACTIONS_WIDTH, flexDirection: "row", paddingLeft: 4 }}>
+    <Animated.View style={[styles.actions, hiddenWhileClosedStyle]}>
       <Pill
         label="Used up"
         icon="check"
@@ -121,7 +174,7 @@ function Actions({
         ink="#FFFFFF"
         onPress={() => onPress("tossed")}
       />
-    </View>
+    </Animated.View>
   );
 }
 
@@ -179,3 +232,16 @@ function Pill({
 function fireHaptic(style: Haptics.ImpactFeedbackStyle) {
   Haptics.impactAsync(style).catch(() => {});
 }
+
+const styles = StyleSheet.create({
+  container: { overflow: "hidden" },
+  actions: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    width: ACTIONS_WIDTH,
+    flexDirection: "row",
+    paddingLeft: 4,
+  },
+});
