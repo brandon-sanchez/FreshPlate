@@ -3,7 +3,6 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { SectionList } from "react-native";
 import { swipeOpen } from "@/test-utils/swipe";
 
 const mockLots = { current: [] as unknown[] };
@@ -45,6 +44,7 @@ jest.mock("@/lib/image-api", () => ({
 }));
 
 import InventoryScreen from "@/app/(tabs)/inventory";
+import PinnedSectionList from "@/components/PinnedSectionList";
 
 function inDays(n: number): string {
   const d = new Date();
@@ -91,6 +91,13 @@ function renderScreen() {
   );
 }
 
+async function chooseTab(name: string) {
+  fireEvent.press(screen.getByRole("tab", { name }));
+  for (let frame = 0; frame < 20; frame++) {
+    await act(() => new Promise((resolve) => setTimeout(resolve, 16)));
+  }
+}
+
 async function dragOpen(name: string, lotIds: string) {
   const row = screen.getAllByTestId("swipe-row").find((r) => within(r).queryByText(name))!;
   await swipeOpen(`lot-swipe:${lotIds}`);
@@ -115,7 +122,7 @@ it("shows one row per food with its batches stacked, counting foods in the subti
   renderScreen();
 
   expect(await screen.findByText("2 items · 1 expired")).toBeTruthy();
-  fireEvent.press(screen.getByRole("tab", { name: "Urgency" }));
+  await chooseTab("Urgency");
   expect(screen.getAllByText("Milk")).toHaveLength(1);
   expect(screen.getByText("2000 ml · 2 batches · Fridge, Freezer")).toBeTruthy();
   expect(screen.getByText("6 egg · Fridge")).toBeTruthy();
@@ -138,7 +145,7 @@ it("builds a row's swipe actions only once the row is dragged", async () => {
 it("records every batch a row stacks when its swipe action is tapped", async () => {
   renderScreen();
   await screen.findByText("2 items · 1 expired");
-  fireEvent.press(screen.getByRole("tab", { name: "Category" }));
+  await chooseTab("Category");
   const milkRow = await dragOpen("Milk", "milk-fridge,milk-freezer");
 
   fireEvent.press(within(milkRow!).getByLabelText("Toss"));
@@ -171,7 +178,7 @@ it("takes taps again after a record fails", async () => {
   mockRpc.mockResolvedValueOnce({ error: { message: "Failed to fetch" } });
   renderScreen();
   await screen.findByText("2 items · 1 expired");
-  fireEvent.press(screen.getByRole("tab", { name: "Category" }));
+  await chooseTab("Category");
   const milkRow = await dragOpen("Milk", "milk-fridge,milk-freezer");
 
   fireEvent.press(within(milkRow!).getByLabelText("Used up"));
@@ -228,7 +235,7 @@ it("opens Review expired from the subtitle in any view, even when the expired ba
   renderScreen();
   await screen.findByText("1 item · 1 expired");
 
-  fireEvent.press(screen.getByRole("tab", { name: "Category" }));
+  await chooseTab("Category");
   fireEvent.press(screen.getByLabelText("1 expired. Review expired batches"));
 
   expect(mockPush).toHaveBeenCalledWith("/review-expired");
@@ -237,7 +244,7 @@ it("opens Review expired from the subtitle in any view, even when the expired ba
 it("opens Review expired from the Expired section header", async () => {
   renderScreen();
   await screen.findByText("2 items · 1 expired");
-  fireEvent.press(screen.getByRole("tab", { name: "Urgency" }));
+  await chooseTab("Urgency");
 
   fireEvent.press(screen.getByText("Review"));
 
@@ -287,7 +294,7 @@ it("keeps Fresh collapsed when nothing was just added", async () => {
   mockLots.current = [...mockLots.current, lotRow("butter-1", butter, 30, "fridge", 250)];
   renderScreen();
   await screen.findByText("3 items · 1 expired");
-  fireEvent.press(screen.getByRole("tab", { name: "Urgency" }));
+  await chooseTab("Urgency");
 
   expect(screen.queryByText("Butter")).toBeNull();
 });
@@ -334,7 +341,7 @@ it("sorts the rows inside each section from the menu, flipping the direction on 
 it("reopens with the grouping and sort chosen last time", async () => {
   const first = renderScreen();
   await screen.findByText("2 items · 1 expired");
-  fireEvent.press(screen.getByRole("tab", { name: "Category" }));
+  await chooseTab("Category");
   await openMenu();
   fireEvent.press(screen.getByRole("radio", { name: "Amount" }));
   await waitFor(async () => expect(await AsyncStorage.getItem("freshplate.inventory-view")).toContain("amount-desc"));
@@ -406,7 +413,7 @@ it("asks for a row's photo only once the row has been on screen", async () => {
   await screen.findByText("2 items · 1 expired");
   expect(mockFetchFoodImage).not.toHaveBeenCalled();
 
-  const list = screen.UNSAFE_getByType(SectionList);
+  const list = screen.UNSAFE_getByType(PinnedSectionList);
   const milkRow = list.props.sections
     .flatMap((section: { data: { foodId: string }[] }) => section.data)
     .find((row: { foodId: string }) => row.foodId === "food-milk");
@@ -431,4 +438,28 @@ it("mounts only the first rows of a long inventory", async () => {
   const shown = screen.getAllByText(/^Food \d+$/).length;
   expect(shown).toBeGreaterThan(0);
   expect(shown).toBeLessThan(60);
+});
+
+it("moves the tab at once and regroups the rows once the old ones fade out", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+
+  fireEvent.press(screen.getByRole("tab", { name: "Urgency" }));
+
+  expect(screen.getByRole("tab", { name: "Urgency", selected: true })).toBeTruthy();
+  expect(screen.queryByText("This week")).toBeNull();
+  expect(await screen.findByText("This week")).toBeTruthy();
+});
+
+it("never says nothing matches while the rows regroup", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+
+  fireEvent.press(screen.getByRole("tab", { name: "Category" }));
+  for (let frame = 0; frame < 20; frame++) {
+    await act(() => new Promise((resolve) => setTimeout(resolve, 16)));
+    expect(screen.queryByText(/No matches/)).toBeNull();
+  }
+
+  expect(screen.getByText("Dairy")).toBeTruthy();
 });

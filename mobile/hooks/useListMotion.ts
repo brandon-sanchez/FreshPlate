@@ -2,13 +2,16 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useSharedValue } from "react-native-reanimated";
 import {
   type AnimatedListChange,
+  hideRows,
   ListChange,
   type ListChangeKind,
   listLayout,
   MAX_STAGGERED_ROWS,
   rowEntering,
   rowExiting,
+  type RowsMotion,
   settleTime,
+  showRows,
 } from "@/lib/listMotion";
 
 /** The animations a list's rows and section headers take, from {@link useListMotion}. */
@@ -19,23 +22,30 @@ export type ListMotion = {
   rowEntering: (index: number) => ReturnType<typeof rowEntering>;
   /** The exiting animation for rows and section headers. */
   rowExiting: ReturnType<typeof rowExiting>;
+  /** The fade and slide that every row and section header share while the grouping changes. */
+  rows: RowsMotion;
 };
 
 /**
- * Returns the inventory list's animations and two calls that pick them.
+ * Returns the inventory list's animations and the calls that start them.
+ *
  * `animate(kind)` makes the next list update a re-sort or a collapse, and
  * holds that kind for {@link settleTime} so the animation finishes; later
  * updates, such as a typed search or a scroll that mounts rows, land at
- * once. `slideToward(from, to)` makes the next update a change of grouping
- * whose rows slide in from the side of the chosen tab, by tab index. Call
- * either just before the state update it describes.
+ * once. Call it just before the state update it describes.
+ *
+ * `hide(direction)` and `show(direction)` fade every row out and back in
+ * around a change of grouping, sliding them with the tab change: 1 when the
+ * chosen tab is right of the last one, -1 when it is left. Both keep their
+ * identity while `reducedMotion` stays the same.
  *
  * @param reducedMotion - Whether Reduce Motion is on; the animations become
  * short fades and the layout lands at once.
  */
 export function useListMotion(reducedMotion: boolean) {
   const change = useSharedValue<ListChangeKind>(ListChange.none);
-  const direction = useSharedValue(1);
+  const opacity = useSharedValue(1);
+  const translateX = useSharedValue(0);
   const settle = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
     () => () => {
@@ -55,24 +65,30 @@ export function useListMotion(reducedMotion: boolean) {
     [change],
   );
 
-  const slideToward = useCallback(
-    (from: number, to: number) => {
-      direction.value = Math.sign(to - from) || 1;
-      animate(ListChange.group);
-    },
-    [animate, direction],
+  const hide = useCallback(
+    (direction: number) =>
+      hideRows({ opacity, translateX }, direction, reducedMotion),
+    [opacity, translateX, reducedMotion],
+  );
+  const show = useCallback(
+    (direction: number) =>
+      showRows({ opacity, translateX }, direction, reducedMotion),
+    [opacity, translateX, reducedMotion],
   );
 
   const motion = useMemo<ListMotion>(() => {
-    const enteringByStaggerStep = Array.from({ length: MAX_STAGGERED_ROWS + 1 }, (_, index) =>
-      rowEntering(change, direction, reducedMotion, index),
+    const enteringByStaggerStep = Array.from(
+      { length: MAX_STAGGERED_ROWS + 1 },
+      (_, index) => rowEntering(change, reducedMotion, index),
     );
     return {
       layout: listLayout(change, reducedMotion),
-      rowEntering: (index) => enteringByStaggerStep[Math.min(index, MAX_STAGGERED_ROWS)],
-      rowExiting: rowExiting(change, direction, reducedMotion),
+      rowEntering: (index) =>
+        enteringByStaggerStep[Math.min(index, MAX_STAGGERED_ROWS)],
+      rowExiting: rowExiting(change),
+      rows: { opacity, translateX },
     };
-  }, [change, direction, reducedMotion]);
+  }, [change, opacity, translateX, reducedMotion]);
 
-  return { motion, animate, slideToward };
+  return { motion, animate, hide, show };
 }

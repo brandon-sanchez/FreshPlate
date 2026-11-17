@@ -6,19 +6,23 @@ import {
   useContext,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
+  useRef,
+  useState,
+  type ComponentType,
   type ReactElement,
   type ReactNode,
   type Ref,
 } from "react";
 import {
-  SectionList,
+  FlatList,
   StyleSheet,
+  type FlatListProps,
   type LayoutChangeEvent,
-  type SectionListData,
-  type SectionListProps,
   type StyleProp,
   type ViewStyle,
+  type ViewToken,
 } from "react-native";
 import Animated, {
   useAnimatedScrollHandler,
@@ -30,51 +34,101 @@ import Animated, {
 import PinnedBar from "@/components/PinnedBar";
 import { pinnedOffset, stickyOffset } from "@/lib/stickyOffset";
 
+/** One section of a {@link PinnedSectionList}: a header and the rows below it. */
+export type PinnedSection<RowT> = {
+  /** Unique among the sections. */
+  key: string;
+  /** The rows under the header, in order. */
+  data: readonly RowT[];
+};
+
 /**
- * Props for {@link PinnedSectionList}: a SectionList's props without the
- * ones it sets itself, plus the pinned content and the layout transition.
+ * Props for {@link PinnedSectionList}: the FlatList props it passes on,
+ * plus the sections, the pinned content and the motion.
  */
-export type PinnedSectionListProps<ItemT, SectionT> = Omit<
-  SectionListProps<ItemT, SectionT>,
-  | "sections"
-  | "renderSectionHeader"
-  | "stickySectionHeadersEnabled"
-  | "StickyHeaderComponent"
-  | "CellRendererComponent"
-  | "onScroll"
-  | "scrollEventThrottle"
+export type PinnedSectionListProps<RowT, SectionT extends PinnedSection<RowT>> = Pick<
+  FlatListProps<RowT>,
+  | "ListHeaderComponent"
+  | "ListFooterComponent"
+  | "contentContainerStyle"
+  | "refreshControl"
+  | "initialNumToRender"
+  | "maxToRenderPerBatch"
+  | "windowSize"
+  | "viewabilityConfig"
+  | "extraData"
+  | "keyboardDismissMode"
+  | "keyboardShouldPersistTaps"
+  | "automaticallyAdjustKeyboardInsets"
 > & {
   /** The sections, below the pinned content. */
-  sections: readonly SectionListData<ItemT, SectionT>[];
-  /** Renders a section's header, which sticks below the pinned content. */
-  renderSectionHeader: (info: {
-    section: SectionListData<ItemT, SectionT>;
-  }) => ReactElement | null;
+  sections: readonly SectionT[];
+  /**
+   * Renders a row. `index` is the row's position in its section. Keep it
+   * stable: a new function renders every mounted row again.
+   */
+  renderItem: (info: { item: RowT; index: number }) => ReactElement | null;
+  /** Renders a section's header, which sticks below the pinned content. Keep it stable. */
+  renderSectionHeader: (info: { section: SectionT }) => ReactElement | null;
+  /** Returns a row's key, unique in the whole list. */
+  keyExtractor: (row: RowT) => string;
+  /** Called with the rows that come into or leave view. */
+  onViewableItemsChanged?: (info: {
+    viewableItems: ViewToken<RowT>[];
+    changed: ViewToken<RowT>[];
+  }) => void;
   /** The content to pin, such as the list's controls. It sits after `ListHeaderComponent`. */
   pinned: ReactNode;
   /** The transition cells and section headers move to new places with. Omit to move them at once. */
   layout?: LayoutAnimationFunction;
+  /** An opacity and sideways offset, in points, that every row and section header take together. The pinned content stays put. */
+  rowsMotion: {
+    opacity: SharedValue<number>;
+    translateX: SharedValue<number>;
+  };
+  /**
+   * While true, the scroll content keeps at least the height it had when
+   * this turned true, so emptying the list doesn't pull the scroll position
+   * or the pinned content with it.
+   */
+  holdContentHeight?: boolean;
+  /** Receives {@link PinnedSectionListHandle}. */
+  ref?: Ref<PinnedSectionListHandle>;
 };
+
+/** Calls a screen can make on a {@link PinnedSectionList}. */
+export type PinnedSectionListHandle = {
+  /** Scrolls up to where the pinned content just reaches the top, if the list is scrolled past that point. */
+  scrollToPinned: () => void;
+};
+
+type Cell<RowT, SectionT> =
+  | { kind: "pinned" }
+  | { kind: "header"; section: SectionT }
+  | { kind: "row"; row: RowT; index: number };
 
 type StickyFrame = {
   scrollY: SharedValue<number>;
   pinTop: SharedValue<number>;
   pinHeight: SharedValue<number>;
   layout?: LayoutAnimationFunction;
+  rowsOpacity: SharedValue<number>;
+  rowsTranslateX: SharedValue<number>;
 };
 
 const StickyFrameContext = createContext<StickyFrame | null>(null);
+const PinnedContentContext = createContext<ReactNode>(null);
 
-// The pinned content rides as the header of a section of its own, with no
-// rows, so the list keeps it mounted and makes it sticky.
-const PINNED_SECTION = { key: "pinned", data: [] };
+// The pinned content rides in the first cell, which the list always keeps
+// mounted, and which sticks like a section header.
+const PINNED_CELL = { kind: "pinned" } as const;
 
-const AnimatedSectionList = Animated.createAnimatedComponent(
-  SectionList<unknown, unknown>,
+const AnimatedFlatList = Animated.createAnimatedComponent(
+  FlatList<Cell<unknown, unknown>>,
 );
 
 /**
- * A virtualized SectionList whose `pinned` content scrolls with the list
+ * A virtualized sectioned list whose `pinned` content scrolls with the list
  * until it reaches the top and then stays there, with a hairline that fades
  * in as rows pass under it. Each section header sticks just below the pinned
  * content until the next section's header pushes it away.
@@ -85,55 +139,180 @@ const AnimatedSectionList = Animated.createAnimatedComponent(
  * offset, and stays a direct child of the scroll content so its taps land
  * wherever it sits.
  */
-export default function PinnedSectionList<ItemT, SectionT>({
+export default function PinnedSectionList<
+  RowT,
+  SectionT extends PinnedSection<RowT>,
+>({
   sections,
+  renderItem,
   renderSectionHeader,
+  keyExtractor,
+  onViewableItemsChanged,
   pinned,
   layout,
+  rowsMotion,
+  holdContentHeight = false,
+  contentContainerStyle,
+  ref,
   ...listProps
-}: PinnedSectionListProps<ItemT, SectionT>) {
+}: PinnedSectionListProps<RowT, SectionT>) {
   const scrollY = useSharedValue(0);
+  const { opacity: rowsOpacity, translateX: rowsTranslateX } = rowsMotion;
   const pinTop = useSharedValue(0);
   const pinHeight = useSharedValue(0);
   const onScroll = useAnimatedScrollHandler((event) => {
     scrollY.value = event.contentOffset.y;
   });
   const frame = useMemo<StickyFrame>(
-    () => ({ scrollY, pinTop, pinHeight, layout }),
-    [scrollY, pinTop, pinHeight, layout],
+    () => ({
+      scrollY,
+      pinTop,
+      pinHeight,
+      layout,
+      rowsOpacity,
+      rowsTranslateX,
+    }),
+    [scrollY, pinTop, pinHeight, layout, rowsOpacity, rowsTranslateX],
   );
-  const allSections = useMemo(
-    () => [PINNED_SECTION, ...sections] as SectionListData<unknown, unknown>[],
-    [sections],
-  );
-  const renderHeader = useCallback(
-    ({ section }: { section: SectionListData<unknown, unknown> }) =>
-      section === PINNED_SECTION ? (
+    // Reanimated's wrapper drops FlatList's item type and ref.
+  const List = AnimatedFlatList as unknown as ComponentType<
+    FlatListProps<Cell<RowT, SectionT>> & {
+      ref?: Ref<FlatList<Cell<RowT, SectionT>>>;
+      // FlatList takes `strictMode` (react-native/Libraries/Lists/FlatList.js)
+      // but its TypeScript types leave it out.
+      strictMode?: boolean;
+    }
+  >;
+  const previousCells = useRef(new Map<unknown, Cell<RowT, SectionT>>());
+  const hasListHeader = listProps.ListHeaderComponent != null;
+  const { cells, stickyHeaderIndices } = useMemo(() => {
+    const previous = previousCells.current;
+    const next = new Map<unknown, Cell<RowT, SectionT>>();
+    const flat: Cell<RowT, SectionT>[] = [PINNED_CELL];
+    // A sticky index counts `ListHeaderComponent` as the first child.
+    const headerOffset = hasListHeader ? 1 : 0;
+    const sticky = [headerOffset];
+    for (const section of sections) {
+      sticky.push(flat.length + headerOffset);
+      const header =
+        previous.get(section) ?? ({ kind: "header", section } as const);
+      next.set(section, header);
+      flat.push(header);
+      section.data.forEach((row, index) => {
+        const old = previous.get(row);
+        const cell =
+          old?.kind === "row" && old.index === index
+            ? old
+            : ({ kind: "row", row, index } as const);
+        next.set(row, cell);
+        flat.push(cell);
+      });
+    }
+    previousCells.current = next;
+    return { cells: flat, stickyHeaderIndices: sticky };
+  }, [sections, hasListHeader]);
+
+  const renderCell = useCallback(
+    ({ item }: { item: Cell<RowT, SectionT> }) => {
+      if (item.kind === "row")
+        return renderItem({ item: item.row, index: item.index });
+      if (item.kind === "header")
+        return renderSectionHeader({ section: item.section });
+      return (
         <PinnedBar scrollY={scrollY} top={pinTop}>
-          {pinned}
+          <PinnedContent />
         </PinnedBar>
-      ) : (
-        renderSectionHeader({
-          section: section as SectionListData<ItemT, SectionT>,
-        })
-      ),
-    [pinned, renderSectionHeader, scrollY, pinTop],
+      );
+    },
+    [renderItem, renderSectionHeader, scrollY, pinTop],
+  );
+  const cellKey = useCallback(
+    (item: Cell<RowT, SectionT>) =>
+      item.kind === "row"
+        ? keyExtractor(item.row)
+        : item.kind === "header"
+          ? `header:${item.section.key}`
+          : "pinned",
+    [keyExtractor],
+  );
+
+  const reportViewableRows = useCallback(
+    (info: {
+      viewableItems: ViewToken<Cell<RowT, SectionT>>[];
+      changed: ViewToken<Cell<RowT, SectionT>>[];
+    }) => {
+      const rowsOnly = (tokens: ViewToken<Cell<RowT, SectionT>>[]) =>
+        tokens.flatMap((token) =>
+          token.item.kind === "row"
+            ? [{ ...token, item: token.item.row, index: token.item.index }]
+            : [],
+        );
+      onViewableItemsChanged?.({
+        viewableItems: rowsOnly(info.viewableItems),
+        changed: rowsOnly(info.changed),
+      });
+    },
+    [onViewableItemsChanged],
+  );
+
+  const listRef = useRef<FlatList<Cell<RowT, SectionT>>>(null);
+  useImperativeHandle(
+    ref,
+    () => ({
+      scrollToPinned: () => {
+        if (scrollY.value > pinTop.value)
+          listRef.current?.scrollToOffset({
+            offset: pinTop.value,
+            animated: false,
+          });
+      },
+    }),
+    [scrollY, pinTop],
+  );
+
+  const contentHeight = useRef(0);
+  const [heldHeight, setHeldHeight] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    setHeldHeight(holdContentHeight ? contentHeight.current : null);
+  }, [holdContentHeight]);
+  const contentStyle = useMemo(
+    () =>
+      heldHeight === null
+        ? contentContainerStyle
+        : [contentContainerStyle, { minHeight: heldHeight }],
+    [contentContainerStyle, heldHeight],
   );
 
   return (
     <StickyFrameContext.Provider value={frame}>
-      <AnimatedSectionList
-        {...(listProps as SectionListProps<unknown, unknown>)}
-        sections={allSections}
-        renderSectionHeader={renderHeader}
-        stickySectionHeadersEnabled
+      <PinnedContentContext.Provider value={pinned}>
+      <List
+        {...listProps}
+        ref={listRef}
+        // The list then renders a cell again only when its item changes, so
+        // a re-sort or a regroup step leaves unchanged rows alone.
+        strictMode
+        contentContainerStyle={contentStyle}
+        onContentSizeChange={(_, height) => {
+          contentHeight.current = height;
+        }}
+        data={cells}
+        renderItem={renderCell}
+        keyExtractor={cellKey}
+        onViewableItemsChanged={reportViewableRows}
+        stickyHeaderIndices={stickyHeaderIndices}
         StickyHeaderComponent={StickyHeader}
         CellRendererComponent={AnimatedCell}
         onScroll={onScroll}
         scrollEventThrottle={16}
       />
+      </PinnedContentContext.Provider>
     </StickyFrameContext.Provider>
   );
+}
+
+function PinnedContent() {
+  return <>{useContext(PinnedContentContext)}</>;
 }
 
 function useStickyFrame(): StickyFrame {
@@ -143,20 +322,34 @@ function useStickyFrame(): StickyFrame {
 }
 
 type CellProps = {
+  item: unknown;
   children?: ReactNode;
   onLayout?: (event: LayoutChangeEvent) => void;
   style?: StyleProp<ViewStyle>;
 };
 
 /**
- * Each list cell, given to the SectionList as its `CellRendererComponent`.
+ * Each list cell, given to the FlatList as its `CellRendererComponent`.
  * The layout transition sits on the cell because the list moves whole
  * cells, so a view inside one never changes place.
  */
-function AnimatedCell({ children, onLayout, style }: CellProps) {
-  const { layout } = useStickyFrame();
+function AnimatedCell({ item, children, onLayout, style }: CellProps) {
+  const { layout, rowsOpacity, rowsTranslateX } = useStickyFrame();
+  const pinned = item === PINNED_CELL;
+  const rowsStyle = useAnimatedStyle(() =>
+    pinned
+      ? {}
+      : {
+          opacity: rowsOpacity.value,
+          transform: [{ translateX: rowsTranslateX.value }],
+        },
+  );
   return (
-    <Animated.View layout={layout} onLayout={onLayout} style={style}>
+    <Animated.View
+      layout={layout}
+      onLayout={onLayout}
+      style={[style, rowsStyle]}
+    >
       {children}
     </Animated.View>
   );
@@ -164,8 +357,7 @@ function AnimatedCell({ children, onLayout, style }: CellProps) {
 
 /**
  * The props React Native's VirtualizedList gives each cell element, which
- * the ScrollView hands to {@link StickyHeader} as its child. For a section
- * header cell, `item` is the section.
+ * the ScrollView hands to {@link StickyHeader} as its child.
  */
 type CellElement = ReactElement<{
   item: unknown;
@@ -194,7 +386,7 @@ function StickyHeader({
 }: StickyHeaderProps) {
   const { scrollY, pinTop, pinHeight, layout } = useStickyFrame();
   const cell = Children.only(children) as CellElement;
-  const pinned = cell.props.item === PINNED_SECTION;
+  const pinned = cell.props.item === PINNED_CELL;
 
   const top = useSharedValue(0);
   const height = useSharedValue(-1);

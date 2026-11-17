@@ -3,9 +3,10 @@ import {
   useDeferredValue,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
-import { Pressable, RefreshControl, Text, TextInput, View } from "react-native";
+import { RefreshControl, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
@@ -18,10 +19,18 @@ import { useTheme } from "@/hooks/useTheme";
 import { useInventoryItems } from "@/hooks/useInventoryItems";
 import { useInventoryView } from "@/hooks/useInventoryView";
 import { useListMotion } from "@/hooks/useListMotion";
+import { useRegroup } from "@/hooks/useRegroup";
 import InventoryViewControls from "@/components/InventoryViewControls";
 import InventorySectionHeader from "@/components/InventorySectionHeader";
 import InventoryListRow from "@/components/InventoryListRow";
-import PinnedSectionList from "@/components/PinnedSectionList";
+import PinnedSectionList, {
+  type PinnedSectionListHandle,
+} from "@/components/PinnedSectionList";
+import {
+  InventoryListHeader,
+  NoMatches,
+  TopBar,
+} from "@/components/InventoryListHeader";
 import { useSeenKeys } from "@/hooks/useSeenKeys";
 import LoadingState from "@/components/LoadingState";
 import EmptyState from "@/components/EmptyState";
@@ -45,10 +54,8 @@ import {
 import { ListChange } from "@/lib/listMotion";
 
 const INITIAL_CELLS = 12;
-// Screens of rows kept mounted around the visible one, counting it. Fewer
-// screens mount fewer rows when the grouping changes, but more often during
-// a fast scroll.
-const WINDOW_SCREENS = 11;
+const WINDOW_SCREENS = 9;
+const ROWS_PER_BATCH = 3;
 
 type ListSection = {
   key: string;
@@ -68,7 +75,7 @@ export default function InventoryScreen() {
   const reducedMotion = useReducedMotion();
   const inventory = useInventoryItems();
   const view = useInventoryView();
-  const { groupBy, sortBy } = view;
+  const { groupBy, sortBy, setGroupBy, setSortBy } = view;
 
   /* The `added` query param pulses the matching row once per navigation, then
    * clears so subsequent re-renders don't replay the animation. */
@@ -93,7 +100,17 @@ export default function InventoryScreen() {
     fresh: false,
   });
 
-  const { motion, animate, slideToward } = useListMotion(reducedMotion);
+  const { motion, animate, hide, show } = useListMotion(reducedMotion);
+  const list = useRef<PinnedSectionListHandle>(null);
+  // The new grouping starts at its top, under the pinned controls.
+  const scrollToPinned = useCallback(() => list.current?.scrollToPinned(), []);
+  const { rowCap, regroup } = useRegroup({
+    hide,
+    show,
+    onHidden: scrollToPinned,
+    fillTo: INITIAL_CELLS,
+  });
+  const [pendingGroup, setPendingGroup] = useState<GroupBy | null>(null);
 
   const items = useMemo(() => inventory.data ?? [], [inventory.data]);
   const options = useMemo(() => filterOptions(items), [items]);
@@ -105,36 +122,39 @@ export default function InventoryScreen() {
       ),
     [items, deferredQuery, filters, groupBy, sortBy],
   );
-  const listSections = useMemo<ListSection[]>(
-    () =>
-      sections
-        .filter((section) => section.data.length > 0)
-        .map((section) => {
-          const open = openGroups[section.key] !== false;
-          return {
-            key: keyPerGrouping(groupBy, section.key),
-            data: open ? section.data : NO_ROWS,
-            fullSection: section,
-            open,
-          };
-        }),
-    [sections, openGroups, groupBy],
-  );
+  const previousSections = useRef(new Map<string, ListSection>());
+  const listSections = useMemo(() => {
+    const list = capRows(sections, openGroups, rowCap, previousSections.current);
+    previousSections.current = new Map(list.map((section) => [section.key, section]));
+    return list;
+  }, [sections, openGroups, rowCap]);
 
-  const chooseGroup = (next: GroupBy) => {
-    slideToward(GROUP_BYS.indexOf(groupBy), GROUP_BYS.indexOf(next));
-    view.setGroupBy(next);
-  };
-  const chooseSort = (next: SortBy) => {
-    animate(ListChange.reorder);
-    view.setSortBy(next);
-  };
-  const changeFilters = (
-    update: (current: InventoryFilters) => InventoryFilters,
-  ) => {
-    animate(ListChange.reorder);
-    setFilters(update);
-  };
+  const chooseGroup = useCallback(
+    (next: GroupBy) => {
+      const shown = pendingGroup ?? groupBy;
+      if (next === shown) return;
+      setPendingGroup(next);
+      regroup(GROUP_BYS.indexOf(shown), GROUP_BYS.indexOf(next), () => {
+        setGroupBy(next);
+        setPendingGroup(null);
+      });
+    },
+    [pendingGroup, groupBy, regroup, setGroupBy],
+  );
+  const chooseSort = useCallback(
+    (next: SortBy) => {
+      animate(ListChange.reorder);
+      setSortBy(next);
+    },
+    [animate, setSortBy],
+  );
+  const changeFilters = useCallback(
+    (update: (current: InventoryFilters) => InventoryFilters) => {
+      animate(ListChange.reorder);
+      setFilters(update);
+    },
+    [animate],
+  );
   const toggleSection = useCallback(
     (key: string) => {
       animate(ListChange.collapse);
@@ -197,6 +217,63 @@ export default function InventoryScreen() {
     [toggleSection, groupBy, openReview, motion],
   );
 
+  const listHeader = useMemo(
+    () => (
+      <InventoryListHeader
+        itemCount={allRows.length}
+        expiredCount={expiredCount}
+        onReview={openReview}
+        initialQuery={query}
+        onQueryChange={setQuery}
+      />
+    ),
+    [allRows.length, expiredCount, openReview, query],
+  );
+  const noMatches = sections.every((section) => section.data.length === 0);
+  const canClear = activeFilterCount > 0;
+  const listFooter = useMemo(
+    () =>
+      noMatches ? (
+        <NoMatches
+          onClear={canClear ? () => changeFilters(() => EMPTY_FILTERS) : undefined}
+        />
+      ) : null,
+    [noMatches, canClear, changeFilters],
+  );
+  const refreshing = inventory.isFetching && !inventory.isPending;
+  const { refetch } = inventory;
+  const refreshControl = useMemo(
+    () => (
+      <RefreshControl
+        refreshing={refreshing}
+        onRefresh={() => refetch()}
+        tintColor={colors.accent}
+      />
+    ),
+    [refreshing, refetch, colors.accent],
+  );
+  const shownGroup = pendingGroup ?? groupBy;
+  const totalCount = allRows.length;
+  const controls = useMemo(
+    () => (
+      <InventoryViewControls
+        groupBy={shownGroup}
+        onGroupByChange={chooseGroup}
+        sortBy={sortBy}
+        onSortChange={chooseSort}
+        filters={filters}
+        onFiltersChange={changeFilters}
+        options={options}
+        totalCount={totalCount}
+      />
+    ),
+    [shownGroup, chooseGroup, sortBy, chooseSort, filters, changeFilters, options, totalCount],
+  );
+  const contentStyle = useMemo(
+    () => ({ paddingBottom: tabBarHeight + 24 }),
+    [tabBarHeight],
+  );
+
   if (inventory.isPending || !view.hydrated) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -244,241 +321,61 @@ export default function InventoryScreen() {
       <LayoutAnimationConfig skipEntering>
         <PinnedSectionList
           sections={listSections}
-          keyExtractor={(row) => keyPerGrouping(groupBy, row.key)}
+          keyExtractor={rowKey}
           renderItem={renderRow}
           renderSectionHeader={renderSectionHeader}
-          pinned={
-            <InventoryViewControls
-              groupBy={groupBy}
-              onGroupByChange={chooseGroup}
-              sortBy={sortBy}
-              onSortChange={chooseSort}
-              filters={filters}
-              onFiltersChange={changeFilters}
-              options={options}
-              totalCount={allRows.length}
-            />
-          }
+          pinned={controls}
           layout={motion.layout}
+          rowsMotion={motion.rows}
+          holdContentHeight={rowCap !== null}
+          ref={list}
           {...seenRows.listProps}
           initialNumToRender={INITIAL_CELLS}
           windowSize={WINDOW_SCREENS}
-            keyboardDismissMode="on-drag"
-            keyboardShouldPersistTaps="handled"
-            automaticallyAdjustKeyboardInsets
-            contentContainerStyle={{ paddingBottom: tabBarHeight + 24 }}
-            refreshControl={
-              <RefreshControl
-                refreshing={inventory.isFetching && !inventory.isPending}
-                onRefresh={() => inventory.refetch()}
-                tintColor={colors.accent}
-              />
-            }
-            ListHeaderComponent={
-              <View
-                style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6 }}
-              >
-                <TopBar
-                  title="Inventory"
-                  subtitle={
-                    <>
-                      {`${allRows.length} item${allRows.length === 1 ? "" : "s"} · `}
-                      <Text
-                        style={
-                          expiredCount > 0 ? { color: colors.crit } : undefined
-                        }
-                      >
-                        {`${expiredCount} expired`}
-                      </Text>
-                    </>
-                  }
-                  onSubtitlePress={expiredCount > 0 ? openReview : undefined}
-                  subtitleLabel={`${expiredCount} expired. Review expired batches`}
-                  colors={colors}
-                  fonts={fonts}
-                  padded={false}
-                />
-                <SearchField initialValue={query} onChange={setQuery} />
-              </View>
-            }
-            ListFooterComponent={
-              listSections.length === 0 ? (
-                <NoMatches
-                  onClear={
-                    activeFilterCount > 0
-                      ? () => changeFilters(() => EMPTY_FILTERS)
-                      : undefined
-                  }
-                />
-              ) : null
-            }
-          />
+          maxToRenderPerBatch={ROWS_PER_BATCH}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets
+          contentContainerStyle={contentStyle}
+          refreshControl={refreshControl}
+          ListHeaderComponent={listHeader}
+          ListFooterComponent={listFooter}
+        />
       </LayoutAnimationConfig>
     </View>
   );
 }
 
-/**
- * The search bar. It leaves its text uncontrolled because a `value` prop forces
- * the native text to match it, so a slow list render would write a stale value
- * back over fast typing. `initialValue` restores the search when the field
- * remounts, such as after an error screen.
- */
-function SearchField({
-  initialValue,
-  onChange,
-}: {
-  initialValue: string;
-  onChange: (text: string) => void;
-}) {
-  const { colors, fonts } = useTheme();
-  return (
-    <View
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
-        marginTop: 12,
-        height: 44,
-        paddingHorizontal: 14,
-        borderRadius: 12,
-        backgroundColor: colors.surfaceAlt,
-      }}
-    >
-      <FontAwesome name="search" size={14} color={colors.textMuted} />
-      <TextInput
-        defaultValue={initialValue}
-        onChangeText={onChange}
-        placeholder="Search your fridge"
-        placeholderTextColor={colors.textSubtle}
-        accessibilityLabel="Search your fridge"
-        returnKeyType="search"
-        clearButtonMode="while-editing"
-        autoCapitalize="none"
-        autoCorrect={false}
-        style={{
-          flex: 1,
-          height: "100%",
-          fontFamily: fonts.body,
-          fontSize: 14,
-          color: colors.text,
-        }}
-      />
-    </View>
-  );
+function capRows(
+  sections: readonly FoodSection[],
+  openGroups: Record<string, boolean>,
+  rowCap: number | null,
+  previous: ReadonlyMap<string, ListSection>,
+): ListSection[] {
+  let rowsLeft = rowCap ?? Infinity;
+  const list: ListSection[] = [];
+  for (const section of sections) {
+    if (section.data.length === 0) continue;
+    if (rowsLeft <= 0) break;
+    const open = openGroups[section.key] !== false;
+    const data = !open
+      ? NO_ROWS
+      : rowsLeft >= section.data.length
+        ? section.data
+        : section.data.slice(0, rowsLeft);
+    rowsLeft -= data.length;
+    const old = previous.get(section.key);
+    list.push(
+      old && old.fullSection === section && old.open === open && old.data === data
+        ? old
+        : { key: section.key, data, fullSection: section, open },
+    );
+  }
+  return list;
 }
 
-function NoMatches({ onClear }: { onClear?: () => void }) {
-  const { colors, fonts } = useTheme();
-  return (
-    <View
-      style={{
-        flexDirection: "row",
-        justifyContent: "center",
-        gap: 4,
-        paddingVertical: 48,
-      }}
-    >
-      <Text
-        style={{
-          fontFamily: fonts.body,
-          fontSize: 13,
-          color: colors.textMuted,
-        }}
-      >
-        {onClear ? "No matches." : "No matches. Tap + to add one."}
-      </Text>
-      {onClear ? (
-        <Pressable onPress={onClear} hitSlop={12} accessibilityRole="button">
-          <Text
-            style={{
-              fontFamily: fonts.bodyStrong,
-              fontSize: 13,
-              color: colors.accent,
-            }}
-          >
-            Clear filters
-          </Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
-function TopBar({
-  title,
-  subtitle,
-  onSubtitlePress,
-  subtitleLabel,
-  colors,
-  fonts,
-  padded = true,
-}: {
-  title: string;
-  subtitle?: React.ReactNode;
-  /** Makes the subtitle a link, with a chevron after it. */
-  onSubtitlePress?: () => void;
-  /** The subtitle link's screen-reader label. */
-  subtitleLabel?: string;
-  colors: ReturnType<typeof useTheme>["colors"];
-  fonts: ReturnType<typeof useTheme>["fonts"];
-  padded?: boolean;
-}) {
-  const subtitleText = subtitle ? (
-    <Text
-      style={{
-        fontFamily: fonts.body,
-        fontSize: 13,
-        color: colors.textMuted,
-      }}
-    >
-      {subtitle}
-    </Text>
-  ) : null;
-  return (
-    <View
-      style={{
-        paddingHorizontal: padded ? 16 : 0,
-        paddingTop: padded ? 12 : 0,
-      }}
-    >
-      <Text
-        style={{
-          fontFamily: fonts.display,
-          fontSize: 26,
-          letterSpacing: -0.5,
-          color: colors.text,
-        }}
-      >
-        {title}
-      </Text>
-      {subtitleText && onSubtitlePress ? (
-        <Pressable
-          onPress={onSubtitlePress}
-          hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
-          accessibilityRole="link"
-          accessibilityLabel={subtitleLabel}
-          style={({ pressed }) => ({
-            flexDirection: "row",
-            alignItems: "center",
-            alignSelf: "flex-start",
-            gap: 5,
-            marginTop: 2,
-            opacity: pressed ? 0.6 : 1,
-          })}
-        >
-          {subtitleText}
-          <FontAwesome name="angle-right" size={13} color={colors.crit} />
-        </Pressable>
-      ) : subtitleText ? (
-        <View style={{ marginTop: 2 }}>{subtitleText}</View>
-      ) : null}
-    </View>
-  );
-}
-
-function keyPerGrouping(groupBy: GroupBy, key: string): string {
-  return `${groupBy}:${key}`;
+function rowKey(row: FoodRow): string {
+  return row.key;
 }
 
 function holdsLot(row: FoodRow, lotId: string): boolean {
