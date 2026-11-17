@@ -31,7 +31,11 @@ _DEFAULT_BASICS = KitchenBasics(
 
 
 def _fixture_recipe(case: dict[str, Any]) -> Recipe:
-    """Return the offline model's answer: a recipe of the first usable food."""
+    """Return the offline model's answer: a recipe of all of the first usable food.
+
+    Using the whole stock gives the recipe a meal-sized portion, so the code
+    portion checks pass it on to the offline judge.
+    """
     analysis = analyze_inventory(
         {"inventory": case["inventory"], "kitchen_basics": _DEFAULT_BASICS}
     )
@@ -52,9 +56,8 @@ def _fixture_recipe(case: dict[str, Any]) -> Recipe:
             RecipeIngredient(
                 name=item.name,
                 inventory_item_id=food_label,
-                use_amount=1,
+                use_amount=item.available,
                 unit=item.stock_unit,
-                display_amount="1",
             ),
         ],
         steps=[

@@ -1,4 +1,4 @@
-"""Review one generated recipe: inventory checks, then the judge."""
+"""Review one generated recipe: inventory checks, portion checks, then the judge."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from app.ai.agents.dish import RequestedDish, requested_dish
 from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.models import Recipe
 from app.ai.agents.nodes import check_quality
+from app.ai.agents.portions import meal_portion_issue
 from app.ai.agents.state import RecipeReview
 from app.ai.llm.errors import ProviderError
 from app.ai.llm.protocol import LLMProvider
@@ -164,9 +165,10 @@ async def review_recipe(
 ) -> RecipeReview:
     """Check one generated recipe in code, then ask the judge only if it passes.
 
-    The inventory checks of ``check_quality`` run first. A recipe they
-    reject gets its feedback with no model call. Logs the verdict and the
-    judge's time for each recipe the judge sees.
+    The inventory checks of ``check_quality`` run first, then
+    ``meal_portion_issue``. A recipe either one rejects gets its feedback
+    with no model call. Logs the verdict and the judge's time for each
+    recipe that passes the inventory checks.
 
     Args:
         recipe: One recipe as a generation call returned it.
@@ -187,6 +189,13 @@ async def review_recipe(
     if not grounded["valid_recipes"]:
         return RecipeReview(None, grounded["quality_feedback"])
     tidy = grounded["valid_recipes"][0]
+    dish = requested_dish(state.get("preferences", {}))
+    portion = meal_portion_issue(tidy, state.get("usable_items", []), dish)
+    if portion is not None:
+        verdict, reason = portion
+        _log_review(tidy, verdict, judge_seconds=None)
+        return RecipeReview(None, f"Recipe '{tidy.title}': {verdict}: {reason}")
+
     started = time.monotonic()
     verdict, reason = await assess_meal(
         tidy, state, provider, prompt=prompt, deadline=deadline
@@ -197,14 +206,18 @@ async def review_recipe(
     return RecipeReview(None, f"Recipe '{tidy.title}': {verdict}: {reason}")
 
 
-def _log_review(recipe: Recipe, verdict: MealVerdict, *, judge_seconds: float) -> None:
+def _log_review(
+    recipe: Recipe, verdict: MealVerdict, *, judge_seconds: float | None
+) -> None:
     """Log one review, so judge time and rejections by check can be tuned.
 
-    The judge call's tokens are in the provider's own call record.
+    ``judge_seconds`` is None when code rejected the recipe without a judge
+    call. The judge call's tokens are in the provider's own call record.
     """
     review = {
         "verdict": verdict,
-        "judge_seconds": round(judge_seconds, 2),
+        "checked_by": "code" if judge_seconds is None else "judge",
+        "judge_seconds": None if judge_seconds is None else round(judge_seconds, 2),
         "title": recipe.title,
     }
     logger.info(

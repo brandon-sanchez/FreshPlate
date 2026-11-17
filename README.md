@@ -36,7 +36,7 @@ flowchart LR
 	Graph -.-> LS["LangSmith"]
 ```
 
-The recipe pipeline has three nodes. `analyze_inventory` filters and orders the inventory. `retrieve_recipes` finds similar recipes in pgvector. `write_recipes` asks Gemini for each recipe in its own call, all at once. As each recipe arrives, code rejects any that uses food you don't have, and Gemini judges whether the rest are real meals. If a recipe is rejected and time remains, that recipe alone is written again with the reason attached.
+The recipe pipeline has three nodes. `analyze_inventory` filters and orders the inventory. `retrieve_recipes` finds similar recipes in pgvector. `write_recipes` asks Gemini for each recipe in its own call, all at once. As each recipe arrives, code rejects any that uses food you don't have or is too small to be a meal, and Gemini judges whether the rest are real meals. If a recipe is rejected and time remains, that recipe alone is written again with the reason attached.
 
 [Architecture](docs/architecture.md) explains each part, with diagrams of the pipeline, the recipe feed, the cook flow, and auth.
 
