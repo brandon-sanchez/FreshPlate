@@ -17,6 +17,7 @@ import { daysUntilExpiration } from "@/lib/expiry";
 import { useFoodCategories } from "@/hooks/useFoodCategories";
 import SegmentedControl from "@/components/SegmentedControl";
 import InventoryRow from "@/components/InventoryRow";
+import { useSeenKeys } from "@/hooks/useSeenKeys";
 import LotOutcomeSwipe from "@/components/LotOutcomeSwipe";
 import LoadingState from "@/components/LoadingState";
 import EmptyState from "@/components/EmptyState";
@@ -48,6 +49,7 @@ export default function InventoryScreen() {
    * clears so subsequent re-renders don't replay the animation. */
   const { added } = useLocalSearchParams<{ added?: string }>();
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const seenRows = useSeenKeys<FoodRow>((row) => row.foodId);
   useEffect(() => {
     if (!added) return;
     setHighlightId(added);
@@ -161,6 +163,7 @@ export default function InventoryScreen() {
       <SectionList<FoodRow, FoodSection>
         sections={visibleSections}
         keyExtractor={(row) => row.key}
+        {...seenRows.listProps}
         stickySectionHeadersEnabled
         contentContainerStyle={{
           paddingHorizontal: 16,
@@ -435,6 +438,7 @@ export default function InventoryScreen() {
             <InventoryRow
               row={row}
               highlight={highlightId !== null && holdsLot(row, highlightId)}
+              photoEnabled={seenRows.seen.has(row.foodId)}
               onPress={() => router.push(`/food/${row.foodId}`)}
             />
           </LotOutcomeSwipe>

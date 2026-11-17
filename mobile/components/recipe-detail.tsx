@@ -15,11 +15,13 @@ import { RecipePressable } from "@/components/recipe-motion";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
 import type { RecipeSuggestion } from "@/types/recipes";
+import FoodPhoto from "@/components/food-photo";
 import RecipePhoto from "@/components/recipe-photo";
 import RecipeSaveButton from "@/components/recipe-save-button";
 import RecipeStats from "@/components/recipe-stats";
 import RecipeSteps from "@/components/recipe-steps";
 import { formatIngredientAmount } from "@/lib/recipe-format";
+import { isKitchenBasic } from "@/lib/recipes";
 
 // Height of the hero photo below the status bar, in points.
 const HERO_HEIGHT = 240;
@@ -184,15 +186,11 @@ export function RecipeView({
                       testID={`recipe-detail-ingredient-${itemIndex}`}
                       style={styles.ingredient}
                     >
-                      <Text
-                        style={{
-                          color: colors.accent,
-                          fontSize: 18,
-                          lineHeight: 20,
-                        }}
-                      >
-                        •
-                      </Text>
+                      <FoodPhoto
+                        foodId={item.inventory_item_id}
+                        size={28}
+                        enabled
+                      />
                       <Text
                         selectable
                         style={{
@@ -207,6 +205,11 @@ export function RecipeView({
                           {formatIngredientAmount(item)}
                         </Text>{" "}
                         {item.name}
+                        {isKitchenBasic(item) ? (
+                          <Text style={{ color: colors.textSubtle }}>
+                            {" · kitchen basic"}
+                          </Text>
+                        ) : null}
                       </Text>
                     </View>
                   );
@@ -329,8 +332,8 @@ const styles = StyleSheet.create({
   ingredient: {
     padding: 8,
     flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 6,
+    alignItems: "center",
+    gap: 10,
   },
   ingredientColumn: { flex: 1, minWidth: 0 },
   footer: {

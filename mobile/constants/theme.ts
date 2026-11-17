@@ -12,6 +12,8 @@ const lightColors = {
   warn: "#C87A2C",
   crit: "#B84438",
   ok: "#5B8A6A",
+  /** Hairline edge on photos so a light photo does not bleed into a light card. */
+  photoOutline: "rgba(0,0,0,0.08)",
 } as const;
 
 const darkColors = {
@@ -28,6 +30,7 @@ const darkColors = {
   warn: "#E09A5A",
   crit: "#E27B72",
   ok: "#7EB49A",
+  photoOutline: "rgba(255,255,255,0.1)",
 } as const;
 
 export type ColorTokens = typeof lightColors;
