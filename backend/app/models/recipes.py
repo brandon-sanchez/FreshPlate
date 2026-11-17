@@ -153,6 +153,25 @@ class RecipeFeedResponse(BaseModel):
     data: RecipeFeedData
 
 
+class RecipeFeedRestoreData(RecipeFeedData):
+    """A live feed session's whole stored pool, for an app that restarted.
+
+    ``recipes`` holds every stored card from position 0 in feed order, and
+    ``next_cursor`` is where the next page starts.
+
+    Attributes:
+        preferences: The answers the session was started with.
+    """
+
+    preferences: dict[str, Any]
+
+
+class RecipeFeedRestoreResponse(BaseModel):
+    """Envelope for the latest feed session; ``data`` is None when none is live."""
+
+    data: RecipeFeedRestoreData | None
+
+
 def _require_finite(value: float) -> float:
     if not math.isfinite(value):
         raise ValueError("Amount must be finite")

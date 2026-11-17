@@ -129,6 +129,9 @@ class Settings(BaseSettings):
     # claim_recipe_feed_refill grants it.
     recipe_feed_page_budget_seconds: float = Field(default=43.0, gt=0, lt=45.0)
     recipe_feed_store_timeout_seconds: float = Field(default=2.0, gt=0, lt=5.0)
+    # Reading a session back generates nothing, so the app falls back to its
+    # empty feed quickly instead of waiting out a generation budget.
+    recipe_feed_restore_budget_seconds: float = Field(default=8.0, gt=0, lt=45.0)
 
     # Server
     host: str = "0.0.0.0"
