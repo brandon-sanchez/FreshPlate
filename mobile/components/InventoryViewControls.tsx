@@ -23,16 +23,17 @@ import Animated, {
   ZoomOut,
 } from "react-native-reanimated";
 import SegmentedControl from "@/components/SegmentedControl";
-import SortFilterMenu, { type MenuAnchor } from "@/components/SortFilterMenu";
+import SortFilterMenu from "@/components/SortFilterMenu";
 import PressableScale from "@/components/PressableScale";
 import { useTheme } from "@/hooks/useTheme";
+import type { WindowRect } from "@/lib/anchoredFrame";
 import { GROUP_BYS, type GroupBy } from "@/lib/foodRows";
 import { sortSummary, type SortBy } from "@/lib/foodSort";
 import {
   countActiveFilters,
   describeFilters,
   EMPTY_FILTERS,
-  type filterOptions,
+  type FilterChoices,
   type InventoryFilters,
 } from "@/lib/inventoryFilters";
 import { MENU_SPRING, REDUCED_FADE_MS } from "@/lib/motion";
@@ -61,7 +62,7 @@ type InventoryViewControlsProps = {
     update: (current: InventoryFilters) => InventoryFilters,
   ) => void;
   /** The places and categories the menu offers, from `filterOptions`. */
-  options: ReturnType<typeof filterOptions>;
+  options: FilterChoices;
   /** How many foods the household has, for the summary line when nothing is filtered. */
   totalCount: number;
 };
@@ -86,7 +87,7 @@ export default function InventoryViewControls({
   const reducedMotion = useReducedMotion();
   const trigger = useRef<View>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
+  const [anchor, setAnchor] = useState<WindowRect | null>(null);
   const active = countActiveFilters(filters);
   const parts = describeFilters(filters, options);
   const summary = [

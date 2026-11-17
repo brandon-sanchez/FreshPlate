@@ -7,18 +7,23 @@ import Animated, {
   interpolateColor,
   ReduceMotion,
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
   withSpring,
   withTiming,
 } from "react-native-reanimated";
 import { useTheme } from "@/hooks/useTheme";
+import {
+  nextSort,
+  SORT_FAMILIES,
+  sortDirection,
+  type SortBy,
+} from "@/lib/foodSort";
 import type { FilterOption } from "@/lib/inventoryFilters";
-import { COLLAPSE, REDUCED_FADE_MS, TAB_SPRING } from "@/lib/motion";
+import { COLLAPSE, REDUCED_FADE_MS, SELECTION_SPRING } from "@/lib/motion";
 
-/** The height of every menu row, in points; the sort highlight steps by it. */
-export const MENU_ROW_HEIGHT = 44;
-
-const SPRING = { ...TAB_SPRING, reduceMotion: ReduceMotion.System };
+const MENU_ROW_HEIGHT = 44;
+const SPRING = SELECTION_SPRING;
 const FADE = { duration: REDUCED_FADE_MS };
 const SWITCH_TRAVEL = 15;
 
@@ -90,28 +95,109 @@ function MenuRow({
   );
 }
 
+type RowFrame = { y: number; height: number };
+
+/**
+ * The sort families over a highlight that slides to the selected one with
+ * the tab spring. Tapping a family picks its first direction; tapping the
+ * selected family flips it. The highlight follows each row's measured frame,
+ * so rows that grow with larger text stay covered.
+ */
+export function SortList({
+  sortBy,
+  onSortChange,
+}: {
+  /** The selected sort. */
+  sortBy: SortBy;
+  /** Called with the sort a tap picks. */
+  onSortChange: (sortBy: SortBy) => void;
+}) {
+  const { colors } = useTheme();
+  const reducedMotion = useReducedMotion();
+  const current = sortDirection(sortBy);
+  const selected = SORT_FAMILIES.findIndex(
+    (family) => family.key === current.family,
+  );
+  const [frames, setFrames] = useState<(RowFrame | undefined)[]>([]);
+  const target = frames[selected] ?? {
+    y: selected * MENU_ROW_HEIGHT,
+    height: MENU_ROW_HEIGHT,
+  };
+  const offset = useSharedValue(target.y);
+  const height = useSharedValue(target.height);
+  useEffect(() => {
+    offset.value = reducedMotion
+      ? target.y
+      : withSpring(target.y, SELECTION_SPRING);
+    height.value = target.height;
+  }, [offset, height, target.y, target.height, reducedMotion]);
+  const highlightStyle = useAnimatedStyle(() => ({
+    height: height.value,
+    transform: [{ translateY: offset.value }],
+  }));
+
+  return (
+    <View>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          {
+            position: "absolute",
+            top: 0,
+            left: 6,
+            right: 6,
+            borderRadius: 10,
+            backgroundColor: colors.accentSoft,
+          },
+          highlightStyle,
+        ]}
+      />
+      {SORT_FAMILIES.map((family, index) => {
+        const isSelected = index === selected;
+        return (
+          <SortRow
+            key={family.key}
+            label={family.label}
+            current={isSelected ? current : null}
+            flips={family.directions.length > 1}
+            onPress={() => onSortChange(nextSort(family.key, sortBy))}
+            onLayout={({ nativeEvent: { layout } }) =>
+              setFrames((all) => {
+                const next = [...all];
+                next[index] = { y: layout.y, height: layout.height };
+                return next;
+              })
+            }
+          />
+        );
+      })}
+    </View>
+  );
+}
+
 /**
  * One sort family. The selected row names its direction and shows an arrow
  * that turns over for the second direction.
  */
-export function SortRow({
+function SortRow({
   label,
-  selected,
-  direction,
-  reversed,
+  current,
   flips,
   onPress,
+  onLayout,
 }: {
   label: string;
-  selected: boolean;
-  /** The selected direction's label, or `null` when another family is selected. */
-  direction: string | null;
-  reversed: boolean;
+  /** The selected direction, or `null` when another family is selected. */
+  current: { label: string; reversed: boolean } | null;
   /** Whether a second tap reverses this family. */
   flips: boolean;
   onPress: () => void;
+  onLayout: React.ComponentProps<typeof Pressable>["onLayout"];
 }) {
   const { colors, fonts } = useTheme();
+  const selected = current !== null;
+  const reversed = current?.reversed ?? false;
+  const direction = current?.label ?? null;
   const turn = useSharedValue(reversed ? 180 : 0);
   const shown = useSharedValue(selected && flips ? 1 : 0);
   useEffect(() => {
@@ -126,6 +212,7 @@ export function SortRow({
   return (
     <MenuRow
       onPress={onPress}
+      onLayout={onLayout}
       accessibilityRole="radio"
       accessibilityLabel={label}
       accessibilityState={{ checked: selected }}

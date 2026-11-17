@@ -1,28 +1,40 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { Pressable, RefreshControl, Text, TextInput, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import Animated, {
-  interpolate,
   LayoutAnimationConfig,
   useAnimatedScrollHandler,
-  useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
 } from "react-native-reanimated";
 import { useTheme } from "@/hooks/useTheme";
 import { useInventoryItems } from "@/hooks/useInventoryItems";
 import { useInventoryView } from "@/hooks/useInventoryView";
+import { useListMotion } from "@/hooks/useListMotion";
 import InventoryViewControls from "@/components/InventoryViewControls";
 import InventorySection from "@/components/InventorySection";
+import PinnedBar from "@/components/PinnedBar";
 import InventoryRow from "@/components/InventoryRow";
 import LotOutcomeSwipe from "@/components/LotOutcomeSwipe";
 import LoadingState from "@/components/LoadingState";
 import EmptyState from "@/components/EmptyState";
 import ErrorState from "@/components/ErrorState";
-import { GROUP_BYS, type FoodRow, type GroupBy, groupFoodRows, stackLots } from "@/lib/foodRows";
+import {
+  GROUP_BYS,
+  type FoodRow,
+  type GroupBy,
+  groupFoodRows,
+  stackLots,
+} from "@/lib/foodRows";
 import { sortSections, type SortBy } from "@/lib/foodSort";
 import {
   countActiveFilters,
@@ -31,21 +43,10 @@ import {
   filterOptions,
   type InventoryFilters,
 } from "@/lib/inventoryFilters";
-import {
-  groupEntering,
-  groupExiting,
-  ListChange,
-  type ListChangeKind,
-  listLayout,
-  rowEntering,
-  rowExiting,
-} from "@/lib/listMotion";
-
-const SETTLE_MS = { [ListChange.reorder]: 600, [ListChange.collapse]: 400 } as const;
-const PIN_EDGE_FADE_DISTANCE = 8;
+import { ListChange } from "@/lib/listMotion";
 
 export default function InventoryScreen() {
-  const { colors, fonts, colorScheme } = useTheme();
+  const { colors, fonts } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
@@ -77,69 +78,44 @@ export default function InventoryScreen() {
   });
 
   const scrollY = useSharedValue(0);
-  const pinTop = useSharedValue(0);
   const pinHeight = useSharedValue(0);
   const listTop = useSharedValue(0);
-  const change = useSharedValue<ListChangeKind>(ListChange.none);
-  const direction = useSharedValue(1);
-  const settle = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(
-    () => () => {
-      if (settle.current) clearTimeout(settle.current);
-    },
-    [],
+  const sticky = useMemo(
+    () => ({ scrollY, listTop, pinHeight }),
+    [scrollY, listTop, pinHeight],
   );
-
-  const animateNext = useCallback(
-    (kind: typeof ListChange.reorder | typeof ListChange.collapse) => {
-      change.value = kind;
-      if (settle.current) clearTimeout(settle.current);
-      settle.current = setTimeout(() => {
-        change.value = ListChange.none;
-      }, SETTLE_MS[kind]);
-    },
-    [change],
-  );
-
   const onScroll = useAnimatedScrollHandler((event) => {
     scrollY.value = event.contentOffset.y;
   });
-  const pinStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: Math.max(0, scrollY.value - pinTop.value) }],
-  }));
-  const pinEdgeStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(scrollY.value - pinTop.value, [0, PIN_EDGE_FADE_DISTANCE], [0, 1], "clamp"),
-  }));
+  const { motion, animate, slideToward } = useListMotion(reducedMotion);
 
   const items = useMemo(() => inventory.data ?? [], [inventory.data]);
   const options = useMemo(() => filterOptions(items), [items]);
   const sections = useMemo(
     () =>
-      sortSections(groupFoodRows(filterInventory(items, deferredQuery, filters), groupBy), sortBy),
+      sortSections(
+        groupFoodRows(filterInventory(items, deferredQuery, filters), groupBy),
+        sortBy,
+      ),
     [items, deferredQuery, filters, groupBy, sortBy],
   );
 
-  const layout = useMemo(() => listLayout(change, reducedMotion), [change, reducedMotion]);
-  const exiting = useMemo(() => rowExiting(change), [change]);
-  const entering = useCallback(
-    (index: number) => rowEntering(change, reducedMotion, index),
-    [change, reducedMotion],
-  );
-
   const chooseGroup = (next: GroupBy) => {
-    direction.value = Math.sign(GROUP_BYS.indexOf(next) - GROUP_BYS.indexOf(groupBy)) || 1;
+    slideToward(GROUP_BYS.indexOf(groupBy), GROUP_BYS.indexOf(next));
     view.setGroupBy(next);
   };
   const chooseSort = (next: SortBy) => {
-    animateNext(ListChange.reorder);
+    animate(ListChange.reorder);
     view.setSortBy(next);
   };
-  const changeFilters = (update: (current: InventoryFilters) => InventoryFilters) => {
-    animateNext(ListChange.reorder);
+  const changeFilters = (
+    update: (current: InventoryFilters) => InventoryFilters,
+  ) => {
+    animate(ListChange.reorder);
     setFilters(update);
   };
   const toggleSection = (key: string) => {
-    animateNext(ListChange.collapse);
+    animate(ListChange.collapse);
     setOpenGroups((g) => ({ ...g, [key]: !(g[key] !== false) }));
   };
 
@@ -161,6 +137,10 @@ export default function InventoryScreen() {
   const allRows = useMemo(() => stackLots(items), [items]);
   const expiredCount = allRows.filter((r) => r.expiredLots > 0).length;
   const openReview = () => router.push("/review-expired");
+  const openFood = useCallback(
+    (row: FoodRow) => router.push(`/food/${row.foodId}`),
+    [router],
+  );
 
   if (inventory.isPending || !view.hydrated) {
     return (
@@ -180,10 +160,19 @@ export default function InventoryScreen() {
 
   if (items.length === 0) {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
-        <TopBar title="Inventory" subtitle="Nothing here yet" colors={colors} fonts={fonts} />
+      <View
+        style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}
+      >
+        <TopBar
+          title="Inventory"
+          subtitle="Nothing here yet"
+          colors={colors}
+          fonts={fonts}
+        />
         <EmptyState
-          icon={<FontAwesome name="archive" size={36} color={colors.textSubtle} />}
+          icon={
+            <FontAwesome name="archive" size={36} color={colors.textSubtle} />
+          }
           title="Your fridge is empty"
           message="Track what's in your fridge and pantry so you waste less and cook more."
           ctaLabel="Add your first item"
@@ -196,7 +185,13 @@ export default function InventoryScreen() {
   const shown = sections.filter((s) => s.data.length > 0);
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
+    <View
+      style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}
+    >
+      {/* A ScrollView rather than a SectionList: native sticky section headers
+          stick at the top edge, where the pinned controls cover them, and
+          SectionList moves whole cells, which defeats per-row layout
+          animations. A household's foods number in the tens to low hundreds. */}
       <Animated.ScrollView
         onScroll={onScroll}
         scrollEventThrottle={16}
@@ -212,13 +207,17 @@ export default function InventoryScreen() {
           />
         }
       >
-        <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6 }}>
+        <View
+          style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6 }}
+        >
           <TopBar
             title="Inventory"
             subtitle={
               <>
                 {`${allRows.length} item${allRows.length === 1 ? "" : "s"} · `}
-                <Text style={expiredCount > 0 ? { color: colors.crit } : undefined}>
+                <Text
+                  style={expiredCount > 0 ? { color: colors.crit } : undefined}
+                >
                   {`${expiredCount} expired`}
                 </Text>
               </>
@@ -229,45 +228,10 @@ export default function InventoryScreen() {
             fonts={fonts}
             padded={false}
           />
-          <SearchField onChange={setQuery} />
+          <SearchField initialValue={query} onChange={setQuery} />
         </View>
 
-        <Animated.View
-          onLayout={(event) => {
-            pinTop.value = event.nativeEvent.layout.y;
-            pinHeight.value = event.nativeEvent.layout.height;
-          }}
-          style={[
-            {
-              zIndex: 10,
-              paddingHorizontal: 16,
-              paddingTop: 6,
-              paddingBottom: 10,
-              backgroundColor: colors.bg,
-            },
-            pinStyle,
-          ]}
-        >
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              {
-                position: "absolute",
-                top: 0,
-                right: 0,
-                bottom: 0,
-                left: 0,
-                backgroundColor: colors.bg,
-                borderBottomWidth: 1,
-                borderBottomColor: colors.border,
-                boxShadow:
-                  colorScheme === "dark"
-                    ? "0 8px 18px -12px rgba(0, 0, 0, 0.7)"
-                    : "0 8px 18px -12px rgba(0, 0, 0, 0.22)",
-              },
-              pinEdgeStyle,
-            ]}
-          />
+        <PinnedBar scrollY={scrollY} height={pinHeight}>
           <InventoryViewControls
             groupBy={groupBy}
             onGroupByChange={chooseGroup}
@@ -278,13 +242,13 @@ export default function InventoryScreen() {
             options={options}
             totalCount={allRows.length}
           />
-        </Animated.View>
+        </PinnedBar>
 
         <LayoutAnimationConfig skipEntering>
           <Animated.View
             key={groupBy}
-            entering={groupEntering(direction, reducedMotion)}
-            exiting={groupExiting(direction, reducedMotion)}
+            entering={motion.groupEntering}
+            exiting={motion.groupExiting}
             onLayout={(event) => {
               listTop.value = event.nativeEvent.layout.y;
             }}
@@ -295,25 +259,27 @@ export default function InventoryScreen() {
               return (
                 <InventorySection
                   key={section.key}
-                  section={open ? section : { ...section, data: [] }}
-                  count={section.data.length}
+                  section={section}
                   open={open}
                   onToggle={() => toggleSection(section.key)}
                   onReview={
-                    groupBy === "Urgency" && section.key === "expired" ? openReview : undefined
+                    groupBy === "Urgency" && section.key === "expired"
+                      ? openReview
+                      : undefined
                   }
-                  scrollY={scrollY}
-                  listTop={listTop}
-                  pinHeight={pinHeight}
-                  layout={layout}
-                  rowEntering={entering}
-                  rowExiting={exiting}
+                  sticky={sticky}
+                  motion={motion}
                   renderRow={(row) => (
-                    <LotOutcomeSwipe lotIds={row.countedLots.map((lot) => lot.id)} name={row.name}>
+                    <LotOutcomeSwipe
+                      lotIds={row.countedLots.map((lot) => lot.id)}
+                      name={row.name}
+                    >
                       <InventoryRow
                         row={row}
-                        highlight={highlightId !== null && holdsLot(row, highlightId)}
-                        onPress={() => router.push(`/food/${row.foodId}`)}
+                        highlight={
+                          highlightId !== null && holdsLot(row, highlightId)
+                        }
+                        onPress={openFood}
                       />
                     </LotOutcomeSwipe>
                   )}
@@ -323,7 +289,9 @@ export default function InventoryScreen() {
             {shown.length === 0 ? (
               <NoMatches
                 onClear={
-                  activeFilterCount > 0 ? () => changeFilters(() => EMPTY_FILTERS) : undefined
+                  activeFilterCount > 0
+                    ? () => changeFilters(() => EMPTY_FILTERS)
+                    : undefined
                 }
               />
             ) : null}
@@ -337,9 +305,16 @@ export default function InventoryScreen() {
 /**
  * The search bar. It leaves its text uncontrolled because a `value` prop forces
  * the native text to match it, so a slow list render would write a stale value
- * back over fast typing.
+ * back over fast typing. `initialValue` restores the search when the field
+ * remounts, such as after an error screen.
  */
-function SearchField({ onChange }: { onChange: (text: string) => void }) {
+function SearchField({
+  initialValue,
+  onChange,
+}: {
+  initialValue: string;
+  onChange: (text: string) => void;
+}) {
   const { colors, fonts } = useTheme();
   return (
     <View
@@ -356,6 +331,7 @@ function SearchField({ onChange }: { onChange: (text: string) => void }) {
     >
       <FontAwesome name="search" size={14} color={colors.textMuted} />
       <TextInput
+        defaultValue={initialValue}
         onChangeText={onChange}
         placeholder="Search your fridge"
         placeholderTextColor={colors.textSubtle}
@@ -364,7 +340,13 @@ function SearchField({ onChange }: { onChange: (text: string) => void }) {
         clearButtonMode="while-editing"
         autoCapitalize="none"
         autoCorrect={false}
-        style={{ flex: 1, height: "100%", fontFamily: fonts.body, fontSize: 14, color: colors.text }}
+        style={{
+          flex: 1,
+          height: "100%",
+          fontFamily: fonts.body,
+          fontSize: 14,
+          color: colors.text,
+        }}
       />
     </View>
   );
@@ -373,13 +355,32 @@ function SearchField({ onChange }: { onChange: (text: string) => void }) {
 function NoMatches({ onClear }: { onClear?: () => void }) {
   const { colors, fonts } = useTheme();
   return (
-    <View style={{ flexDirection: "row", justifyContent: "center", gap: 4, paddingVertical: 48 }}>
-      <Text style={{ fontFamily: fonts.body, fontSize: 13, color: colors.textMuted }}>
+    <View
+      style={{
+        flexDirection: "row",
+        justifyContent: "center",
+        gap: 4,
+        paddingVertical: 48,
+      }}
+    >
+      <Text
+        style={{
+          fontFamily: fonts.body,
+          fontSize: 13,
+          color: colors.textMuted,
+        }}
+      >
         {onClear ? "No matches." : "No matches. Tap + to add one."}
       </Text>
       {onClear ? (
         <Pressable onPress={onClear} hitSlop={12} accessibilityRole="button">
-          <Text style={{ fontFamily: fonts.bodyStrong, fontSize: 13, color: colors.accent }}>
+          <Text
+            style={{
+              fontFamily: fonts.bodyStrong,
+              fontSize: 13,
+              color: colors.accent,
+            }}
+          >
             Clear filters
           </Text>
         </Pressable>

@@ -33,14 +33,70 @@ export type FilterOption<T extends string = string> = {
   count: number;
 };
 
+/** The places and categories the filter menu offers, from {@link filterOptions}. */
+export type FilterChoices = {
+  locations: FilterOption<StorageLocation>[];
+  categories: FilterOption[];
+};
+
+/** The filters chosen from a list of options, in menu order, with their menu labels. */
+export const FILTER_LISTS = [
+  { key: "locations", label: "Location" },
+  { key: "categories", label: "Category" },
+] as const satisfies readonly { key: keyof FilterChoices; label: string }[];
+
+/** The yes-or-no filters, in menu order, with their menu and summary labels. */
+export const FILTER_SWITCHES = [
+  { key: "expiringWeek", label: "Expiring this week" },
+  { key: "leftoversOnly", label: "Leftovers only" },
+] as const satisfies readonly { key: keyof InventoryFilters; label: string }[];
+
+type FilterList = (typeof FILTER_LISTS)[number]["key"];
+type FilterSwitch = (typeof FILTER_SWITCHES)[number]["key"];
+
 /** Returns how many filter values are on: each place, each category and each switch. */
 export function countActiveFilters(filters: InventoryFilters): number {
   return (
     filters.locations.length +
     filters.categories.length +
-    (filters.expiringWeek ? 1 : 0) +
-    (filters.leftoversOnly ? 1 : 0)
+    FILTER_SWITCHES.filter(({ key }) => filters[key]).length
   );
+}
+
+/** Returns `filters` with `value` added to or removed from the `key` list. */
+export function toggleChoice<K extends FilterList>(
+  filters: InventoryFilters,
+  key: K,
+  value: InventoryFilters[K][number],
+): InventoryFilters {
+  const list: string[] = filters[key];
+  return {
+    ...filters,
+    [key]: list.includes(value)
+      ? list.filter((item) => item !== value)
+      : [...list, value],
+  };
+}
+
+/** Returns `filters` with the `key` switch flipped. */
+export function toggleSwitch(
+  filters: InventoryFilters,
+  key: FilterSwitch,
+): InventoryFilters {
+  return { ...filters, [key]: !filters[key] };
+}
+
+/**
+ * Returns the value a filter list's menu row shows: "All" when nothing is
+ * chosen, the label when one option is, otherwise how many are.
+ */
+export function summarizeChoices(
+  chosen: string[],
+  options: FilterOption[],
+): string {
+  if (chosen.length === 0) return "All";
+  if (chosen.length > 1) return `${chosen.length} selected`;
+  return labelOf(options, chosen[0]) ?? "1 selected";
 }
 
 /**
@@ -80,10 +136,7 @@ export function filterInventory(
  * the Category view orders them. Counts are foods, as the section headers
  * count them.
  */
-export function filterOptions(lots: InventoryItem[]): {
-  locations: FilterOption<StorageLocation>[];
-  categories: FilterOption[];
-} {
+export function filterOptions(lots: InventoryItem[]): FilterChoices {
   return {
     locations: groupFoodRows(lots, "Location").map((section) => ({
       value: section.key as StorageLocation,
@@ -101,25 +154,30 @@ export function filterOptions(lots: InventoryItem[]): {
 /**
  * Returns the active filters as short phrases for the summary line: each
  * place, then one category by name or several by count, then the switches.
- * `options` supplies the labels, from {@link filterOptions}.
+ * `options` supplies the labels, from {@link filterOptions}. A chosen
+ * category that is no longer in stock reads "1 category".
  */
 export function describeFilters(
   filters: InventoryFilters,
-  options: ReturnType<typeof filterOptions>,
+  options: FilterChoices,
 ): string[] {
-  const labelOf = (list: FilterOption[], value: string) =>
-    list.find((option) => option.value === value)?.label ?? value;
-  const parts = filters.locations.map((location) =>
-    labelOf(options.locations, location),
+  const parts = filters.locations.map(
+    (location) => labelOf(options.locations, location) ?? location,
   );
   if (filters.categories.length === 1) {
-    parts.push(labelOf(options.categories, filters.categories[0]));
+    parts.push(
+      labelOf(options.categories, filters.categories[0]) ?? "1 category",
+    );
   } else if (filters.categories.length > 1) {
     parts.push(`${filters.categories.length} categories`);
   }
-  if (filters.expiringWeek) parts.push("Expiring this week");
-  if (filters.leftoversOnly) parts.push("Leftovers only");
+  for (const { key, label } of FILTER_SWITCHES)
+    if (filters[key]) parts.push(label);
   return parts;
+}
+
+function labelOf(options: FilterOption[], value: string): string | undefined {
+  return options.find((option) => option.value === value)?.label;
 }
 
 function categoryKey(lot: InventoryItem): string {

@@ -23,6 +23,24 @@ const ROW_STAGGER_MS = 20;
 const MAX_STAGGERED_ROWS = 6;
 const GROUP_SLIDE_IN = 24;
 const GROUP_SLIDE_OUT = 16;
+// TAB_SPRING comes within a pixel of rest in about 500 ms.
+const REORDER_SETTLE_MS = 600;
+
+/**
+ * Returns how long a `reorder` or `collapse` change keeps animating, in
+ * milliseconds: the longest of its layout, stagger and fade timings, with a
+ * little slack. A list should hold the change at least this long.
+ */
+export function settleTime(
+  kind: typeof ListChange.reorder | typeof ListChange.collapse,
+): number {
+  return kind === ListChange.reorder
+    ? REORDER_SETTLE_MS
+    : Math.max(
+        COLLAPSE.duration,
+        MAX_STAGGERED_ROWS * ROW_STAGGER_MS + ROW_FADE_IN_MS,
+      ) + 100;
+}
 
 /**
  * Returns the layout transition for list rows and sections. A re-sort or

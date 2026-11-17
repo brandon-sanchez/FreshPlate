@@ -5,6 +5,9 @@ import {
   EMPTY_FILTERS,
   filterInventory,
   filterOptions,
+  summarizeChoices,
+  toggleChoice,
+  toggleSwitch,
 } from "@/lib/inventoryFilters";
 
 const TODAY = new Date(2026, 10, 8, 12);
@@ -179,5 +182,30 @@ describe("describeFilters", () => {
         options,
       ),
     ).toEqual(["2 categories"]);
+  });
+});
+
+describe("changing filters", () => {
+  it("adds a choice once and removes it on the next toggle, leaving the input alone", () => {
+    const once = toggleChoice(EMPTY_FILTERS, "locations", "fridge");
+    expect(once.locations).toEqual(["fridge"]);
+    expect(toggleChoice(once, "locations", "fridge").locations).toEqual([]);
+    expect(EMPTY_FILTERS.locations).toEqual([]);
+  });
+
+  it("flips one switch", () => {
+    expect(toggleSwitch(EMPTY_FILTERS, "leftoversOnly")).toEqual({ ...EMPTY_FILTERS, leftoversOnly: true });
+  });
+
+  it("summarizes a list as All, the one label, or a count", () => {
+    const { categories } = filterOptions(lots);
+    expect(summarizeChoices([], categories)).toBe("All");
+    expect(summarizeChoices(["cat-dairy"], categories)).toBe("Dairy");
+    expect(summarizeChoices(["cat-dairy", "cat-meals"], categories)).toBe("2 selected");
+  });
+
+  it("names a chosen category that is out of stock without its id", () => {
+    const options = filterOptions([milkFridge]);
+    expect(describeFilters({ ...EMPTY_FILTERS, categories: ["cat-meals"] }, options)).toEqual(["1 category"]);
   });
 });

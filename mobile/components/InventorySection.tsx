@@ -2,27 +2,32 @@ import { useEffect, type ReactNode } from "react";
 import { Pressable, Text } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import Animated, {
-  ReduceMotion,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
-  type EntryExitAnimationFunction,
-  type LayoutAnimationFunction,
   type SharedValue,
 } from "react-native-reanimated";
+import type { ListMotion } from "@/hooks/useListMotion";
 import { useTheme } from "@/hooks/useTheme";
-import type { FoodSection } from "@/lib/foodRows";
-import { TAB_SPRING } from "@/lib/motion";
+import type { FoodRow, FoodSection } from "@/lib/foodRows";
+import { SELECTION_SPRING } from "@/lib/motion";
 
 const ROW_GAP = 6;
 const SHADOW_ROOM = 8;
-const CHEVRON_SPRING = { ...TAB_SPRING, reduceMotion: ReduceMotion.System };
+
+/** The scroll positions a section header needs to stick under pinned controls, in points. */
+export type StickyFrame = {
+  /** The scroll view's vertical offset. */
+  scrollY: SharedValue<number>;
+  /** Where the list of sections starts in the scroll content. */
+  listTop: SharedValue<number>;
+  /** The height of the pinned controls the header sticks under. */
+  pinHeight: SharedValue<number>;
+};
 
 type InventorySectionProps = {
-  /** The section; its `data` is empty while it is closed. */
+  /** The section with all of its rows. */
   section: FoodSection;
-  /** How many foods the section holds, open or closed. */
-  count: number;
   /** Whether the rows show. */
   open: boolean;
   /** Called when the header is tapped. */
@@ -30,19 +35,11 @@ type InventorySectionProps = {
   /** Shows a Review link in the header when set. */
   onReview?: () => void;
   /** Renders one row. */
-  renderRow: (row: FoodSection["data"][number]) => ReactNode;
-  /** The list's scroll offset, in points. */
-  scrollY: SharedValue<number>;
-  /** Where the list of sections starts in the scroll content, in points. */
-  listTop: SharedValue<number>;
-  /** The height of the pinned controls the header sticks under, in points. */
-  pinHeight: SharedValue<number>;
-  /** The layout transition for the section and its rows. */
-  layout: LayoutAnimationFunction;
-  /** The entering animation for the row at an index. */
-  rowEntering: (index: number) => EntryExitAnimationFunction;
-  /** The exiting animation for rows. */
-  rowExiting: EntryExitAnimationFunction;
+  renderRow: (row: FoodRow) => ReactNode;
+  /** Where the header sticks. */
+  sticky: StickyFrame;
+  /** The animations for the section and its rows. */
+  motion: ListMotion;
 };
 
 /**
@@ -53,17 +50,12 @@ type InventorySectionProps = {
  */
 export default function InventorySection({
   section,
-  count,
   open,
   onToggle,
   onReview,
   renderRow,
-  scrollY,
-  listTop,
-  pinHeight,
-  layout,
-  rowEntering,
-  rowExiting,
+  sticky,
+  motion,
 }: InventorySectionProps) {
   const { colors, fonts } = useTheme();
   const top = useSharedValue(0);
@@ -71,11 +63,13 @@ export default function InventorySection({
   const headerHeight = useSharedValue(0);
   const turn = useSharedValue(open ? 90 : 0);
   useEffect(() => {
-    turn.value = withSpring(open ? 90 : 0, CHEVRON_SPRING);
+    turn.value = withSpring(open ? 90 : 0, SELECTION_SPRING);
   }, [turn, open]);
 
   // Fabric hit-testing drops touches outside a view's laid-out bounds, so the
   // sticky offset is clamped to this section to keep the header tappable.
+  const { scrollY, listTop, pinHeight } = sticky;
+  const count = section.data.length;
   const headerStyle = useAnimatedStyle(() => {
     const overlap =
       scrollY.value + pinHeight.value - (listTop.value + top.value);
@@ -96,7 +90,7 @@ export default function InventorySection({
 
   return (
     <Animated.View
-      layout={layout}
+      layout={motion.layout}
       onLayout={(event) => {
         top.value = event.nativeEvent.layout.y;
         height.value = event.nativeEvent.layout.height;
@@ -179,7 +173,7 @@ export default function InventorySection({
         ) : null}
       </Animated.View>
       <Animated.View
-        layout={layout}
+        layout={motion.layout}
         style={{
           overflow: "hidden",
           gap: ROW_GAP,
@@ -188,16 +182,18 @@ export default function InventorySection({
           paddingBottom: open ? SHADOW_ROOM : 0,
         }}
       >
-        {section.data.map((row, index) => (
-          <Animated.View
-            key={row.key}
-            layout={layout}
-            entering={rowEntering(index)}
-            exiting={rowExiting}
-          >
-            {renderRow(row)}
-          </Animated.View>
-        ))}
+        {open
+          ? section.data.map((row, index) => (
+              <Animated.View
+                key={row.key}
+                layout={motion.layout}
+                entering={motion.rowEntering(index)}
+                exiting={motion.rowExiting}
+              >
+                {renderRow(row)}
+              </Animated.View>
+            ))
+          : null}
       </Animated.View>
     </Animated.View>
   );
