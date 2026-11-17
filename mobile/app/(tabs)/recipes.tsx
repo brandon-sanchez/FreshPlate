@@ -49,11 +49,11 @@ export default function RecipesScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const inventory = useInventoryItems();
   const householdId = useAuthStore((s) => s.householdId);
-  const feed = useRecipeFeed();
+  const [preferences, setPreferences] = useState<RecipePreferences>({});
+  const feed = useRecipeFeed({ onSessionRestored: setPreferences });
   const saved = useSavedRecipes();
   const cook = useActiveCook();
   const [tab, setTab] = useState<"for-you" | "saved">("for-you");
-  const [preferences, setPreferences] = useState<RecipePreferences>({});
   const [flowOpen, setFlowOpen] = useState(false);
   const [detailRecipe, setDetailRecipe] = useState<RecipeSuggestion | null>(null);
   const [previewRecipe, setPreviewRecipe] = useState<RecipeSuggestion | null>(null);
@@ -127,7 +127,7 @@ export default function RecipesScreen() {
     </View>;
   }
 
-  if (inventory.isPending) {
+  if (inventory.isPending || feed.isRestoring) {
     return (
       <View
         style={[
@@ -137,7 +137,9 @@ export default function RecipesScreen() {
       >
         <RecipeScreenHeader subtitle="AI picks from your kitchen" />
         <RecipeTabs tab={tab} onChange={setTab} />
-        <LoadingState label="Loading your fridge..." />
+        <LoadingState
+          label={inventory.isPending ? "Loading your fridge..." : "Loading your recipes..."}
+        />
       </View>
     );
   }
