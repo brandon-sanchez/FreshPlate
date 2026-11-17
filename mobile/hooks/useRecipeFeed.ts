@@ -55,24 +55,33 @@ type RecipeFeedPage = {
 /**
  * Seeds each card's photo under `['recipe-image', recipe_id]`, the key
  * `useRecipeImage` reads, so a card shows its photo without another request.
- * Resolves once the photos are downloaded or the preload cap passes, so a
- * page's cards never join the feed with a photo still downloading.
  * The photo is left off the returned recipes, because saved recipes and cook
  * events store the recipe as a snapshot and a signed URL must not go with it.
+ *
+ * Without `shownFirstId`, it resolves once every photo is downloaded or the
+ * preload cap passes, so a page's cards never join the feed with a photo
+ * still downloading. With it, it resolves once that card's photo is in, and
+ * the other photos keep downloading.
  */
 async function unpackPhotos(
   queryClient: QueryClient,
   response: RecipeFeedResponse,
+  shownFirstId?: string,
 ): Promise<RecipeFeedPage> {
-  const images: ImageResult[] = [];
+  const awaited: ImageResult[] = [];
+  const background: ImageResult[] = [];
   const recipes = response.data.recipes.map(({ image, ...recipe }) => {
     if (image) {
       queryClient.setQueryData(["recipe-image", recipe.recipe_id], image);
-      images.push(image);
+      const awaitsThis = !shownFirstId || recipe.recipe_id === shownFirstId;
+      (awaitsThis ? awaited : background).push(image);
     }
     return recipe;
   });
-  await preloadRecipePhotos(images);
+  // Downloads start in call order, so the awaited photos go first.
+  const shown = preloadRecipePhotos(awaited);
+  void preloadRecipePhotos(background);
+  await shown;
   return { data: { ...response.data, recipes } };
 }
 
@@ -109,14 +118,19 @@ async function readLatestFeed(
     const { image: _image, ...recipe } = card;
     return [{ direction, recipe }];
   });
-  const page = await unpackPhotos(queryClient, {
-    data: {
-      ...data,
-      recipes: data.recipes.map((card) =>
-        dismissed.has(card.recipe_id) ? { ...card, image: null } : card,
-      ),
+  const top = data.recipes.find((card) => !dismissed.has(card.recipe_id));
+  const page = await unpackPhotos(
+    queryClient,
+    {
+      data: {
+        ...data,
+        recipes: data.recipes.map((card) =>
+          dismissed.has(card.recipe_id) ? { ...card, image: null } : card,
+        ),
+      },
     },
-  });
+    top?.recipe_id,
+  );
   return { page, dismissedIds: memory.dismissedIds, signals, preferences };
 }
 
@@ -171,9 +185,9 @@ export type UseRecipeFeedOptions = {
  * Calls `POST /api/recipes/sessions` and
  * `POST /api/recipes/sessions/{id}/pages`, caching pages under
  * `['recipe-feed', sessionId]`. Each card's photo is seeded under
- * `['recipe-image', recipe_id]` and its bytes are downloaded before the
- * page's cards are returned, so cards show photos without a request of their
- * own. Starting a new session cancels and removes the previous one.
+ * `['recipe-image', recipe_id]` and its bytes are downloaded before a
+ * generated page's cards are returned, so cards show photos without a request
+ * of their own. Starting a new session cancels and removes the previous one.
  *
  * `steer` records a "More like this" or "Less like this" press for the rest
  * of the session. Every later page request carries the picks, so batches are
@@ -184,15 +198,16 @@ export type UseRecipeFeedOptions = {
  * caller removes the swept cards on screen with `dismiss`, and `restore` puts
  * dismissed cards back in their places in the feed, as an undo does.
  *
- * On mount it calls `GET /api/recipes/sessions/latest` and, when a session
- * is still live, shows its stored cards again instead of the empty state.
- * `isRestoring` is true until that read settles. Dismissals and steer picks
- * are kept in AsyncStorage through {@link saveRecipeFeedMemory}, so restored
- * cards stay dismissed and later pages stay steered. A restored feed loads
- * another page only after the cook has seen every restored card, or scrolls,
- * steers or dismisses, so reopening the app pays for no recipe generation
- * while restored cards are left. Starting a session before the read settles
- * discards the restored one.
+ * On mount it calls `GET /api/recipes/sessions/latest` and, when a session is
+ * still live, shows its stored cards again instead of the empty state.
+ * `isRestoring` is true until that read and the top card's photo settle; the
+ * other photos keep downloading behind the restored feed. Dismissals and
+ * steer picks are kept in AsyncStorage through {@link saveRecipeFeedMemory},
+ * so restored cards stay dismissed and later pages stay steered. A restored
+ * feed loads another page only after the cook has seen every restored card,
+ * or scrolls, steers or dismisses, so reopening the app pays for no recipe
+ * generation while restored cards are left. Starting a session before the
+ * read settles discards the restored one.
  */
 export function useRecipeFeed({
   onSessionRestored,

@@ -87,6 +87,25 @@ const ids = (recipes: readonly RecipeSuggestion[]) =>
   recipes.map((item) => item.recipe_id);
 
 const queryClients: QueryClient[] = [];
+const heldPhotos: (() => void)[] = [];
+
+// Leaves the named cards' photo downloads running until `release` names them
+// or the test ends. A download that never settled would hold every later
+// test's photos behind the app's first download.
+function holdPhotos(...recipeIds: string[]): { release: (id: string) => void } {
+  const releases = new Map<string, () => void>();
+  mockLoadImage.mockImplementation(({ uri }: { uri: string }) => {
+    const loaded = { release: jest.fn() };
+    const id = recipeIds.find((held) => uri.endsWith(`/${held}.webp`));
+    if (!id) return Promise.resolve(loaded);
+    return new Promise((resolve) => {
+      const finish = () => resolve(loaded);
+      releases.set(id, finish);
+      heldPhotos.push(finish);
+    });
+  });
+  return { release: (id) => releases.get(id)?.() };
+}
 
 function coldStart() {
   const queryClient = new QueryClient({
@@ -111,6 +130,8 @@ describe("useRecipeFeed restore", () => {
   });
 
   afterEach(async () => {
+    mockLoadImage.mockResolvedValue({ release: jest.fn() });
+    heldPhotos.splice(0).forEach((finish) => finish());
     jest.restoreAllMocks();
     await cleanupAsync();
     for (const queryClient of queryClients) {
@@ -139,6 +160,50 @@ describe("useRecipeFeed restore", () => {
     expect(mockLoadImage).toHaveBeenCalledTimes(3);
     expect(mockCreateSession).not.toHaveBeenCalled();
     expect(mockFetchPage).not.toHaveBeenCalled();
+  });
+
+  it("shows the feed once the top card's photo is in, while the rest download", async () => {
+    mockFetchLatest.mockResolvedValue(latest(cards("a", "b", "c")));
+    const photos = holdPhotos("a", "b", "c");
+    const { result } = renderHook(() => useRecipeFeed(), coldStart());
+    await waitFor(() => expect(mockLoadImage).toHaveBeenCalled());
+    await act(async () => {});
+    expect(result.current.isRestoring).toBe(true);
+
+    photos.release("a");
+
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(ids(result.current.recipes)).toEqual(["a", "b", "c"]);
+    await waitFor(() => expect(mockLoadImage).toHaveBeenCalledTimes(3));
+  });
+
+  it("waits on the first card left after a discard", async () => {
+    mockFetchLatest.mockResolvedValue(latest(cards("a", "b", "c")));
+    const first = renderHook(() => useRecipeFeed(), coldStart());
+    await waitFor(() => expect(first.result.current.status).toBe("ready"));
+    act(() => first.result.current.dismiss(["a"]));
+    first.unmount();
+    const photos = holdPhotos("b", "c");
+
+    const second = renderHook(() => useRecipeFeed(), coldStart());
+    await waitFor(() => expect(mockLoadImage).toHaveBeenCalledTimes(5));
+    expect(second.result.current.isRestoring).toBe(true);
+    photos.release("b");
+
+    await waitFor(() => expect(second.result.current.status).toBe("ready"));
+    expect(ids(second.result.current.recipes)).toEqual(["b", "c"]);
+  });
+
+  it("shows the feed without waiting when the top card has no photo", async () => {
+    mockFetchLatest.mockResolvedValue(
+      latest([{ ...recipe("a"), image: null }, ...cards("b", "c")]),
+    );
+    holdPhotos("b", "c");
+
+    const { result } = renderHook(() => useRecipeFeed(), coldStart());
+
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(ids(result.current.recipes)).toEqual(["a", "b", "c"]);
   });
 
   it.each([
