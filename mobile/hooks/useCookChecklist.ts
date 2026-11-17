@@ -14,6 +14,7 @@ import { supabase } from "@/lib/supabase";
 import Toast from "@/lib/toast";
 import { useActiveCookStore } from "@/stores/activeCook";
 import type { StockBase, UntrackedIngredient } from "@/types/cook";
+import type { RecipeSuggestion } from "@/types/recipes";
 
 type FoodStockRow = {
   id: string;
@@ -39,12 +40,19 @@ const COOK_ALREADY_CONFIRMED = "COOK_ALREADY_CONFIRMED";
  * `['inventory', householdId, 'stock']` for "Add item". Keeps the person's
  * amounts locally. `confirm` sends them to `POST /api/cook/confirm`. On
  * success, or when the cook was already confirmed, it invalidates
- * `['inventory']`, clears the active cook and shows a success toast. On
- * `STOCK_CHANGED` it refetches both queries, marks the lines whose stock fell,
- * and keeps the cook. Any other failure shows an error toast and keeps the
- * cook.
+ * `['inventory']`, passes the cooked recipe to `onConfirmed` and clears the
+ * active cook. On `STOCK_CHANGED` it refetches both queries, marks the lines
+ * whose stock fell, and keeps the cook. Any other failure shows an error
+ * toast and keeps the cook.
+ *
+ * @param onConfirmed - Receives the cooked recipe before the active cook is
+ *   cleared, so the caller can keep showing it.
  */
-export function useCookChecklist() {
+export function useCookChecklist({
+  onConfirmed,
+}: {
+  onConfirmed: (recipe: RecipeSuggestion) => void;
+}) {
   const queryClient = useQueryClient();
   const cook = useActiveCookStore((s) => s.activeCook);
   const householdId = cook?.householdId;
@@ -98,10 +106,10 @@ export function useCookChecklist() {
     return true;
   };
 
-  const finish = async () => {
+  const finish = async (recipe: RecipeSuggestion) => {
     setStockChanged(false);
     void queryClient.invalidateQueries({ queryKey: ["inventory"] });
-    Toast.show({ type: "success", text1: "Your fridge is updated." });
+    onConfirmed(recipe);
     // The kitchen is already updated, so a failed clear only leaves the cook
     // showing until the next confirm, which the server answers as already
     // confirmed.
@@ -116,11 +124,11 @@ export function useCookChecklist() {
     setConfirming(true);
     try {
       await confirmCook(confirmationBody(cook, lines));
-      await finish();
+      await finish(cook.recipe);
     } catch (error) {
       const code = error instanceof ApiError ? error.code : null;
       if (code === COOK_ALREADY_CONFIRMED) {
-        await finish();
+        await finish(cook.recipe);
       } else if (code === STOCK_CHANGED && (await reload())) {
         setStockChanged(true);
       } else {
