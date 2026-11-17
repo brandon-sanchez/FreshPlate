@@ -172,10 +172,26 @@ class CookDeduction(BaseModel):
             the food it was merged into.
         confirmed_amount: How much was used, in the food's stock base (grams,
             millilitres or a count). Must be finite and positive.
+        expected_amount: How much of ``confirmed_amount`` the checklist
+            expected the food's unexpired stock to cover, from 0 to
+            ``confirmed_amount``. The cook is refused with ``STOCK_CHANGED``
+            when the food has less than this by the time it is confirmed.
+
+    Raises:
+        pydantic.ValidationError: On construction, when ``expected_amount``
+            is above ``confirmed_amount``.
     """
 
+    model_config = ConfigDict(extra="forbid")
     inventory_item_id: UUID
     confirmed_amount: _FiniteFloat = Field(gt=0)
+    expected_amount: _FiniteFloat = Field(ge=0)
+
+    @model_validator(mode="after")
+    def check_expected(self) -> CookDeduction:
+        if self.expected_amount > self.confirmed_amount:
+            raise ValueError("expected_amount cannot be above confirmed_amount")
+        return self
 
 
 class CookIngredientLine(BaseModel):
@@ -233,7 +249,8 @@ class CookConfirmationRequest(BaseModel):
         recipe_snapshot: The recipe as cooked. Its ``recipe_id`` must match.
         deductions: One entry per food used. Two entries that reach the same
             food, such as a food and one of its lots, are rejected.
-        lines: One entry per matched recipe ingredient, in recipe order. Each
+        lines: One entry per recipe ingredient matched to a food the cook
+            used, in recipe order. Empty when nothing was used. Each
             deduction needs at least one ``draw`` or answered ``ask`` line on
             its food, and its draws are split across those lines.
     """
@@ -244,7 +261,7 @@ class CookConfirmationRequest(BaseModel):
     recipe_id: UUID
     recipe_snapshot: dict[str, Any]
     deductions: list[CookDeduction]
-    lines: list[CookIngredientLine] = Field(min_length=1)
+    lines: list[CookIngredientLine]
 
     @field_validator("recipe_snapshot")
     @classmethod
