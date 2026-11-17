@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 from uuid import UUID
 
 from pydantic import (
@@ -19,6 +19,7 @@ from pydantic import (
 from app.ai.agents.dish import RequestedDish
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING, MAX_BATCH_CEILING
 from app.ai.agents.models import Recipe
+from app.inventory.cook_plan import CookLineMode
 from app.models.images import ImageResult
 
 
@@ -194,6 +195,12 @@ class CookDeduction(BaseModel):
         return self
 
 
+COOK_LINE_INGREDIENT_CHARS = 200
+"""Longest ingredient name a cook line accepts, as cook_recipe_v2 checks it."""
+COOK_LINE_UNIT_CHARS = 64
+"""Longest recipe unit a cook line accepts, as cook_recipe_v2 checks it."""
+
+
 class CookIngredientLine(BaseModel):
     """One recipe ingredient as cooked, recorded on the cook event for Cook Again.
 
@@ -220,11 +227,11 @@ class CookIngredientLine(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    ingredient: str = Field(min_length=1, max_length=200)
+    ingredient: str = Field(min_length=1, max_length=COOK_LINE_INGREDIENT_CHARS)
     inventory_item_id: UUID
     recipe_amount: _FiniteFloat = Field(ge=0)
-    recipe_unit: str = Field(min_length=1, max_length=64)
-    mode: Literal["draw", "small", "ask"]
+    recipe_unit: str = Field(min_length=1, max_length=COOK_LINE_UNIT_CHARS)
+    mode: CookLineMode
     stock_amount: _FiniteFloat | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")

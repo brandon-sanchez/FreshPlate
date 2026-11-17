@@ -50,6 +50,7 @@ The backend has these routers, registered in `backend/app/main.py`:
 | `POST /api/recipes/suggestions` | Runs the pipeline once and returns a batch |
 | `POST /api/recipes/sessions` | Starts a recipe feed session |
 | `POST /api/recipes/sessions/{session_id}/pages` | Returns the next page of a feed session |
+| `POST /api/cook/plan` | Plans the done-cooking checklist against current stock |
 | `POST /api/cook/confirm` | Deducts the ingredients used in a cook |
 
 ## The backend checks the Supabase JWT on every request
@@ -157,7 +158,9 @@ A session stops after six generation runs. The app then offers to add items or c
 
 ## Cook confirmation deducts inventory in one transaction
 
-When a user finishes cooking, they confirm how much of each food they used, in the food's stock base (grams, millilitres or a count). The request also carries one line per recipe ingredient matched to a food: the recipe's amount and unit, the converted amount, and the mode (`draw` when it converted, `small` for a seasoning-sized amount that is never drawn, `ask` when the user was asked). `POST /api/cook/confirm` passes both lists to the `cook_recipe_v2` Postgres function, which draws each amount from the food's batches (lots) and records the lines in one transaction.
+When a user finishes cooking, the app sends the recipe's ingredients to `POST /api/cook/plan`. The backend reads the household's foods with unexpired stock as the user, converts each ingredient into its food's stock base, and sums the ingredients that use one food. Each food comes back with its available stock, the amount to pre-fill, any whole-unit rounding note, and each ingredient's mode and converted amount. Ingredients that name no food (kitchen basics) or a food with no stock left come back as untracked. The endpoint changes nothing, so the app calls it again to reload stock.
+
+On the checklist they confirm how much of each food they used, in the food's stock base (grams, millilitres or a count). The request also carries one line per recipe ingredient matched to a food: the recipe's amount and unit, the converted amount, and the mode (`draw` when it converted, `small` for a seasoning-sized amount that is never drawn, `ask` when the user was asked). `POST /api/cook/confirm` passes both lists to the `cook_recipe_v2` Postgres function, which draws each amount from the food's batches (lots) and records the lines in one transaction.
 
 ```mermaid
 sequenceDiagram
