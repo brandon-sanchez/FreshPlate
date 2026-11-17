@@ -10,10 +10,22 @@ jest.mock("@expo/vector-icons/Feather", () => () => null);
 jest.mock("@expo/vector-icons/FontAwesome", () => () => null);
 jest.mock("@/hooks/useReducedMotion", () => ({ useReducedMotion: () => true }));
 const mockFetchRecipeImage = jest.fn();
+const mockFetchFoodImage = jest.fn();
 jest.mock("@/lib/supabase", () => ({ supabase: {} }));
 jest.mock("@/lib/image-api", () => ({
   fetchRecipeImage: (...args: unknown[]) => mockFetchRecipeImage(...args),
+  fetchFoodImage: (...args: unknown[]) => mockFetchFoodImage(...args),
 }));
+
+function readyFoodPhoto(foodId: unknown) {
+  return Promise.resolve({
+    status: "ready",
+    image_key: `ingredient:${String(foodId)}`,
+    url: `https://storage.test/${String(foodId)}.webp?token=1`,
+    expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+    reason: null,
+  });
+}
 
 const readyPhoto = {
   status: "ready",
@@ -68,6 +80,8 @@ beforeEach(() => {
   client.clear();
   mockFetchRecipeImage.mockReset();
   mockFetchRecipeImage.mockReturnValue(new Promise(() => {}));
+  mockFetchFoodImage.mockReset();
+  mockFetchFoodImage.mockReturnValue(new Promise(() => {}));
 });
 
 it("shows the recipe photo in the hero", async () => {
@@ -137,13 +151,13 @@ it("marks an ingredient with no food as a kitchen basic", () => {
     { wrapper },
   );
   expect(screen.getByTestId("recipe-detail-ingredient-2")).toHaveTextContent(
-    "•1 tsp Salt · kitchen basic",
+    "1 tsp Salt · kitchen basic",
   );
   expect(screen.getByTestId("recipe-detail-ingredient-1")).toHaveTextContent(
-    "•¼ head Garlic",
+    "¼ head Garlic",
   );
   expect(screen.getByTestId("recipe-detail-ingredient-0")).toHaveTextContent(
-    "•100 g Spinach",
+    "100 g Spinach",
   );
 });
 
@@ -247,4 +261,26 @@ it("pins Cook this until the recipe is the active cook, then Done cooking", () =
   screen.rerender(<RecipeDetail {...props} cooking cookPending />);
   fireEvent.press(screen.getByText("Done cooking"));
   expect(onDoneCooking).toHaveBeenCalledTimes(1);
+});
+
+it("shows each ingredient's photo, keeping a placeholder for one with no food", async () => {
+  mockFetchFoodImage.mockImplementation(readyFoodPhoto);
+  const screen = render(
+    <RecipeDetail
+      recipe={recipe}
+      isSaved={false}
+      isSavePending={false}
+      onToggleSave={jest.fn()}
+      onClose={jest.fn()}
+      {...cookProps}
+    />,
+    { wrapper },
+  );
+  expect(
+    await screen.findAllByTestId("food-photo-image", { includeHiddenElements: true }),
+  ).toHaveLength(2);
+  expect(
+    screen.getAllByTestId("food-photo-placeholder", { includeHiddenElements: true }),
+  ).toHaveLength(1);
+  expect(mockFetchFoodImage.mock.calls.map(([id]) => id).sort()).toEqual(["garlic", "spinach"]);
 });
