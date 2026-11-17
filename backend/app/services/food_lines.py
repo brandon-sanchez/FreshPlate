@@ -1,4 +1,4 @@
-"""Read a household's foods as the recipe pipeline's inventory lines."""
+"""Read a household's foods and kitchen basics for the recipe pipeline."""
 
 from __future__ import annotations
 
@@ -16,6 +16,9 @@ _STOCK_COLUMNS = (
     "id,name,available,next_expiry:soonest_expiry,lot_count,"
     "category:food_categories(name)"
 )
+# A backstop only: the kitchen_basics_cap trigger in the add_kitchen_basics
+# migration stops a household at 30 basics.
+_BASICS_READ_LIMIT = 30
 _FACT_COLUMNS = (
     "id,stock_base,each_label,grams_per_each,ml_per_each,g_per_ml,"
     "household_units,profile_key,profile_g_per_ml,profile_unit_grams"
@@ -23,11 +26,11 @@ _FACT_COLUMNS = (
 
 
 class FoodLinesError(RuntimeError):
-    """The household's foods could not be read."""
+    """The household's foods or kitchen basics could not be read."""
 
 
 class FoodLineSource(Protocol):
-    """Where the recipe API gets a household's foods; tests replace it."""
+    """Where the recipe API gets a household's kitchen; tests replace it."""
 
     async def list_food_lines(self, household_id: UUID) -> list[FoodLine]:
         """Return the household's foods that have unexpired stock.
@@ -37,11 +40,20 @@ class FoodLineSource(Protocol):
         """
         ...
 
+    async def list_kitchen_basics(self, household_id: UUID) -> list[str]:
+        """Return the names of the household's kitchen basics, oldest first.
+
+        Raises:
+            FoodLinesError: When the basics cannot be read.
+        """
+        ...
+
 
 class SupabaseFoodLineSource:
-    """Read ``food_stock`` and ``food_facts`` through PostgREST as the caller.
+    """Read a household's kitchen through PostgREST as the caller.
 
-    Both views run with the caller's rights, so row-level security limits the
+    The ``food_stock`` and ``food_facts`` views and the ``kitchen_basics``
+    table all run with the caller's rights, so row-level security limits the
     rows to households the caller belongs to. A household the caller is not
     in reads as an empty kitchen, not as an error.
     """
@@ -89,6 +101,29 @@ class SupabaseFoodLineSource:
             ]
         except (KeyError, TypeError, AttributeError, ValidationError) as exc:
             raise FoodLinesError("Household foods returned invalid rows") from exc
+
+    async def list_kitchen_basics(self, household_id: UUID) -> list[str]:
+        """Return the household's kitchen basic names, oldest first.
+
+        Makes one PostgREST read.
+
+        Raises:
+            FoodLinesError: When Supabase is not configured, the read fails or
+                times out, or a row is malformed.
+        """
+        rows = await self._get(
+            "kitchen_basics",
+            {
+                "select": "name",
+                "household_id": f"eq.{household_id}",
+                "order": "created_at.asc,name.asc",
+                "limit": str(_BASICS_READ_LIMIT),
+            },
+        )
+        names = [row.get("name") for row in rows]
+        if not all(isinstance(name, str) for name in names):
+            raise FoodLinesError("kitchen_basics returned invalid rows")
+        return names
 
     async def _get(self, view: str, params: Mapping[str, str]) -> list[dict[str, Any]]:
         api_key = settings.supabase_publishable_key or settings.supabase_anon_key

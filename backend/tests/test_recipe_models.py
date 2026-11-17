@@ -77,7 +77,7 @@ def test_a_cookbook_recipe_takes_its_cook_time_from_total_minutes() -> None:
 
 
 def test_a_zero_or_fractional_time_does_not_reject_the_batch() -> None:
-    batch_model = recipe_batch_model(2, {"tomatoes": ["each"]})
+    batch_model = recipe_batch_model(2, {"tomatoes": ["each"]}, extra_units=())
     recipe = {
         **_legacy_recipe(),
         "cook_time_minutes": None,
@@ -126,8 +126,8 @@ def _kitchen(food_count: int) -> dict[str, list[str]]:
 
 def test_generation_schema_does_not_grow_with_the_number_of_foods() -> None:
     """Gemini answers 400 INVALID_ARGUMENT once the schema lists the food ids."""
-    small = recipe_batch_model(5, _kitchen(37)).model_json_schema()
-    large = recipe_batch_model(5, _kitchen(300)).model_json_schema()
+    small = recipe_batch_model(5, _kitchen(37), extra_units=()).model_json_schema()
+    large = recipe_batch_model(5, _kitchen(300), extra_units=()).model_json_schema()
 
     assert small == large
     assert _schema_keywords(large, "anyOf") == []
@@ -139,7 +139,9 @@ def test_generation_schema_does_not_grow_with_the_number_of_foods() -> None:
 def test_generation_schema_drops_the_unit_enum_past_the_size_gemini_accepted() -> None:
     def unit_enums(unit_count: int) -> list[Any]:
         units = [f"unit{index}" for index in range(unit_count)]
-        schema = recipe_batch_model(5, {"food": units}).model_json_schema()
+        schema = recipe_batch_model(
+            5, {"food": units}, extra_units=()
+        ).model_json_schema()
         return _schema_keywords(schema, "enum")
 
     assert [len(enum) for enum in unit_enums(30)] == [30]

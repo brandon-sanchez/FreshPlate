@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated as NativeAnimated,
   PixelRatio,
@@ -7,9 +7,11 @@ import {
   Text,
   View,
 } from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Feather from "@expo/vector-icons/Feather";
-import Ionicons from "@expo/vector-icons/Ionicons";
+import RecipeCardSwipe, {
+  SWIPE_COOK_LABEL,
+  SWIPE_DISCARD_LABEL,
+} from "@/components/recipe-card-swipe";
 import RecipePhoto from "@/components/recipe-photo";
 import RecipeSaveButton from "@/components/recipe-save-button";
 import RecipeStats, { recipeStatsLabel } from "@/components/recipe-stats";
@@ -44,8 +46,13 @@ type RecipeCardProps = {
   onPreview: (recipe: RecipeSuggestion) => void;
   /** Called by "More like this". */
   onMoreLikeThis: (recipe: RecipeSuggestion) => void;
-  /** Starts a cook; called when a right swipe passes the cook threshold. */
+  /** Starts a cook; called by a right swipe or the "Cook this" screen reader action. */
   onCook: (recipe: RecipeSuggestion) => void;
+  /**
+   * Takes the card out of the feed; called once a left swipe has thrown it
+   * off the screen, or by the "Not this" screen reader action.
+   */
+  onDiscard: (recipe: RecipeSuggestion) => void;
   /** Whether the recipe is in the household cookbook. */
   saved: boolean;
   /** Called by the bookmark with the recipe's current saved state. */
@@ -57,8 +64,9 @@ type RecipeCardProps = {
 /**
  * Renders one recipe in the feed: photo with the save toggle, title, Time and
  * Serves, the ingredient teaser, and the "Less like this" and "More like this"
- * buttons. Tapping anywhere else on the card opens the preview, and a right
- * swipe starts a cook. The feed plays the card's exit when a button sweeps it
+ * buttons. Tapping anywhere else on the card opens the preview. A right swipe
+ * starts a cook and a left swipe discards the card; screen readers get both as
+ * actions on the card. The feed plays the card's exit when a button sweeps it
  * away.
  */
 const RecipeCard = memo(function RecipeCard({
@@ -76,6 +84,7 @@ const RecipeCard = memo(function RecipeCard({
   onPreview,
   onMoreLikeThis,
   onCook,
+  onDiscard,
   saved,
   onToggleSave,
   isSavePending,
@@ -89,30 +98,6 @@ const RecipeCard = memo(function RecipeCard({
   ).current;
   const entryY = useRef(
     new NativeAnimated.Value(startsAtRest ? 0 : 24),
-  ).current;
-  const swipeX = useRef(new NativeAnimated.Value(0)).current;
-  const onCookRef = useRef(onCook);
-  onCookRef.current = onCook;
-  // Swipe right skips the preview sheet and starts cooking. Vertical drags
-  // stay with the feed's scroll.
-  const cookSwipe = useRef(
-    Gesture.Pan()
-      .withTestId(`recipe-card-cook-swipe-${recipe.recipe_id}`)
-      .runOnJS(true)
-      .activeOffsetX(24)
-      .failOffsetY([-16, 16])
-      .onUpdate(({ translationX }) => swipeX.setValue(Math.max(0, translationX)))
-      .onEnd(({ translationX }) => {
-        if (translationX > COOK_SWIPE_THRESHOLD) onCookRef.current(recipe);
-      })
-      .onFinalize(() => {
-        NativeAnimated.spring(swipeX, {
-          toValue: 0,
-          stiffness: 260,
-          damping: 28,
-          useNativeDriver: true,
-        }).start();
-      }),
   ).current;
   useEffect(() => {
     if (reducedMotion) {
@@ -153,164 +138,152 @@ const RecipeCard = memo(function RecipeCard({
     reducedMotion,
     revealed,
   ]);
+  const cook = useCallback(() => onCook(recipe), [onCook, recipe]);
+  const discard = useCallback(() => onDiscard(recipe), [onDiscard, recipe]);
   return (
     <View style={{ height: stride, paddingHorizontal: 24 }}>
-      <GestureDetector gesture={cookSwipe}>
-        <View>
-          <NativeAnimated.View
-            pointerEvents="none"
+      <RecipeCardSwipe
+        testKey={recipe.recipe_id}
+        reducedMotion={reducedMotion}
+        onCook={cook}
+        onDiscard={discard}
+      >
+        <NativeAnimated.View
+          testID={"recipe-card-" + recipe.recipe_id}
+          style={{
+            opacity: entryOpacity,
+            transform: [{ translateY: entryY }],
+          }}
+        >
+          {/* Pressable is an accessibility element by default, which would
+              merge the save and feedback buttons into one target. The
+              summary view below is the card's screen reader element. */}
+          <RecipePressable
+            accessible={false}
+            onPress={() => onPreview(recipe)}
+            unstable_pressDelay={CARD_PRESS_DELAY_MS}
+            testID={"recipe-card-open-" + recipe.recipe_id}
             style={[
-              styles.cookReveal,
+              styles.card,
               {
+                width: cardWidth,
                 height: cardHeight,
-                backgroundColor: colors.accent,
-                opacity: swipeX.interpolate({
-                  inputRange: [0, COOK_SWIPE_THRESHOLD],
-                  outputRange: [0, 1],
-                  extrapolate: "clamp",
-                }),
+                backgroundColor: colors.surface,
               },
             ]}
           >
-            <Ionicons name="flame" size={23} color={colors.accentInk} />
-            <Text
-              style={{
-                color: colors.accentInk,
-                fontFamily: fonts.bodyStrong,
-                fontSize: 15,
+            <View
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel={cardSummaryLabel(recipe)}
+              accessibilityHint="Opens the recipe preview"
+              onAccessibilityTap={() => onPreview(recipe)}
+              accessibilityActions={CARD_ACTIONS}
+              onAccessibilityAction={({ nativeEvent }) => {
+                const actions: Record<string, () => void> = {
+                  activate: () => onPreview(recipe),
+                  [SWIPE_COOK_LABEL]: cook,
+                  [SWIPE_DISCARD_LABEL]: discard,
+                };
+                actions[nativeEvent.actionName]?.();
               }}
-            >
-              Cook this
-            </Text>
-          </NativeAnimated.View>
-          <NativeAnimated.View
-            testID={"recipe-card-" + recipe.recipe_id}
-            style={{
-              opacity: entryOpacity,
-              transform: [{ translateY: entryY }, { translateX: swipeX }],
-            }}
-          >
-            {/* Pressable is an accessibility element by default, which would
-                merge the save and feedback buttons into one target. The
-                summary view below is the card's screen reader element. */}
-            <RecipePressable
-              accessible={false}
-              onPress={() => onPreview(recipe)}
-              unstable_pressDelay={CARD_PRESS_DELAY_MS}
-              testID={"recipe-card-open-" + recipe.recipe_id}
-              style={[
-                styles.card,
-                {
-                  width: cardWidth,
-                  height: cardHeight,
-                  backgroundColor: colors.surface,
-                },
-              ]}
+              testID={"recipe-card-preview-" + recipe.recipe_id}
+              style={styles.summary}
             >
               <View
-                accessible
-                accessibilityRole="button"
-                accessibilityLabel={cardSummaryLabel(recipe)}
-                accessibilityHint="Opens the recipe preview"
-                onAccessibilityTap={() => onPreview(recipe)}
-                accessibilityActions={ANDROID_ACTIVATE}
-                onAccessibilityAction={() => onPreview(recipe)}
-                testID={"recipe-card-preview-" + recipe.recipe_id}
-                style={styles.summary}
-              >
-                <View
-                  style={[
-                    styles.artwork,
-                    compact && styles.compactArtwork,
-                    { backgroundColor: colors.accentSoft },
-                  ]}
-                >
-                  <RecipePhoto
-                    recipeId={recipe.recipe_id}
-                    title={recipe.title}
-                    variant="card"
-                    enabled={photoEnabled}
-                    style={StyleSheet.absoluteFill}
-                  />
-                </View>
-                <View
-                  style={[
-                    styles.summaryText,
-                    compact && styles.compactSummaryText,
-                  ]}
-                >
-                  <Text
-                    numberOfLines={compact ? 2 : 3}
-                    style={[
-                      compact ? styles.compactTitle : styles.title,
-                      { fontFamily: fonts.display, color: colors.text },
-                    ]}
-                  >
-                    {recipe.title}
-                  </Text>
-                  <RecipeStats recipe={recipe} dense grouped />
-                  <RecipeCardTeaser recipe={recipe} />
-                </View>
-              </View>
-              {/* A disabled Pressable doesn't claim the touch, which would
-                  then reach the card and open the preview. These wrappers
-                  keep every touch on the buttons' own area. */}
-              <View
-                onStartShouldSetResponder={claimTouch}
-                style={styles.saveButton}
-              >
-                <RecipeSaveButton
-                  variant="pill"
-                  saved={saved}
-                  title={recipe.title}
-                  disabled={isSavePending}
-                  onPress={() => onToggleSave(recipe, saved)}
-                  testID={"recipe-card-save-" + recipe.recipe_id}
-                />
-              </View>
-              <View
-                onStartShouldSetResponder={claimTouch}
                 style={[
-                  styles.feedback,
-                  compact && styles.compactFeedback,
-                  largeText && styles.feedbackStacked,
+                  styles.artwork,
+                  compact && styles.compactArtwork,
+                  { backgroundColor: colors.accentSoft },
                 ]}
               >
-                <RecipeFeedbackButton
-                  tone="less"
-                  onPress={() => onLessLikeThis(recipe)}
+                <RecipePhoto
+                  recipeId={recipe.recipe_id}
                   title={recipe.title}
-                  testID={"recipe-card-less-like-this-" + recipe.recipe_id}
-                />
-                <RecipeFeedbackButton
-                  tone="more"
-                  onPress={() => onMoreLikeThis(recipe)}
-                  title={recipe.title}
-                  testID={"recipe-card-more-like-this-" + recipe.recipe_id}
+                  variant="card"
+                  enabled={photoEnabled}
+                  style={StyleSheet.absoluteFill}
                 />
               </View>
-            </RecipePressable>
-          </NativeAnimated.View>
-        </View>
-      </GestureDetector>
+              <View
+                style={[
+                  styles.summaryText,
+                  compact && styles.compactSummaryText,
+                ]}
+              >
+                <Text
+                  numberOfLines={compact ? 2 : 3}
+                  style={[
+                    compact ? styles.compactTitle : styles.title,
+                    { fontFamily: fonts.display, color: colors.text },
+                  ]}
+                >
+                  {recipe.title}
+                </Text>
+                <RecipeStats recipe={recipe} dense grouped />
+                <RecipeCardTeaser recipe={recipe} />
+              </View>
+            </View>
+            {/* A disabled Pressable doesn't claim the touch, which would
+                then reach the card and open the preview. These wrappers
+                keep every touch on the buttons' own area. */}
+            <View
+              onStartShouldSetResponder={claimTouch}
+              style={styles.saveButton}
+            >
+              <RecipeSaveButton
+                variant="pill"
+                saved={saved}
+                title={recipe.title}
+                disabled={isSavePending}
+                onPress={() => onToggleSave(recipe, saved)}
+                testID={"recipe-card-save-" + recipe.recipe_id}
+              />
+            </View>
+            <View
+              onStartShouldSetResponder={claimTouch}
+              style={[
+                styles.feedback,
+                compact && styles.compactFeedback,
+                largeText && styles.feedbackStacked,
+              ]}
+            >
+              <RecipeFeedbackButton
+                tone="less"
+                onPress={() => onLessLikeThis(recipe)}
+                title={recipe.title}
+                testID={"recipe-card-less-like-this-" + recipe.recipe_id}
+              />
+              <RecipeFeedbackButton
+                tone="more"
+                onPress={() => onMoreLikeThis(recipe)}
+                title={recipe.title}
+                testID={"recipe-card-more-like-this-" + recipe.recipe_id}
+              />
+            </View>
+          </RecipePressable>
+        </NativeAnimated.View>
+      </RecipeCardSwipe>
     </View>
   );
 });
 
 const claimTouch = () => true;
 
-// Horizontal travel, in points, that a released right swipe must pass to start a cook.
-const COOK_SWIPE_THRESHOLD = 96;
-
 // Holds off the card's press-in shrink long enough for a swipe to start, so
 // the card doesn't shrink at the beginning of every scroll.
 const CARD_PRESS_DELAY_MS = 90;
 
-// iOS reaches the summary through `onAccessibilityTap`; Android needs the
-// standard activate action. On iOS that action would also show up as an
-// extra "activate" entry in the VoiceOver actions rotor.
-const ANDROID_ACTIVATE =
-  Platform.OS === "android" ? [{ name: "activate" as const }] : undefined;
+// iOS reaches the summary through `onAccessibilityTap`; Android also needs the
+// standard activate action, which on iOS would show up as an extra "activate"
+// entry in the VoiceOver rotor. On the New Architecture, VoiceOver reads a
+// custom action's `name` and ignores its `label`, so the names are the words
+// spoken.
+const CARD_ACTIONS = [
+  ...(Platform.OS === "android" ? [{ name: "activate" as const }] : []),
+  { name: SWIPE_COOK_LABEL, label: SWIPE_COOK_LABEL },
+  { name: SWIPE_DISCARD_LABEL, label: SWIPE_DISCARD_LABEL },
+];
 
 /** Builds what a screen reader says for the card's summary. */
 function cardSummaryLabel(recipe: RecipeSuggestion) {
@@ -550,15 +523,6 @@ export function RecipeSkeletonCard({
 export default RecipeCard;
 
 const styles = StyleSheet.create({
-  cookReveal: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 24,
-    borderCurve: "continuous",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingLeft: 28,
-  },
   card: {
     borderRadius: 24,
     borderCurve: "continuous",

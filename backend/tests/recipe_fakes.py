@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from app.ai.agents.food_labels import FoodLabels
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING
 from app.ai.agents.nodes import analyze_inventory
 
@@ -28,28 +29,43 @@ def batch_responses(
 def model_answer(
     recipe: Mapping[str, Any],
     inventory: Sequence[Mapping[str, Any]],
+    basics: KitchenBasics,
 ) -> dict[str, Any]:
     """Return ``recipe`` as the model writes it, naming foods by prompt label.
 
-    ``recipe`` names foods by their real ids, and ``inventory`` is the
-    kitchen the generation prompt lists. String steps pass through.
+    ``recipe`` names foods by their real ids, and ``inventory`` and
+    ``basics`` are the kitchen the generation prompt lists. An ingredient
+    with no id is a kitchen basic, as ``KitchenBasics.supplies`` reads it,
+    and gets the label of the listed basic it names. String steps pass
+    through.
     """
-    usable = analyze_inventory({"inventory": inventory})["usable_items"]
-    labels = FoodLabels(item["id"] for item in usable)
+    analysis = analyze_inventory({"inventory": inventory, "kitchen_basics": basics})
+    labels = FoodLabels(
+        (item["id"] for item in analysis["usable_items"]), analysis["kitchen_basics"]
+    )
 
-    def label(food_id: str | None) -> str | None:
-        return None if food_id is None else labels.label(food_id)
+    def ingredient_label(item: Mapping[str, Any]) -> str:
+        food_id = item.get("inventory_item_id")
+        if food_id is None:
+            return labels.basic_label(item["name"])
+        return labels.label(food_id)
 
     return {
         **recipe,
         "ingredients": [
-            {**item, "inventory_item_id": label(item.get("inventory_item_id"))}
+            {**item, "inventory_item_id": ingredient_label(item)}
             for item in recipe["ingredients"]
         ],
         "steps": [
             step
             if isinstance(step, str)
-            else {**step, "uses": [label(food_id) for food_id in step.get("uses", [])]}
+            else {
+                **step,
+                "uses": [labels.label(food_id) for food_id in step.get("uses", [])],
+            }
             for step in recipe["steps"]
         ],
     }
+
+
+NO_BASICS = KitchenBasics(())

@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from app.ai.agents.graph import build_recipe_graph
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.models import Recipe, RecipeGenerationResponse
 from app.ai.agents.nodes import (
     MEAL_REVIEW_RESERVE_SECONDS,
@@ -20,6 +21,7 @@ from app.ai.llm.retry import PipelineDeadline
 from app.ai.prompts.loader import load_prompt
 from app.ai.prompts.tracing import build_trace_config
 from app.ai.rag.vector_store import RetrievedRecipe
+from tests.recipe_fakes import NO_BASICS
 
 
 def _ingredient(
@@ -67,7 +69,9 @@ def _usable_item(
         "each_label": each_label if stock_base == "each" else None,
         **facts,
     }
-    analysis = analyze_inventory({"inventory": [food]}, today=date(2026, 8, 3))
+    analysis = analyze_inventory(
+        {"kitchen_basics": NO_BASICS, "inventory": [food]}, today=date(2026, 8, 3)
+    )
     return dict(analysis["usable_items"][0])
 
 
@@ -144,6 +148,7 @@ async def test_generate_recipes_preserves_provider_amounts_for_quality_validatio
 
     result = await generate_recipes(
         {
+            "kitchen_basics": NO_BASICS,
             "usable_items": [_usable_item()],
             "retrieved_recipes": [
                 RetrievedRecipe(
@@ -197,6 +202,7 @@ def test_check_quality_drops_invalid_mappings_and_returns_feedback() -> None:
 
     result = check_quality(
         {
+            "kitchen_basics": NO_BASICS,
             "usable_items": [_usable_item()],
             "generated_recipes": [valid, invalid],
         }
@@ -227,6 +233,7 @@ def test_check_quality_rejects_incomplete_staple_amounts() -> None:
 
     result = check_quality(
         {
+            "kitchen_basics": NO_BASICS,
             "usable_items": [_usable_item()],
             "generated_recipes": [incomplete],
         }
@@ -245,7 +252,12 @@ async def test_generation_lists_one_line_per_food_with_its_units() -> None:
     )
 
     await generate_recipes(
-        {"usable_items": [_usable_item(), milk], "batch_ceiling": 1}, provider
+        {
+            "kitchen_basics": NO_BASICS,
+            "usable_items": [_usable_item(), milk],
+            "batch_ceiling": 1,
+        },
+        provider,
     )
 
     prompt = provider.calls[0]["prompt"]
@@ -272,7 +284,12 @@ async def test_generation_schema_limits_units_to_the_kitchens_units() -> None:
     )
 
     await generate_recipes(
-        {"usable_items": [_usable_item(), garlic], "batch_ceiling": 1}, provider
+        {
+            "kitchen_basics": NO_BASICS,
+            "usable_items": [_usable_item(), garlic],
+            "batch_ceiling": 1,
+        },
+        provider,
     )
 
     schema = provider.calls[0]["response_model"].model_json_schema()
@@ -301,7 +318,12 @@ async def test_generation_schema_asks_for_a_cookbook_recipe_with_structured_step
     garlic = _usable_item("garlic", name="Garlic", quantity=1, each_label="head")
 
     await generate_recipes(
-        {"usable_items": [_usable_item(), garlic], "batch_ceiling": 1}, provider
+        {
+            "kitchen_basics": NO_BASICS,
+            "usable_items": [_usable_item(), garlic],
+            "batch_ceiling": 1,
+        },
+        provider,
     )
 
     schema = provider.calls[0]["response_model"].model_json_schema()
@@ -342,7 +364,9 @@ async def test_generation_schema_asks_for_a_cookbook_recipe_with_structured_step
 async def test_a_kitchen_with_no_usable_food_makes_no_generation_call() -> None:
     provider = RecordingProvider([])
 
-    result = await generate_recipes({"usable_items": []}, provider)
+    result = await generate_recipes(
+        {"kitchen_basics": NO_BASICS, "usable_items": []}, provider
+    )
 
     assert result == {"generated_recipes": [], "retry_count": 0}
     assert provider.calls == []
@@ -386,6 +410,7 @@ def test_check_quality_converts_amounts_before_comparing_with_stock() -> None:
 
     result = check_quality(
         {
+            "kitchen_basics": NO_BASICS,
             "usable_items": [garlic, milk],
             "generated_recipes": [fits, too_much_garlic, too_much_milk],
         }
@@ -425,7 +450,11 @@ def test_check_quality_leaves_estimated_and_unconvertible_amounts_to_the_cook() 
     )
 
     result = check_quality(
-        {"usable_items": [garlic, butter], "generated_recipes": [recipe]}
+        {
+            "kitchen_basics": NO_BASICS,
+            "usable_items": [garlic, butter],
+            "generated_recipes": [recipe],
+        }
     )
 
     assert result["valid_recipes"] == [recipe]
@@ -445,6 +474,7 @@ def test_check_quality_rejects_duplicate_inventory_overuse() -> None:
     )
     result = check_quality(
         {
+            "kitchen_basics": NO_BASICS,
             "usable_items": [_usable_item()],
             "generated_recipes": [recipe],
         }
@@ -466,6 +496,7 @@ def test_check_quality_accepts_decimal_amounts_at_exact_inventory_total() -> Non
     )
     result = check_quality(
         {
+            "kitchen_basics": NO_BASICS,
             "usable_items": [_usable_item(quantity=0.3)],
             "generated_recipes": [recipe],
         }
@@ -486,6 +517,7 @@ def test_check_quality_rejects_decimal_amounts_over_inventory_total() -> None:
     )
     result = check_quality(
         {
+            "kitchen_basics": NO_BASICS,
             "usable_items": [_usable_item(quantity=0.3)],
             "generated_recipes": [recipe],
         }
@@ -501,7 +533,11 @@ def test_check_quality_rejects_null_inventory_id() -> None:
         )
     )
     result = check_quality(
-        {"usable_items": [_usable_item()], "generated_recipes": [recipe]}
+        {
+            "kitchen_basics": NO_BASICS,
+            "usable_items": [_usable_item()],
+            "generated_recipes": [recipe],
+        }
     )
     assert result["valid_recipes"] == []
     assert "not mapped to inventory" in result["quality_feedback"]
@@ -513,7 +549,11 @@ def test_prompt_describes_empty_result_for_unsupported_meals() -> None:
 
     asyncio.run(
         generate_recipes(
-            {"usable_items": [_usable_item()], "batch_ceiling": 1},
+            {
+                "kitchen_basics": NO_BASICS,
+                "usable_items": [_usable_item()],
+                "batch_ceiling": 1,
+            },
             provider,
             prompt=load_prompt("generate_recipes"),
         )
@@ -580,6 +620,7 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
 
     result = await graph.ainvoke(
         {
+            "kitchen_basics": NO_BASICS,
             "inventory": [TOMATOES],
             "preferences": {"meal": "dinner"},
             "exclude_titles": [],
@@ -602,7 +643,7 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
     assert provider.calls[4]["deadline"] is deadline
     assert retriever.calls[0]["deadline"] is deadline
     assert result["metadata"]["prompt_name"] == "generate_recipes"
-    assert result["metadata"]["prompt_version"] == 8
+    assert result["metadata"]["prompt_version"] == 9
     assert result["metadata"]["request_id"] == "request-123"
 
 
@@ -626,6 +667,7 @@ async def test_graph_fail_softs_after_one_quality_retry() -> None:
 
     result = await graph.ainvoke(
         {
+            "kitchen_basics": NO_BASICS,
             "inventory": [TOMATOES],
             "preferences": {},
             "exclude_titles": [],
@@ -671,6 +713,7 @@ async def test_graph_honors_a_quality_retry_limit_above_the_default() -> None:
 
     result = await graph.ainvoke(
         {
+            "kitchen_basics": NO_BASICS,
             "inventory": [TOMATOES],
             "preferences": {},
             "exclude_titles": [],
@@ -709,6 +752,7 @@ async def test_graph_skips_quality_retry_below_the_20s_budget_floor() -> None:
 
     result = await graph.ainvoke(
         {
+            "kitchen_basics": NO_BASICS,
             "inventory": [TOMATOES],
             "preferences": {},
             "exclude_titles": [],
@@ -726,7 +770,12 @@ async def test_graph_skips_quality_retry_below_the_20s_budget_floor() -> None:
 async def test_generation_runs_at_minimal_thinking_one_open_recipe_per_call() -> None:
     provider = RecordingProvider([{"recipes": []}] * 3)
     await generate_recipes(
-        {"usable_items": [_usable_item()], "batch_ceiling": 3}, provider
+        {
+            "kitchen_basics": NO_BASICS,
+            "usable_items": [_usable_item()],
+            "batch_ceiling": 3,
+        },
+        provider,
     )
 
     assert len(provider.calls) == 3
@@ -741,47 +790,123 @@ async def test_generation_runs_at_minimal_thinking_one_open_recipe_per_call() ->
 
 
 @pytest.mark.asyncio
-async def test_generation_prompt_says_water_is_the_only_free_ingredient() -> None:
+async def test_every_generation_call_sees_the_kitchen_basics() -> None:
     provider = RecordingProvider([{"recipes": []}] * 5)
-    await generate_recipes({"usable_items": [_usable_item()]}, provider)
-    prompt = provider.calls[0]["prompt"]
-    assert "Water is always available" in prompt
-    assert "salt, pepper, oil" in prompt
+    await generate_recipes(
+        {
+            "kitchen_basics": KitchenBasics(["Salt", "Olive oil"]),
+            "usable_items": [_usable_item()],
+        },
+        provider,
+    )
+
+    assert len(provider.calls) == 5
+    for call in provider.calls:
+        assert (
+            "Kitchen basics, always on hand and never tracked:\n"
+            "- k1: Salt\n- k2: Olive oil"
+        ) in call["prompt"]
+        assert "season the food properly" in call["prompt"]
+        unit = call["response_model"].model_json_schema()["properties"]["recipes"][
+            "items"
+        ]["properties"]["ingredients"]["items"]["properties"]["unit"]
+        assert {"pinch", "tsp", "tbsp", "cup", "ml"} <= set(unit["enum"])
 
 
-def test_check_quality_allows_unmapped_water_but_no_other_unmapped_staple() -> None:
+@pytest.mark.asyncio
+async def test_generation_prompt_without_basics_never_mentions_them() -> None:
+    provider = RecordingProvider([{"recipes": []}] * 5)
+    await generate_recipes(
+        {"kitchen_basics": NO_BASICS, "usable_items": [_usable_item()]}, provider
+    )
+
+    for call in provider.calls:
+        prompt = call["prompt"].lower()
+        assert "basic" not in prompt
+        assert "every other ingredient" not in prompt
+        assert "water, salt, pepper, oil and all seasonings and fats" in prompt
+        unit = call["response_model"].model_json_schema()["properties"]["recipes"][
+            "items"
+        ]["properties"]["ingredients"]["items"]["properties"]["unit"]
+        assert {"cup", "ml"}.isdisjoint(unit["enum"])
+
+
+@pytest.mark.asyncio
+async def test_generation_schema_keeps_one_ingredient_shape_with_basics() -> None:
+    provider = RecordingProvider([{"recipes": []}] * 5)
+    await generate_recipes(
+        {
+            "kitchen_basics": KitchenBasics(["Salt", "Water"]),
+            "usable_items": [_usable_item()],
+        },
+        provider,
+    )
+
+    schema = provider.calls[0]["response_model"].model_json_schema()
+    ingredient = schema["properties"]["recipes"]["items"]["properties"][
+        "ingredients"
+    ]["items"]
+    assert "anyOf" not in ingredient
+    assert ingredient["properties"]["inventory_item_id"] == {"type": "string"}
+
+
+def test_check_quality_accepts_basics_but_no_unlisted_label() -> None:
     tomatoes = _ingredient(
         "Tomatoes", inventory_item_id="tomatoes", use_amount=1, unit="each"
     )
-    with_water = Recipe.model_validate(
+    seasoned = Recipe.model_validate(
         _recipe(
             tomatoes,
-            _ingredient(" Water ", inventory_item_id=None, use_amount=500, unit="ml"),
+            _ingredient(" salt ", inventory_item_id=None, use_amount=1, unit="tsp"),
+            _ingredient("Water", inventory_item_id=None, use_amount=500, unit="ml"),
             title="Tomato Soup",
         )
     )
-    with_salt = Recipe.model_validate(
+    buttered = Recipe.model_validate(
         _recipe(
             tomatoes,
-            _ingredient("Salt", inventory_item_id=None, use_amount=2, unit="g"),
-            title="Salted Tomatoes",
+            _ingredient("Butter", inventory_item_id="k3", use_amount=2, unit="tbsp"),
+            title="Buttered Tomatoes",
         )
     )
-    only_water = Recipe.model_validate(
+    only_basics = Recipe.model_validate(
         _recipe(
             _ingredient("Water", inventory_item_id=None, use_amount=1, unit="l"),
-            title="Hot Water",
+            _ingredient("Salt", inventory_item_id=None, use_amount=1, unit="tsp"),
+            title="Salted Water",
         )
     )
     result = check_quality(
         {
+            "kitchen_basics": KitchenBasics(["Salt", "Water"]),
             "usable_items": [_usable_item()],
-            "generated_recipes": [with_water, with_salt, only_water],
+            "generated_recipes": [seasoned, buttered, only_basics],
         }
     )
-    assert result["valid_recipes"] == [with_water]
-    assert "ingredient 'Salt' is not mapped to inventory" in result["quality_feedback"]
-    assert "Recipe 'Hot Water': recipe has no grounded" in result["quality_feedback"]
+    assert result["valid_recipes"] == [seasoned]
+    feedback = result["quality_feedback"]
+    assert "ingredient 'Butter' references missing inventory id 'k3'" in feedback
+    assert "Recipe 'Salted Water': recipe has no grounded" in feedback
+
+
+def test_check_quality_rejects_unmapped_water_when_it_is_not_a_basic() -> None:
+    recipe = Recipe.model_validate(
+        _recipe(
+            _ingredient(
+                "Tomatoes", inventory_item_id="tomatoes", use_amount=1, unit="each"
+            ),
+            _ingredient("Water", inventory_item_id=None, use_amount=500, unit="ml"),
+        )
+    )
+    result = check_quality(
+        {
+            "kitchen_basics": NO_BASICS,
+            "usable_items": [_usable_item()],
+            "generated_recipes": [recipe],
+        }
+    )
+    assert result["valid_recipes"] == []
+    assert "ingredient 'Water' is not mapped to inventory" in result["quality_feedback"]
 
 
 @pytest.mark.asyncio
@@ -789,6 +914,7 @@ async def test_honest_empty_batch_finishes_without_a_quality_retry() -> None:
     provider = RecordingProvider([{"recipes": []}] * 5)
     result = await build_recipe_graph(provider, RecordingRetriever()).ainvoke(
         {
+            "kitchen_basics": NO_BASICS,
             "inventory": [
                 {"id": "salt", "name": "Salt", "available": 500, "stock_base": "g"}
             ]
@@ -836,6 +962,7 @@ async def test_graph_accepts_a_recipe_measured_in_a_smaller_unit_than_stock() ->
 
     result = await graph.ainvoke(
         {
+            "kitchen_basics": NO_BASICS,
             "inventory": [
                 {
                     "id": "rice",
@@ -881,6 +1008,7 @@ def test_check_quality_compares_amounts_in_a_common_unit(
 
     result = check_quality(
         {
+            "kitchen_basics": NO_BASICS,
             "usable_items": [
                 _usable_item(
                     "food", name=name, quantity=quantity, stock_base=stock_base
@@ -908,6 +1036,7 @@ def test_check_quality_rejects_overuse_after_unit_conversion() -> None:
 
     result = check_quality(
         {
+            "kitchen_basics": NO_BASICS,
             "usable_items": [_usable_item(quantity=2000, stock_base="g")],
             "generated_recipes": [recipe],
         }
@@ -963,7 +1092,11 @@ def test_check_quality_tidies_a_generated_recipe_into_cookbook_order() -> None:
     }
 
     result = check_quality(
-        {"usable_items": [_usable_item(), garlic], "generated_recipes": [recipe]}
+        {
+            "kitchen_basics": NO_BASICS,
+            "usable_items": [_usable_item(), garlic],
+            "generated_recipes": [recipe],
+        }
     )
 
     [tidied] = result["valid_recipes"]
@@ -1012,7 +1145,11 @@ def test_check_quality_shows_a_spoken_amount_only_when_it_matches_the_deduction(
     }
 
     result = check_quality(
-        {"usable_items": [garlic], "generated_recipes": [_recipe(ingredient)]}
+        {
+            "kitchen_basics": NO_BASICS,
+            "usable_items": [garlic],
+            "generated_recipes": [_recipe(ingredient)],
+        }
     )
 
     [recipe] = result["valid_recipes"]
@@ -1026,7 +1163,11 @@ def test_check_quality_keeps_a_step_that_starts_with_a_measurement() -> None:
     recipe["steps"] = ["2-inch pieces\nCut the tomatoes.", "Step 2 - Serve"]
 
     result = check_quality(
-        {"usable_items": [_usable_item()], "generated_recipes": [recipe]}
+        {
+            "kitchen_basics": NO_BASICS,
+            "usable_items": [_usable_item()],
+            "generated_recipes": [recipe],
+        }
     )
 
     assert [step.instruction for step in result["valid_recipes"][0].steps] == [

@@ -8,26 +8,28 @@ from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from typing import Any
 
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.models import Recipe
-from app.ai.agents.nodes import is_water
 from app.inventory.units import in_stock, measure
 
 
 def ingredient_coverage_percent(
     recipe: Recipe,
     inventory: Sequence[Mapping[str, Any]],
+    kitchen_basics: KitchenBasics,
 ) -> int:
     """Return the rounded share of recipe ingredients mapped to inventory.
 
-    The API and the future eval runner call this same function so the match
-    percentage shown in the mobile feed cannot drift from the measured metric.
-    Untracked staples count in the denominator but not the numerator. Water
-    is always on hand, so an unmapped water ingredient is left out of both.
+    The recipe API and ``scripts/run_evals.py`` both call this function, so
+    the match percentage shown in the mobile feed cannot drift from the
+    measured metric. An ingredient mapped to no inventory food counts in the
+    denominator but not the numerator. Kitchen basics are always on hand, so
+    an ingredient ``kitchen_basics`` supplies is left out of both.
     """
     ingredients = [
         ingredient
         for ingredient in recipe.ingredients
-        if ingredient.inventory_item_id is not None or not is_water(ingredient.name)
+        if not kitchen_basics.supplies(ingredient)
     ]
     total_ingredients = len(ingredients)
     if total_ingredients == 0:
