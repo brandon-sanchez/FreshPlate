@@ -42,6 +42,11 @@ class FakeProvider:
     def __init__(self, responses: Iterable[FakeResponse] = ()) -> None:
         self._responses = deque(responses)
 
+    @property
+    def pending(self) -> int:
+        """Return how many queued responses no call has used yet."""
+        return len(self._responses)
+
     async def generate(
         self,
         prompt: str,

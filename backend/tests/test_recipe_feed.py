@@ -14,7 +14,6 @@ from fastapi.testclient import TestClient
 from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING
 from app.ai.llm.errors import ProviderError
-from app.ai.llm.providers import FakeProvider
 from app.ai.rag.vector_store import RetrievedRecipe
 from app.api.images import get_image_service
 from app.api.recipes import (
@@ -30,7 +29,13 @@ from app.services.recipe_feed_store import RecipeFeedSession, RecipeFeedStoreErr
 from tests.conftest import HOUSEHOLD_ID, FakeFoodLineSource, SigningKey
 from tests.image_fakes import POLICY, FakeStore
 from tests.image_fakes import FakeProvider as FakeImageProvider
-from tests.recipe_fakes import NO_BASICS, batch_responses, model_answer
+from tests.recipe_fakes import (
+    NO_BASICS,
+    WRONG_DISH,
+    MealFakeProvider,
+    batch_responses,
+    model_answer,
+)
 
 
 def _auth_headers(signing_key: SigningKey) -> dict[str, str]:
@@ -84,22 +89,6 @@ def _recipe(
     return model_answer(recipe, _inventory(), basics)
 
 
-def _assessment(count: int) -> dict[str, Any]:
-    return {
-        "checks": [
-            {
-                "candidate_index": index,
-                "main_component": "vegetables",
-                "portion_reasoning": "complete meal",
-                "unlisted_foods": [],
-                "dish_reasoning": "a meal on its own",
-                "is_requested_dish": True,
-                "realistic_portions": True,
-                "coherent_method": True,
-            }
-            for index in range(count)
-        ]
-    }
 
 
 class StubRetriever:
@@ -250,10 +239,9 @@ def test_initial_feed_page_uses_a_five_card_head_batch(
     patch_jwks,
 ) -> None:
     patch_jwks([signing_key])
-    provider = FakeProvider(
+    provider = MealFakeProvider(
         [
             *batch_responses(*(_recipe(f"Recipe {index}") for index in range(1, 6))),
-            _assessment(5),
         ]
     )
     app = create_app()
@@ -290,10 +278,9 @@ def test_initial_feed_keeps_partial_results_without_a_quality_retry(
     patch_jwks([signing_key])
     invalid_recipe = _recipe("Untracked recipe")
     invalid_recipe["ingredients"][0]["inventory_item_id"] = "not-in-inventory"
-    provider = FakeProvider(
+    provider = MealFakeProvider(
         [
             *batch_responses(_recipe("Recipe 1"), invalid_recipe),
-            _assessment(1),
             {"recipes": [_recipe("Retry recipe")]},
         ]
     )
@@ -316,7 +303,7 @@ def test_initial_feed_keeps_partial_results_without_a_quality_retry(
     assert [recipe["title"] for recipe in response.json()["data"]["recipes"]] == [
         "Recipe 1"
     ]
-    assert len(provider._responses) == 1
+    assert provider.unused_generations == 1
 
 
 def test_initial_feed_retries_when_no_recipe_passes_quality(
@@ -326,11 +313,10 @@ def test_initial_feed_retries_when_no_recipe_passes_quality(
     patch_jwks([signing_key])
     invalid_recipe = _recipe("Untracked recipe")
     invalid_recipe["ingredients"][0]["inventory_item_id"] = "not-in-inventory"
-    provider = FakeProvider(
+    provider = MealFakeProvider(
         [
             *batch_responses(invalid_recipe),
-            *batch_responses(_recipe("Retry recipe")),
-            _assessment(1),
+            {"recipes": [_recipe("Retry recipe")]},
         ]
     )
     app = create_app()
@@ -352,7 +338,7 @@ def test_initial_feed_retries_when_no_recipe_passes_quality(
     assert [recipe["title"] for recipe in response.json()["data"]["recipes"]] == [
         "Retry recipe"
     ]
-    assert len(provider._responses) == 0
+    assert provider.unused_generations == 0
 
 
 def test_refill_returns_partial_results_without_a_second_quality_pass(
@@ -362,12 +348,10 @@ def test_refill_returns_partial_results_without_a_second_quality_pass(
     patch_jwks([signing_key])
     invalid_recipe = _recipe("Untracked refill recipe")
     invalid_recipe["ingredients"][0]["inventory_item_id"] = "not-in-inventory"
-    provider = FakeProvider(
+    provider = MealFakeProvider(
         [
             *batch_responses(*(_recipe(f"Recipe {index}") for index in range(1, 6))),
-            _assessment(5),
             *batch_responses(_recipe("Recipe 9"), invalid_recipe),
-            _assessment(1),
             {"recipes": [_recipe("Retry recipe")]},
         ]
     )
@@ -396,7 +380,7 @@ def test_refill_returns_partial_results_without_a_second_quality_pass(
     assert [recipe["title"] for recipe in refill.json()["data"]["recipes"]] == [
         "Recipe 9"
     ]
-    assert len(provider._responses) == 1
+    assert provider.unused_generations == 1
 
 
 def test_feed_session_is_unavailable_when_the_basics_cannot_be_read(
@@ -410,7 +394,7 @@ def test_feed_session_is_unavailable_when_the_basics_cannot_be_read(
     patch_jwks([signing_key])
     store = InMemoryRecipeFeedStore()
     app = create_app()
-    _install_dependencies(app, FakeProvider([]), StubRetriever(), store)
+    _install_dependencies(app, MealFakeProvider([]), StubRetriever(), store)
     app.dependency_overrides[get_food_line_source] = lambda: UnreadableBasics(
         _inventory()
     )
@@ -435,12 +419,10 @@ def test_feed_refills_season_with_the_basics_the_session_started_with(
     salted = _recipe(
         "Salted spinach", _SALT, basics=KitchenBasics(["Salt", "Tomatoes"])
     )
-    provider = FakeProvider(
+    provider = MealFakeProvider(
         [
             *batch_responses(*(_recipe(f"Recipe {index}") for index in range(1, 6))),
-            _assessment(5),
             *batch_responses(salted),
-            _assessment(1),
         ]
     )
     store = InMemoryRecipeFeedStore()
@@ -475,10 +457,9 @@ def test_empty_refill_ends_the_feed_with_honest_exhaustion(
 ) -> None:
     """A run that adds zero new unique cards ends the feed (ticket #44)."""
     patch_jwks([signing_key])
-    provider = FakeProvider(
+    provider = MealFakeProvider(
         [
             *batch_responses(*(_recipe(f"Recipe {index}") for index in range(1, 6))),
-            _assessment(5),
             *batch_responses(),
             {"recipes": [_recipe("Recipe 9")]},
         ]
@@ -514,7 +495,7 @@ def test_empty_refill_ends_the_feed_with_honest_exhaustion(
     assert after_exhaustion.status_code == 200
     assert after_exhaustion.json()["data"]["recipes"] == []
     assert after_exhaustion.json()["data"]["has_more"] is False
-    assert len(provider._responses) == 1
+    assert provider.unused_generations == 1
 
 
 def test_session_with_zero_valid_recipes_returns_explicit_empty_state(
@@ -525,7 +506,7 @@ def test_session_with_zero_valid_recipes_returns_explicit_empty_state(
     patch_jwks([signing_key])
     invalid_recipe = _recipe("Untracked recipe")
     invalid_recipe["ingredients"][0]["inventory_item_id"] = "not-in-inventory"
-    provider = FakeProvider(
+    provider = MealFakeProvider(
         [
             *batch_responses(invalid_recipe),
             *batch_responses(invalid_recipe),
@@ -558,7 +539,7 @@ def test_honest_empty_session_reaches_the_empty_state_without_a_retry(
     patch_jwks,
 ) -> None:
     patch_jwks([signing_key])
-    provider = FakeProvider(batch_responses())
+    provider = MealFakeProvider(batch_responses())
     app = create_app()
     _install_dependencies(
         app,
@@ -585,21 +566,18 @@ def test_a_kitchen_that_only_makes_a_side_dish_reaches_the_empty_state(
 ) -> None:
     patch_jwks([signing_key])
     side_dish = {
-        "checks": [
-            {
-                **_assessment(1)["checks"][0],
-                "dish_reasoning": "Wilted spinach with tomatoes is a side dish.",
-                "is_requested_dish": False,
-            }
-        ]
+        **WRONG_DISH,
+        "dish_reasoning": "Wilted spinach with tomatoes is a side dish.",
     }
-    provider = FakeProvider(
+    provider = MealFakeProvider(
         [
             *batch_responses(_recipe("Wilted Spinach and Tomatoes")),
-            side_dish,
-            *batch_responses(_recipe("Spinach and Tomato Saute")),
-            side_dish,
-        ]
+            {"recipes": [_recipe("Spinach and Tomato Saute")]},
+        ],
+        judge={
+            "Wilted Spinach and Tomatoes": side_dish,
+            "Spinach and Tomato Saute": side_dish,
+        },
     )
     app = create_app()
     _install_dependencies(
@@ -639,7 +617,7 @@ def test_session_retrieval_query_leads_with_expiring_items_then_proteins(
     ]
     _install_dependencies(
         app,
-        FakeProvider(batch_responses()),
+        MealFakeProvider(batch_responses()),
         retriever,
         InMemoryRecipeFeedStore(),
         inventory,
@@ -669,10 +647,9 @@ def test_feed_stops_generating_at_the_six_run_session_cap(
                 *batch_responses(
                     *(_recipe(f"Recipe {run * 10 + index}") for index in range(1, 6))
                 ),
-                _assessment(5),
             ]
         )
-    provider = FakeProvider(responses)
+    provider = MealFakeProvider(responses)
     store = InMemoryRecipeFeedStore()
     app = create_app()
     _install_dependencies(app, provider, StubRetriever(), store)
@@ -698,7 +675,7 @@ def test_feed_stops_generating_at_the_six_run_session_cap(
 
     assert pages[-1]["has_more"] is False
     assert pages[-1]["ready_count"] == 30
-    assert len(provider._responses) == 6
+    assert provider.unused_generations == 5
 
 
 def test_feed_pages_from_a_server_owned_pool_before_refilling(
@@ -706,12 +683,10 @@ def test_feed_pages_from_a_server_owned_pool_before_refilling(
     patch_jwks,
 ) -> None:
     patch_jwks([signing_key])
-    provider = FakeProvider(
+    provider = MealFakeProvider(
         [
             *batch_responses(*(_recipe(f"Recipe {index}") for index in range(1, 6))),
-            _assessment(5),
             *batch_responses(_recipe("Recipe 11"), _recipe("Recipe 12")),
-            _assessment(2),
         ]
     )
     retriever = StubRetriever()
@@ -768,14 +743,14 @@ def test_feed_pages_from_a_server_owned_pool_before_refilling(
         "Recipe 12",
     ]
     assert third.json()["data"]["session_id"] == session_id
-    assert len(provider._responses) == 0
+    assert provider.unused_generations == 0
 
 
 class PromptRecordingProvider:
     """FakeProvider wrapper that captures each generation prompt."""
 
     def __init__(self, responses: list[Any]) -> None:
-        self._inner = FakeProvider(responses)
+        self._inner = MealFakeProvider(responses)
         self.prompts: list[str] = []
 
     async def generate(
@@ -824,9 +799,7 @@ def test_refill_runs_never_reuse_grounding_docs_from_earlier_runs(
     provider = PromptRecordingProvider(
         [
             *batch_responses(*(_recipe(f"Recipe {index}") for index in range(1, 6))),
-            _assessment(5),
             *batch_responses(_recipe("Recipe 6")),
-            _assessment(1),
         ]
     )
     store = InMemoryRecipeFeedStore()
@@ -863,8 +836,8 @@ def test_feed_page_does_not_cross_user_session_boundaries(
 ) -> None:
     patch_jwks([signing_key])
     app = create_app()
-    provider = FakeProvider(
-        [*batch_responses(_recipe("Private recipe")), _assessment(1)]
+    provider = MealFakeProvider(
+        [*batch_responses(_recipe("Private recipe"))]
     )
     _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
     with TestClient(app) as client:
@@ -897,7 +870,7 @@ def test_feed_page_does_not_cross_user_session_boundaries(
 def test_feed_keeps_items_without_a_searchable_name(signing_key, patch_jwks) -> None:
     patch_jwks([signing_key])
     provider = PromptRecordingProvider(
-        [*batch_responses(_recipe("Spinach dinner")), _assessment(1)]
+        [*batch_responses(_recipe("Spinach dinner"))]
     )
     retriever = StubRetriever()
     store = InMemoryRecipeFeedStore()
@@ -926,7 +899,7 @@ def test_early_exhaustion_is_persisted(signing_key, patch_jwks) -> None:
     app = create_app()
     _install_dependencies(
         app,
-        FakeProvider([*batch_responses(_recipe("Dinner")), _assessment(1)]),
+        MealFakeProvider([*batch_responses(_recipe("Dinner"))]),
         StubRetriever(),
         store,
     )
@@ -969,9 +942,7 @@ async def test_concurrent_refills_share_the_last_generation_run(
     provider = SlowProvider(
         [
             *batch_responses(_recipe("Initial")),
-            _assessment(1),
             *batch_responses(_recipe("Last run")),
-            _assessment(1),
             *batch_responses(_recipe("Over budget")),
         ]
     )
@@ -1024,13 +995,11 @@ def test_failed_refill_can_retry_without_refunding_its_run(signing_key, patch_jw
 
     patch_jwks([signing_key])
     store = InMemoryRecipeFeedStore()
-    provider = FakeProvider(
+    provider = MealFakeProvider(
         [
             *batch_responses(_recipe("Initial")),
-            _assessment(1),
             *[ProviderError("Unavailable")] * 5,
             *batch_responses(_recipe("Retry")),
-            _assessment(1),
         ]
     )
     app = create_app()
@@ -1080,12 +1049,10 @@ def _install_images(app: FastAPI, store: FakeStore, provider: Any = None) -> Non
 
 def test_feed_cards_arrive_with_their_photos(signing_key, patch_jwks) -> None:
     patch_jwks([signing_key])
-    provider = FakeProvider(
+    provider = MealFakeProvider(
         [
             *batch_responses(_recipe("Recipe 1"), _recipe("Recipe 2")),
-            _assessment(2),
             *batch_responses(_recipe("Recipe 3")),
-            _assessment(1),
         ]
     )
     feed = InMemoryRecipeFeedStore()
@@ -1118,7 +1085,7 @@ def test_feed_cards_arrive_with_their_photos(signing_key, patch_jwks) -> None:
 
 def test_a_failed_photo_never_fails_the_feed(signing_key, patch_jwks) -> None:
     patch_jwks([signing_key])
-    provider = FakeProvider([*batch_responses(_recipe("Recipe 1")), _assessment(1)])
+    provider = MealFakeProvider([*batch_responses(_recipe("Recipe 1"))])
     app = create_app()
     _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
     failing = FakeImageProvider(ProviderError("down", status_code=500))
@@ -1141,8 +1108,8 @@ def test_stored_pages_reuse_cached_photos_and_never_generate(
     signing_key, patch_jwks
 ) -> None:
     patch_jwks([signing_key])
-    provider = FakeProvider(
-        [*batch_responses(_recipe("Recipe 1"), _recipe("Recipe 2")), _assessment(2)]
+    provider = MealFakeProvider(
+        [*batch_responses(_recipe("Recipe 1"), _recipe("Recipe 2"))]
     )
     images = FakeStore()
     image_provider = FakeImageProvider()
@@ -1179,9 +1146,7 @@ def _steering_session(
     provider = PromptRecordingProvider(
         [
             *batch_responses(*(_recipe(title) for title in titles)),
-            _assessment(3),
             *batch_responses(*refill),
-            _assessment(len(refill)),
         ]
     )
     app = create_app()
@@ -1256,9 +1221,7 @@ def test_steering_examples_leave_out_kitchen_basics(
     provider = PromptRecordingProvider(
         [
             *batch_responses(salted),
-            _assessment(1),
             *batch_responses(_recipe("Spinach Pie")),
-            _assessment(1),
         ]
     )
     app = create_app()
@@ -1330,7 +1293,7 @@ def test_page_request_rejects_malformed_steering(
     patch_jwks([signing_key])
     app = create_app()
     _install_dependencies(
-        app, FakeProvider([]), StubRetriever(), InMemoryRecipeFeedStore()
+        app, MealFakeProvider([]), StubRetriever(), InMemoryRecipeFeedStore()
     )
 
     with TestClient(app) as client:
@@ -1357,7 +1320,7 @@ def test_an_empty_session_names_the_dish_the_cook_asked_for(
     app = create_app()
     _install_dependencies(
         app,
-        FakeProvider(batch_responses()),
+        MealFakeProvider(batch_responses()),
         StubRetriever(),
         InMemoryRecipeFeedStore(),
     )

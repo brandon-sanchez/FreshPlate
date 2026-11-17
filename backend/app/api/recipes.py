@@ -461,7 +461,6 @@ async def _generate_claimed_recipe_refill(
         "usable_items": session.usable_items,
         "kitchen_basics": session.kitchen_basics,
         "retrieved_recipes": retrieval_window,
-        "retry_count": 0,
         "metadata": {},
         "deadline": deadline,
         "steering": steering,
@@ -568,7 +567,6 @@ def _initial_recipe_state(
         "preferences": preferences,
         "exclude_titles": exclude_titles,
         "batch_ceiling": batch_ceiling,
-        "retry_count": 0,
         "metadata": {},
         "deadline": deadline,
     }

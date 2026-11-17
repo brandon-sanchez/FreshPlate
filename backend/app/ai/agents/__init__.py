@@ -15,7 +15,6 @@ from app.ai.agents.nodes import (
     check_quality,
     generate_recipes,
     retrieve_recipes,
-    route_after_quality,
 )
 from app.ai.agents.state import (
     GenerationResult,
@@ -46,5 +45,4 @@ __all__ = [
     "check_quality",
     "generate_recipes",
     "retrieve_recipes",
-    "route_after_quality",
 ]
