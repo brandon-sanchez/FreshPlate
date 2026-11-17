@@ -1,6 +1,5 @@
 import { useEffect } from "react";
-import { Text, View } from "react-native";
-import { RectButton } from "react-native-gesture-handler";
+import { Pressable, Text, View } from "react-native";
 import Animated, {
   interpolateColor,
   useAnimatedStyle,
@@ -95,13 +94,15 @@ function InventoryRow({
         animatedStyle,
       ]}
     >
-      <RectButton
+      {/* A JS Pressable rather than a gesture-handler RectButton: inside
+          LotOutcomeSwipe, the swipeable's tap gesture keeps a RectButton's
+          onPress from firing on iOS, so the row would not open. */}
+      <Pressable
         onPress={onPress ? () => onPress(row) : undefined}
-        accessible
-        accessibilityRole="button"
+        disabled={!onPress}
+        accessibilityRole={onPress ? "button" : undefined}
         accessibilityLabel={accessibilitySummary(row)}
-        activeOpacity={1}
-        underlayColor="transparent"
+        android_ripple={{ color: colors.border }}
         style={{
           flexDirection: "row",
           alignItems: "center",
@@ -155,7 +156,7 @@ function InventoryRow({
             {urgencyLabel}
           </Text>
         ) : null}
-      </RectButton>
+      </Pressable>
     </Animated.View>
   );
 }
