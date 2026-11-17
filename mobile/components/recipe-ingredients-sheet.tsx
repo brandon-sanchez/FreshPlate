@@ -11,6 +11,7 @@ import RecipePhoto from "@/components/recipe-photo";
 import RecipeStats from "@/components/recipe-stats";
 import RecipeSteps from "@/components/recipe-steps";
 import { formatIngredientAmount } from "@/lib/recipe-format";
+import { isKitchenBasic } from "@/lib/recipes";
 
 type RecipeIngredientsSheetProps = {
   /** The recipe to preview; `null` hides the sheet. */
@@ -200,6 +201,17 @@ export default function RecipeIngredientsSheet({
                   >
                     {ingredient.name}
                   </Text>
+                  {isKitchenBasic(ingredient) ? (
+                    <Text
+                      style={{
+                        fontFamily: fonts.body,
+                        color: colors.textSubtle,
+                        fontSize: 12,
+                      }}
+                    >
+                      Kitchen basic
+                    </Text>
+                  ) : null}
                 </View>
                 <Text
                   selectable

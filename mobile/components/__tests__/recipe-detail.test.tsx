@@ -36,7 +36,8 @@ const recipe: RecipeSuggestion = {
       use_amount: 100,
       unit: "g",
     },
-    { name: "Garlic", inventory_item_id: null, use_amount: 0.25, unit: "head" },
+    { name: "Garlic", inventory_item_id: "garlic", use_amount: 0.25, unit: "head" },
+    { name: "Salt", inventory_item_id: null, use_amount: 1, unit: "tsp" },
   ],
   steps: ["Prep the greens\nRinse the spinach.", "Sauté and serve."],
   saves_expiring: ["Spinach"],
@@ -121,6 +122,29 @@ it("renders the selected snapshot and sends its identity to the shared save acti
   expect(onToggleSave).toHaveBeenCalledWith(recipe, false);
   fireEvent.press(screen.getByLabelText("Close recipe details"));
   expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+it("marks an ingredient with no food as a kitchen basic", () => {
+  const screen = render(
+    <RecipeDetail
+      recipe={recipe}
+      isSaved={false}
+      isSavePending={false}
+      onToggleSave={jest.fn()}
+      onClose={jest.fn()}
+      {...cookProps}
+    />,
+    { wrapper },
+  );
+  expect(screen.getByTestId("recipe-detail-ingredient-2")).toHaveTextContent(
+    "•1 tsp Salt · kitchen basic",
+  );
+  expect(screen.getByTestId("recipe-detail-ingredient-1")).toHaveTextContent(
+    "•¼ head Garlic",
+  );
+  expect(screen.getByTestId("recipe-detail-ingredient-0")).toHaveTextContent(
+    "•100 g Spinach",
+  );
 });
 
 it("shows Time, then Serves, each value above its label, and no Match", () => {
