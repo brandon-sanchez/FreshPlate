@@ -382,7 +382,7 @@ function ItemForm({
         {container === null ? (
           <Field label="Storage">
             <SegmentedControl
-              options={[...STORAGE_OPTIONS]}
+              options={STORAGE_OPTIONS}
               selected={storageLabel}
               onSelect={handleStorageSelect}
             />

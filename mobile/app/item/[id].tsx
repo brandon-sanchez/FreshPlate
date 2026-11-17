@@ -303,7 +303,7 @@ export default function ItemDetailScreen() {
 
         <SectionLabel text="Storage" />
         <SegmentedControl
-          options={[...STORAGE_OPTIONS]}
+          options={STORAGE_OPTIONS}
           selected={storageLabel}
           onSelect={(v) => setStorage(v.toLowerCase() as StorageLocation)}
         />
