@@ -6,6 +6,13 @@ import { useTheme } from "@/hooks/useTheme";
 import { countAnsweredPreferences, recipeContextLabel } from "@/lib/recipes";
 import type { RecipePreferences } from "@/types/recipes";
 
+/**
+ * Space, in points, between the top safe area and the recipe feed's header.
+ * The loading state before a restored feed uses it too, so the header doesn't
+ * move when the feed replaces it.
+ */
+export const RECIPE_FEED_HEADER_TOP_GAP = 8;
+
 export function RecipeScreenHeader({ subtitle }: { subtitle?: string }) {
   const { colors, fonts } = useTheme();
 

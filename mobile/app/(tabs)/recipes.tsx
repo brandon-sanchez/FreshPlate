@@ -38,7 +38,10 @@ import RecipeActionButton from "@/components/recipe-action-button";
 import RecipeContextComposer from "@/components/recipe-context-composer";
 import { RecipePressable } from "@/components/recipe-motion";
 import RecipeIngredientsSheet from "@/components/recipe-ingredients-sheet";
-import { RecipeScreenHeader } from "@/components/recipe-screen-header";
+import {
+  RECIPE_FEED_HEADER_TOP_GAP,
+  RecipeScreenHeader,
+} from "@/components/recipe-screen-header";
 import RecipeDetail from "@/components/recipe-detail";
 import RecipePhoto from "@/components/recipe-photo";
 
@@ -127,16 +130,25 @@ export default function RecipesScreen() {
     </View>;
   }
 
+  const feedHeader = (
+    <>
+      <RecipeScreenHeader />
+      <RecipeTabs tab={tab} onChange={setTab} />
+    </>
+  );
+
   if (inventory.isPending || feed.isRestoring) {
     return (
       <View
         style={[
           styles.stateContainer,
-          { backgroundColor: colors.bg, paddingTop: insets.top },
+          {
+            backgroundColor: colors.bg,
+            paddingTop: insets.top + RECIPE_FEED_HEADER_TOP_GAP,
+          },
         ]}
       >
-        <RecipeScreenHeader subtitle="AI picks from your kitchen" />
-        <RecipeTabs tab={tab} onChange={setTab} />
+        {feedHeader}
         <LoadingState
           label={inventory.isPending ? "Loading your fridge..." : "Loading your recipes..."}
         />
@@ -261,7 +273,7 @@ export default function RecipesScreen() {
     return (
       <>
       <RecipeFeed
-        header={<><RecipeScreenHeader /><RecipeTabs tab={tab} onChange={setTab} /></>}
+        header={feedHeader}
         recipes={feed.recipes}
         itemCount={items.length}
         preferences={preferences}

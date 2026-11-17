@@ -14,6 +14,7 @@ import RecipeIngredientsSheet from "@/components/recipe-ingredients-sheet";
 import RecipeSweepExit from "@/components/recipe-sweep-exit";
 import { showUndoToast } from "@/components/toastConfig";
 import {
+  RECIPE_FEED_HEADER_TOP_GAP,
   RecipeContextBar,
   RecipeScreenHeader,
 } from "@/components/recipe-screen-header";
@@ -292,7 +293,11 @@ export default function RecipeFeed({
   return (
     <View
       key={fontScale}
-      style={{ flex: 1, backgroundColor: colors.bg, paddingTop: topInset + 8 }}
+      style={{
+        flex: 1,
+        backgroundColor: colors.bg,
+        paddingTop: topInset + RECIPE_FEED_HEADER_TOP_GAP,
+      }}
     >
       {header ?? <RecipeScreenHeader />}
       <RecipeContextBar
