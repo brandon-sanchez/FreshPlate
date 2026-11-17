@@ -19,7 +19,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { useInventoryItems } from "@/hooks/useInventoryItems";
 import { useRecipeFeed } from "@/hooks/useRecipeFeed";
 import { useSavedRecipes, type SavedRecipe } from "@/hooks/useSavedRecipes";
-import { useActiveCook } from "@/hooks/useActiveCook";
+import { useActiveCook, useIsActiveCook } from "@/hooks/useActiveCook";
 import { useSeenKeys } from "@/hooks/useSeenKeys";
 import { useAuthStore } from "@/stores/auth";
 import {
@@ -57,6 +57,7 @@ export default function RecipesScreen() {
   const [flowOpen, setFlowOpen] = useState(false);
   const [detailRecipe, setDetailRecipe] = useState<RecipeSuggestion | null>(null);
   const [previewRecipe, setPreviewRecipe] = useState<RecipeSuggestion | null>(null);
+  const detailCooking = useIsActiveCook(detailRecipe?.recipe_id);
   const items = useMemo(() => inventory.data ?? [], [inventory.data]);
   const generate = useCallback(
     (nextPreferences: RecipePreferences) => {
@@ -94,10 +95,7 @@ export default function RecipesScreen() {
       isSavePending={saved.isToggling}
       onToggleSave={toggleSave}
       onClose={() => setDetailRecipe(null)}
-      cooking={
-        detailRecipe !== null &&
-        cook.activeCook?.recipe.recipe_id === detailRecipe.recipe_id
-      }
+      cooking={detailCooking}
       cookPending={cook.pending}
       onCook={(recipe) => void startCook(recipe)}
       onDoneCooking={async () => {
@@ -260,6 +258,7 @@ export default function RecipesScreen() {
         bottomInset={tabBarHeight + 28}
         onAsk={() => setFlowOpen(true)}
         onDismiss={feed.dismiss}
+        onRestore={feed.restore}
         onSteer={feed.steer}
         onNearEnd={feed.maybePrefetch}
         onRetryMore={feed.retryPrefetch}

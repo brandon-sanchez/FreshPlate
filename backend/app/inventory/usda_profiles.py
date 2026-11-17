@@ -25,6 +25,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Literal, NamedTuple
 
+from app.inventory.food_names import food_name_key
 from app.inventory.units import Exact, FoodFacts, normalize_unit, to_stock
 
 CATALOG_COLUMNS = (
@@ -512,7 +513,7 @@ def _catalog_entry(row: Mapping[str, str]) -> CatalogEntry:
     profile_key = row["profile_key"]
     aliases = tuple(sorted({alias for alias in row["aliases"].split("|") if alias}))
     for name, label in ((profile_key, "profile_key"), *((a, "alias") for a in aliases)):
-        if name == "" or name != _food_name_key(name):
+        if name == "" or name != food_name_key(name):
             raise ValueError(f"{label} {name!r} must be lowercase with single spaces")
     return CatalogEntry(
         profile_key=profile_key,
@@ -521,12 +522,6 @@ def _catalog_entry(row: Mapping[str, str]) -> CatalogEntry:
         aliases=tuple(alias for alias in aliases if alias != profile_key),
         each_portion=row["each_portion"] or None,
     )
-
-
-def _food_name_key(text: str) -> str:
-    # Mirrors public.food_name_key in the foods migration, so catalogue keys
-    # match the name_key the database computes for household foods.
-    return " ".join(text.lower().split())
 
 
 def _tokenize(text: str) -> list[_Token]:

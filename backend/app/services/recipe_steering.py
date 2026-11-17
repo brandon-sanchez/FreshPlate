@@ -46,10 +46,17 @@ async def resolve_steering(
 def _examples(
     by_id: dict[UUID, RecipeSuggestion], ids: Sequence[UUID]
 ) -> list[SteeringExample]:
+    # Basics such as salt season nearly every recipe, so they say nothing
+    # about what the cook liked. Mirrors recipeFoods in
+    # mobile/lib/recipe-steering.ts.
     return [
         {
             "title": recipe.title,
-            "foods": [ingredient.name for ingredient in recipe.ingredients],
+            "foods": [
+                ingredient.name
+                for ingredient in recipe.ingredients
+                if ingredient.inventory_item_id is not None
+            ],
         }
         for recipe in (by_id.get(recipe_id) for recipe_id in ids)
         if recipe is not None

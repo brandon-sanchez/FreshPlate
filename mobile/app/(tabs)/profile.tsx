@@ -1,4 +1,4 @@
-import { ReactNode, useState } from "react";
+import { ReactNode, Ref, useRef, useState } from "react";
 import {
   Alert,
   Pressable,
@@ -15,6 +15,8 @@ import Toast from "@/lib/toast";
 import { useAuthStore, firstNameFromMetadata } from "@/stores/auth";
 import { useTheme } from "@/hooks/useTheme";
 import { firstNameFromProfile, useProfile } from "@/hooks/useProfile";
+import { useScrollAboveKeyboard } from "@/hooks/useScrollAboveKeyboard";
+import KitchenBasicsEditor from "@/components/kitchen-basics-editor";
 
 const DIETARY_TAGS = [
   "Vegetarian",
@@ -33,13 +35,20 @@ const PLACEHOLDER_TASTE = [
 ] as const;
 
 export default function ProfileScreen() {
-  const { colors, fonts } = useTheme();
+  const { colors, fonts, spacing } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
   const user = useAuthStore((s) => s.user);
   const signOut = useAuthStore((s) => s.signOut);
   const profile = useProfile();
+  const scrollRef = useRef<ScrollView>(null);
+  const basicsCardRef = useRef<View>(null);
+  const basicsKeyboard = useScrollAboveKeyboard(
+    scrollRef,
+    basicsCardRef,
+    spacing.gap,
+  );
 
   const displayFirst =
     firstNameFromProfile(profile.data?.display_name) ??
@@ -77,11 +86,18 @@ export default function ProfileScreen() {
 
   return (
     <ScrollView
+      ref={scrollRef}
       style={{ flex: 1, backgroundColor: colors.bg }}
       contentContainerStyle={{
         paddingTop: insets.top + 16,
         paddingBottom: tabBarHeight + 32,
       }}
+      // Insets the scroll view by the keyboard's height on iOS and scrolls the
+      // focused field, such as "Add a basic", above the keyboard.
+      automaticallyAdjustKeyboardInsets
+      // Lets the Add button take the first tap while the keyboard is open.
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="interactive"
     >
       <Text
         style={{
@@ -255,6 +271,18 @@ export default function ProfileScreen() {
         </Text>
       </Section>
 
+      <Section
+        title="Kitchen basics"
+        subtitle="Recipes can always use these. Cooking never deducts them."
+        cardRef={basicsCardRef}
+        cardTestID="kitchen-basics-card"
+      >
+        <KitchenBasicsEditor
+          onInputFocus={basicsKeyboard.onFocus}
+          onInputBlur={basicsKeyboard.onBlur}
+        />
+      </Section>
+
       <Section title="Household">
         <Row
           icon="users"
@@ -316,10 +344,14 @@ export default function ProfileScreen() {
 function Section({
   title,
   subtitle,
+  cardRef,
+  cardTestID,
   children,
 }: {
   title: string;
   subtitle?: string;
+  cardRef?: Ref<View>;
+  cardTestID?: string;
   children: ReactNode;
 }) {
   const { colors, fonts } = useTheme();
@@ -351,6 +383,8 @@ function Section({
         ) : null}
       </View>
       <View
+        ref={cardRef}
+        testID={cardTestID}
         style={{
           backgroundColor: colors.surface,
           borderRadius: 14,
