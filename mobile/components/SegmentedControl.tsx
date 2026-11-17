@@ -2,7 +2,6 @@ import { useEffect } from "react";
 import { View } from "react-native";
 import Animated, {
   interpolateColor,
-  ReduceMotion,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
@@ -10,11 +9,10 @@ import Animated, {
 } from "react-native-reanimated";
 import PressableScale from "@/components/PressableScale";
 import { useTheme } from "@/hooks/useTheme";
-import { TAB_SPRING } from "@/lib/motion";
+import { SELECTION_SPRING } from "@/lib/motion";
 
 const PADDING = 4;
 const GAP = 6;
-const SPRING = { ...TAB_SPRING, reduceMotion: ReduceMotion.System };
 
 type SegmentedControlProps<T extends string> = {
   /** The segments, left to right; each is also its label. */
@@ -44,18 +42,29 @@ function SegmentedControl<T extends string>({
 }: SegmentedControlProps<T>) {
   const { colors } = useTheme();
   const count = options.length;
-  const selectedIndex = Math.max(0, options.indexOf(selected));
-  const position = useSharedValue(selectedIndex);
+  // -1 when `selected` matches no segment, as for a batch between fill levels.
+  const selectedIndex = options.indexOf(selected);
+  const position = useSharedValue(Math.max(0, selectedIndex));
+  const shown = useSharedValue(selectedIndex >= 0 ? 1 : 0);
   const width = useSharedValue(0);
 
   useEffect(() => {
-    position.value = withSpring(selectedIndex, SPRING);
-  }, [position, selectedIndex]);
+    if (selectedIndex < 0) {
+      shown.value = 0;
+      return;
+    }
+    if (shown.value === 0) {
+      position.value = selectedIndex;
+      shown.value = 1;
+    } else {
+      position.value = withSpring(selectedIndex, SELECTION_SPRING);
+    }
+  }, [position, shown, selectedIndex]);
 
   const indicatorStyle = useAnimatedStyle(() => {
     const segment = (width.value - PADDING * 2 - GAP * (count - 1)) / count;
     return {
-      opacity: segment > 0 ? 1 : 0,
+      opacity: segment > 0 ? shown.value : 0,
       width: Math.max(0, segment),
       transform: [{ translateX: position.value * (segment + GAP) }],
     };
@@ -111,6 +120,7 @@ function SegmentedControl<T extends string>({
               label={option}
               index={index}
               position={position}
+              shown={shown}
               on={colors.accentInk}
               off={colors.textMuted}
             />
@@ -125,17 +135,23 @@ function SegmentLabel({
   label,
   index,
   position,
+  shown,
   on,
   off,
 }: {
   label: string;
   index: number;
   position: SharedValue<number>;
+  shown: SharedValue<number>;
   on: string;
   off: string;
 }) {
   const colorStyle = useAnimatedStyle(() => ({
-    color: interpolateColor(Math.min(1, Math.abs(position.value - index)), [0, 1], [on, off]),
+    color: interpolateColor(
+      shown.value === 0 ? 1 : Math.min(1, Math.abs(position.value - index)),
+      [0, 1],
+      [on, off],
+    ),
   }));
   return (
     <Animated.Text
