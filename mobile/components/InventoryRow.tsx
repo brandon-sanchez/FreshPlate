@@ -25,6 +25,10 @@ type InventoryRowProps = {
   highlight?: boolean;
 };
 
+// Holds the press shrink back briefly, so a scroll that starts on a row
+// does not shrink and spring the card.
+const PRESS_FEEDBACK_DELAY_MS = 100;
+
 /**
  * Renders one food as an inventory card: name, total amount with batch count
  * and locations, and an urgency bar and label driven by `row.days`.
@@ -76,6 +80,7 @@ function InventoryRow({ row, onPress, highlight }: InventoryRowProps) {
   // from firing on iOS, so the row would not open.
   return (
     <PressableScale
+      unstable_pressDelay={PRESS_FEEDBACK_DELAY_MS}
       onPress={onPress ? () => onPress(row) : undefined}
       accessibilityRole="button"
       accessibilityLabel={accessibilitySummary(row)}
