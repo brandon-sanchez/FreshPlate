@@ -120,3 +120,32 @@ async def test_a_malformed_row_raises_food_lines_error() -> None:
         await SupabaseFoodLineSource(
             "user-jwt", http_client=http
         ).list_food_lines(HOUSEHOLD)
+
+
+@pytest.mark.asyncio
+async def test_reads_the_households_kitchen_basics_oldest_first() -> None:
+    http, requests = _client(
+        {"kitchen_basics": [{"name": "Salt"}, {"name": "Olive oil"}]}
+    )
+
+    basics = await SupabaseFoodLineSource(
+        "user-jwt", http_client=http
+    ).list_kitchen_basics(HOUSEHOLD)
+
+    assert basics == ["Salt", "Olive oil"]
+    [call] = requests
+    assert call.url.path == "/rest/v1/kitchen_basics"
+    assert call.url.params["household_id"] == f"eq.{HOUSEHOLD}"
+    assert call.url.params["order"] == "created_at.asc,name.asc"
+    assert call.url.params["limit"] == "30"
+    assert call.headers["Authorization"] == "Bearer user-jwt"
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_basic_raises_food_lines_error() -> None:
+    http, _ = _client({"kitchen_basics": [{"name": 3}]})
+
+    with pytest.raises(FoodLinesError, match="invalid rows"):
+        await SupabaseFoodLineSource(
+            "user-jwt", http_client=http
+        ).list_kitchen_basics(HOUSEHOLD)

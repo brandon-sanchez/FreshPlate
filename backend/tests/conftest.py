@@ -129,10 +129,18 @@ HOUSEHOLD_ID = "00000000-0000-4000-8000-0000000000aa"
 
 
 class FakeFoodLineSource:
-    def __init__(self, lines: list[dict[str, Any]]) -> None:
+    def __init__(
+        self, lines: list[dict[str, Any]], basics: list[str] | None = None
+    ) -> None:
         self.lines = lines
+        self.basics = basics or []
         self.household_ids: list[Any] = []
+        self.basics_household_ids: list[Any] = []
 
     async def list_food_lines(self, household_id: Any) -> list[Any]:
         self.household_ids.append(household_id)
         return [FoodLine.model_validate(line) for line in self.lines]
+
+    async def list_kitchen_basics(self, household_id: Any) -> list[str]:
+        self.basics_household_ids.append(household_id)
+        return list(self.basics)

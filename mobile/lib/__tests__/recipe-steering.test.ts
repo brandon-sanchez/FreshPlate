@@ -84,23 +84,23 @@ describe("areRecipesSimilar", () => {
     expect(areRecipesSimilar(toast, jam)).toBe(false);
   });
 
-  it("matches untracked ingredients by name, ignoring case and spacing", () => {
-    const a = recipe("a", ["eggs"]);
-    a.ingredients.push({
-      name: "Sea  Salt",
-      inventory_item_id: null,
-      use_amount: 1,
-      unit: "pinch",
+  it("leaves kitchen basics out of likeness", () => {
+    const basics = (dish: RecipeSuggestion) => ({
+      ...dish,
+      ingredients: [
+        ...dish.ingredients,
+        ...["Salt", "Black pepper", "Olive oil"].map((name) => ({
+          name,
+          inventory_item_id: null,
+          use_amount: 1,
+          unit: "tsp",
+        })),
+      ],
     });
-    const b = recipe("b", ["eggs"]);
-    b.ingredients.push({
-      name: "sea salt",
-      inventory_item_id: null,
-      use_amount: 1,
-      unit: "pinch",
-    });
+    const omelette = basics(recipe("omelette", ["eggs", "spinach"]));
+    const custard = basics(recipe("custard", ["eggs", "milk", "sugar"]));
 
-    expect(areRecipesSimilar(a, b)).toBe(true);
+    expect(areRecipesSimilar(omelette, custard)).toBe(false);
   });
 });
 

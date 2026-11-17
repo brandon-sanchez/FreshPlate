@@ -20,6 +20,7 @@ from app.ai.agents.diversity import (
     recipe_directions,
 )
 from app.ai.agents.food_labels import FoodLabels
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING, MAX_BATCH_CEILING
 from app.ai.agents.models import (
     Recipe,
@@ -68,12 +69,6 @@ MEAL_REVIEW_RESERVE_SECONDS = GEMINI_MIN_DEADLINE_SECONDS + _GROUNDING_CHECK_SEC
 # Embedding every pantry item name blurs the retrieval query, so only the
 # highest-priority names are embedded.
 RETRIEVAL_QUERY_TERM_LIMIT = 30
-WATER = "water"
-WATER_RULE = (
-    "Water is always available: never list it as an ingredient, but steps may use "
-    "it. Every other ingredient, including salt, pepper, oil, butter and every "
-    "seasoning or fat, must come from the listed inventory."
-)
 _QUERY_TERM_SEPARATOR = re.compile(r"[^\w]+", flags=re.UNICODE)
 # Mirrors COPIED_STEP_PREFIX in mobile/lib/recipe-format.ts. A bare number
 # needs ":", "." or ")" after it, so "2 eggs" and "2-inch pieces" stay.
@@ -116,11 +111,15 @@ def analyze_inventory(
     retrieval query lists expiring foods, then main components, then the rest,
     capped at ``RETRIEVAL_QUERY_TERM_LIMIT`` names.
 
+    ``state["kitchen_basics"]`` passes through minus any basic the kitchen
+    also stocks as a usable food (see ``KitchenBasics.without``).
+
     Raises:
         ValueError: When the inventory is not a sequence or a line is not a
             valid ``FoodLine``.
     """
     reference_date = today or date.today()
+    requested_basics: KitchenBasics = state["kitchen_basics"]
     raw_inventory = state.get("inventory", [])
     if not isinstance(raw_inventory, Sequence) or isinstance(
         raw_inventory, (str, bytes)
@@ -182,6 +181,9 @@ def analyze_inventory(
     return {
         "usable_items": usable_items,
         "query_terms": query_terms[:RETRIEVAL_QUERY_TERM_LIMIT],
+        "kitchen_basics": requested_basics.without(
+            item["name"] for item in usable_items
+        ),
     }
 
 
@@ -226,9 +228,11 @@ async def generate_recipes(
     so the provider can cache that shared prefix, followed by its own
     direction from ``recipe_directions`` so the calls don't all write the
     same dish. The directions shift with the number of shown titles, so a
-    feed refill doesn't repeat the first page's directions. The prompt names
-    each food by its ``FoodLabels`` label, and every recipe is mapped back
-    to real food ids before it is returned.
+    feed refill doesn't repeat the first page's directions. The shared prompt
+    lists ``state["kitchen_basics"]``, so every call may season with them.
+    It names each food and basic by its ``FoodLabels`` label, and every
+    recipe is mapped back to real food ids, with a null id for each basic,
+    before it is returned.
 
     Calls stop ``MEAL_REVIEW_RESERVE_SECONDS`` before the pipeline deadline
     when that still leaves them Gemini's minimum call time, so the meal
@@ -255,11 +259,14 @@ async def generate_recipes(
     if not usable_items or batch_ceiling == 0:
         return {"generated_recipes": [], "retry_count": retry_count}
 
-    labels = FoodLabels(item["id"] for item in usable_items)
+    basics: KitchenBasics = state["kitchen_basics"]
+    labels = FoodLabels((item["id"] for item in usable_items), basics)
     dish = requested_dish(state.get("preferences", {}))
-    shared_prompt = _generation_prompt(state, usable_items, labels, dish)
+    shared_prompt = _generation_prompt(state, usable_items, basics, labels, dish)
     response_model = recipe_batch_model(
-        1, {item["id"]: item["units"] for item in usable_items}
+        1,
+        {item["id"]: item["units"] for item in usable_items},
+        extra_units=basics.units,
     )
     calls_deadline = _generation_deadline(deadline or _state_deadline(state))
     outcomes = await asyncio.gather(
@@ -356,8 +363,10 @@ def _generation_deadline(
 def check_quality(state: Mapping[str, Any]) -> QualityResult:
     """Keep only complete recipes grounded in the analyzed inventory.
 
-    Of the grounded recipes, one whose title repeats an earlier one's dish
-    is dropped without feedback, because the calls that wrote them could
+    An ingredient that ``state["kitchen_basics"]`` supplies needs only a
+    positive amount. A recipe still needs at least one inventory food. Of
+    the grounded recipes, one whose title repeats an earlier one's dish is
+    dropped without feedback, because the calls that wrote them could
     not see each other. An empty batch is how the generator reports a
     kitchen that cannot make a meal, so it produces no quality feedback and
     never triggers a retry.
@@ -367,6 +376,7 @@ def check_quality(state: Mapping[str, Any]) -> QualityResult:
     facts_by_id = {
         item["id"]: FoodLine.model_validate(item["food"]).facts for item in usable_items
     }
+    basics: KitchenBasics = state["kitchen_basics"]
     generated = state.get("generated_recipes", [])
     if not isinstance(generated, Sequence) or isinstance(generated, (str, bytes)):
         raise ValueError("Recipe state generated_recipes must be a sequence")
@@ -380,7 +390,7 @@ def check_quality(state: Mapping[str, Any]) -> QualityResult:
             failures.append(f"Recipe {index} is incomplete: {_validation_message(exc)}")
             continue
 
-        issues = _quality_issues(recipe, inventory_by_id, facts_by_id)
+        issues = _quality_issues(recipe, inventory_by_id, facts_by_id, basics)
         if issues:
             failures.append(f"Recipe '{recipe.title}': {'; '.join(issues)}")
         else:
@@ -390,11 +400,6 @@ def check_quality(state: Mapping[str, Any]) -> QualityResult:
         "valid_recipes": drop_near_duplicate_titles(valid_recipes),
         "quality_feedback": "\n".join(failures) if failures else None,
     }
-
-
-def is_water(name: str) -> bool:
-    """Return whether an ingredient is water, the one ingredient always on hand."""
-    return normalize_query_term(name) == WATER
 
 
 def route_after_quality(
@@ -465,6 +470,7 @@ def _usable_items(raw_items: Any) -> list[UsableItem]:
 def _generation_prompt(
     state: Mapping[str, Any],
     usable_items: Sequence[UsableItem],
+    basics: KitchenBasics,
     labels: FoodLabels,
     dish: RequestedDish,
 ) -> str:
@@ -481,7 +487,7 @@ def _generation_prompt(
             "several options the cook chooses between, so it may use the full "
             "listed inventory, including the same main ingredient as another "
             f"option. If the kitchen cannot make a real {dish}, return an empty "
-            f"list. {WATER_RULE}"
+            "list."
         ),
         "",
         (
@@ -506,6 +512,7 @@ def _generation_prompt(
     lines.extend(
         _inventory_line(item, labels.label(item["id"])) for item in usable_items
     )
+    lines.extend(_basics_lines(basics, labels))
 
     lines.extend(("", "Retrieved recipe inspiration:"))
     retrieved_recipes = state.get("retrieved_recipes", [])
@@ -544,6 +551,30 @@ def _generation_prompt(
     if feedback:
         lines.extend(("", "Quality feedback from the previous attempt:", str(feedback)))
     return "\n".join(lines)
+
+
+def _basics_lines(basics: KitchenBasics, labels: FoodLabels) -> list[str]:
+    """Return the prompt lines that say which untracked ingredients are allowed.
+
+    Every sentence about kitchen basics lives here, so a household with no
+    basics gets a prompt that never mentions them.
+    """
+    if not basics:
+        return [
+            "",
+            "Water, salt, pepper, oil and all seasonings and fats must come "
+            "from the listed inventory too.",
+        ]
+    return [
+        "",
+        "Kitchen basics, always on hand and never tracked:",
+        *(f"- {labels.basic_label(name)}: {name}" for name in basics.names),
+        "Kitchen basics are the one exception to listed inventory: use them "
+        "freely to cook and to season the food properly. List each basic a "
+        "recipe uses as an ingredient whose inventory_item_id is the basic's "
+        "short id, such as k1, with an amount in a pinch, spoon, cup or ml "
+        "measure, such as 1 tsp salt.",
+    ]
 
 
 def _steering_lines(steering: RecipeSteering | None) -> list[str]:
@@ -595,27 +626,28 @@ def _quality_issues(
     recipe: Recipe,
     inventory_by_id: Mapping[str, UsableItem],
     facts_by_id: Mapping[str, FoodFacts],
+    basics: KitchenBasics,
 ) -> list[str]:
     """Return why ``recipe`` is not grounded in the usable inventory.
 
-    An ingredient must name a usable food, except unmapped water. A food's
-    ingredients fail together only when their exact conversions add up to
-    more than its available stock. ``Approximate``, ``Small`` and
-    ``AskAtCook`` amounts never reject a recipe, because the cook flow
-    confirms them.
+    An ingredient must name a usable food, except one ``basics`` supplies,
+    which still needs a positive amount. A food's ingredients fail together
+    only when their exact conversions add up to more than its available
+    stock. ``Approximate``, ``Small`` and ``AskAtCook`` amounts never reject
+    a recipe, because the cook flow confirms them.
     """
     issues: list[str] = []
     grounded = False
     exact_by_id: dict[str, Decimal] = {}
     for ingredient in recipe.ingredients:
-        if ingredient.inventory_item_id is None and is_water(ingredient.name):
-            continue
         amount = ingredient.use_amount
         if amount is None:
             issues.append(f"ingredient '{ingredient.name}' is missing use_amount")
         elif amount <= 0:
             issues.append(f"ingredient '{ingredient.name}' has an invalid use_amount")
 
+        if basics.supplies(ingredient):
+            continue
         item_id = ingredient.inventory_item_id
         if item_id is None:
             issues.append(f"ingredient '{ingredient.name}' is not mapped to inventory")

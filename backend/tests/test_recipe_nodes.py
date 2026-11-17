@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.nodes import (
     RETRIEVAL_QUERY_TERM_LIMIT,
     analyze_inventory,
@@ -14,6 +15,7 @@ from app.ai.agents.nodes import (
 )
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.rag.vector_store import RetrievedRecipe
+from tests.recipe_fakes import NO_BASICS
 
 
 def _food(
@@ -37,6 +39,7 @@ def _food(
 
 def test_analyze_inventory_sends_one_line_per_food_with_its_units() -> None:
     state: dict[str, Any] = {
+        "kitchen_basics": NO_BASICS,
         "inventory": [
             _food(
                 "milk",
@@ -56,7 +59,7 @@ def test_analyze_inventory_sends_one_line_per_food_with_its_units() -> None:
                 next_expiry="2026-08-05",
             ),
             _food("flour", "Flour", 0, stock_base="g"),
-        ]
+        ],
     }
 
     result = analyze_inventory(state, today=date(2026, 8, 3))
@@ -77,31 +80,51 @@ def test_analyze_inventory_sends_one_line_per_food_with_its_units() -> None:
     assert result["query_terms"] == ["garlic", "milk"]
 
 
+def test_analyze_inventory_keeps_basics_the_kitchen_does_not_track() -> None:
+    state: dict[str, Any] = {
+        "kitchen_basics": KitchenBasics(["Salt", "olive oil", "Black pepper"]),
+        "inventory": [
+            _food("oil", "Olive  Oil", 500, stock_base="ml"),
+            _food("pepper", "Black pepper", 0, stock_base="g"),
+        ],
+    }
+
+    result = analyze_inventory(state, today=date(2026, 8, 3))
+
+    assert result["kitchen_basics"].names == ("Salt", "Black pepper")
+
+
 @pytest.mark.parametrize(
     ("state", "match"),
     [
         pytest.param(
-            {"inventory": "not-a-sequence"},
+            {"kitchen_basics": NO_BASICS, "inventory": "not-a-sequence"},
             "inventory must be a sequence",
             id="non-sequence-inventory",
         ),
         pytest.param(
-            {"inventory": ["not-a-mapping"]},
+            {"kitchen_basics": NO_BASICS, "inventory": ["not-a-mapping"]},
             "Invalid recipe inventory line",
             id="non-mapping-item",
         ),
         pytest.param(
-            {"inventory": [_food("bad", "Bad", "many")]},
+            {"kitchen_basics": NO_BASICS, "inventory": [_food("bad", "Bad", "many")]},
             "Invalid recipe inventory line",
             id="invalid-available",
         ),
         pytest.param(
-            {"inventory": [_food("bad", "Bad", next_expiry="soon")]},
+            {
+                "kitchen_basics": NO_BASICS,
+                "inventory": [_food("bad", "Bad", next_expiry="soon")],
+            },
             "Invalid recipe inventory line",
             id="invalid-next-expiry",
         ),
         pytest.param(
-            {"inventory": [_food("bad", "Bad", stock_base="each", each_label=None)]},
+            {
+                "kitchen_basics": NO_BASICS,
+                "inventory": [_food("bad", "Bad", stock_base="each", each_label=None)],
+            },
             "Invalid recipe inventory line",
             id="each-without-label",
         ),
@@ -116,11 +139,12 @@ def test_analyze_inventory_rejects_malformed_input(
 
 def test_analyze_inventory_flags_the_five_day_boundary_and_today() -> None:
     state: dict[str, Any] = {
+        "kitchen_basics": NO_BASICS,
         "inventory": [
             _food("today", "Today Item", next_expiry="2026-08-03"),
             _food("boundary", "Boundary Item", next_expiry="2026-08-08"),
             _food("later", "Later Item", next_expiry="2026-08-09"),
-        ]
+        ],
     }
 
     result = analyze_inventory(state, today=date(2026, 8, 3))
@@ -205,7 +229,9 @@ def test_retrieval_query_leads_with_expiring_and_main_items_and_stays_bounded() 
         _food("rice", "Rice", 1000, stock_base="g"),
     ]
 
-    result = analyze_inventory({"inventory": inventory}, today=date(2026, 8, 3))
+    result = analyze_inventory(
+        {"kitchen_basics": NO_BASICS, "inventory": inventory}, today=date(2026, 8, 3)
+    )
 
     assert len(result["usable_items"]) == len(inventory)
     assert result["query_terms"][:2] == ["kale", "salmon"]

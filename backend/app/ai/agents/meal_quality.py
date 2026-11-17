@@ -9,8 +9,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from app.ai.agents.dish import RequestedDish, requested_dish
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.models import Recipe
-from app.ai.agents.nodes import check_quality, is_water
+from app.ai.agents.nodes import check_quality
 from app.ai.agents.state import QualityResult
 from app.ai.llm.errors import ProviderError
 from app.ai.llm.protocol import LLMProvider
@@ -49,7 +50,8 @@ class MealCheck(BaseModel):
     unlisted_foods: list[str] = Field(
         description="Foods named in the title, steps or ingredients that are not in "
         "the kitchen items. An ingredient is listed only when it is the same food "
-        "as the kitchen item whose recipe_names include it. Water never counts."
+        "as the kitchen item whose recipe_names include it. Kitchen basics never "
+        "count."
     )
     is_requested_dish: bool = Field(
         description="True if most people would eat this on its own as the "
@@ -70,13 +72,17 @@ class MealChecklist(BaseModel):
     checks: list[MealCheck]
 
 
-def meal_verdict(check: MealCheck, dish: RequestedDish) -> tuple[MealVerdict, str]:
+def meal_verdict(
+    check: MealCheck, dish: RequestedDish, basics: KitchenBasics
+) -> tuple[MealVerdict, str]:
     """Return the first failed checklist answer as a verdict and reason.
 
     The reason goes back to the generator as retry feedback, so a
-    ``wrong_dish`` reason names the dish the cook asked for.
+    ``wrong_dish`` reason names the dish the cook asked for. A food the
+    judge calls unlisted is ignored when it is one of ``basics``, the
+    household's kitchen basics.
     """
-    unlisted = [food for food in check.unlisted_foods if not is_water(food)]
+    unlisted = [food for food in check.unlisted_foods if not basics.has_name(food)]
     if unlisted:
         return "unsupported_ingredient", f"names foods not in the kitchen: {unlisted}"
     if not check.is_requested_dish:
@@ -100,11 +106,12 @@ async def assess_meals(
 
     Makes one provider call for the whole batch. The judge is told which
     dish the session asks for, from ``requested_dish``, and sees only the
-    kitchen items each recipe uses.
+    kitchen items each recipe uses, plus the kitchen basics.
 
     Args:
         recipes: Recipes that already passed the inventory checks.
-        state: The recipe state; ``usable_items`` and ``preferences`` are read.
+        state: The recipe state; ``usable_items``, ``kitchen_basics`` and
+            ``preferences`` are read.
         provider: The model client the judge runs on.
         prompt: The judge prompt, or None to load ``assess_meals``.
         deadline: The pipeline deadline the call must finish inside.
@@ -122,6 +129,7 @@ async def assess_meals(
     inventory_by_id = {item["id"]: item for item in state.get("usable_items", [])}
     preferences = state.get("preferences", {})
     dish = requested_dish(preferences)
+    basics: KitchenBasics = state["kitchen_basics"]
     payload = {
         "candidates": [
             {
@@ -131,6 +139,7 @@ async def assess_meals(
             }
             for index, recipe in enumerate(recipes)
         ],
+        "kitchen_basics": list(basics.names),
         "preferences": preferences,
         "requested_dish": dish,
     }
@@ -160,7 +169,7 @@ async def assess_meals(
     failures: list[str] = []
     checks_by_index = {check.candidate_index: check for check in checklist.checks}
     for index, recipe in enumerate(recipes):
-        verdict, reason = meal_verdict(checks_by_index[index], dish)
+        verdict, reason = meal_verdict(checks_by_index[index], dish, basics)
         if verdict == "eligible":
             eligible.append(recipe)
         else:

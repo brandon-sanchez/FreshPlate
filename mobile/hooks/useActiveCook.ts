@@ -63,3 +63,14 @@ export function useActiveCook() {
 
   return { activeCook, pending, start, finish };
 }
+
+/**
+ * Returns whether `recipeId` is the active cook's recipe. Reads
+ * `useActiveCookStore` and rerenders when the active cook changes. An
+ * undefined `recipeId` returns `false`.
+ */
+export function useIsActiveCook(recipeId: string | undefined): boolean {
+  return useActiveCookStore(
+    (s) => recipeId !== undefined && s.activeCook?.recipe.recipe_id === recipeId,
+  );
+}
