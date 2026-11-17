@@ -90,6 +90,12 @@ function renderScreen() {
   );
 }
 
+function dragOpen(name: string) {
+  const row = screen.getAllByTestId("swipe-row").find((r) => within(r).queryByText(name))!;
+  fireEvent(row, "swipeableOpenStartDrag", "left");
+  return row;
+}
+
 beforeEach(async () => {
   await AsyncStorage.clear();
   mockFetchFoodImage.mockClear();
@@ -117,11 +123,22 @@ it("shows one row per food with its batches stacked, counting foods in the subti
   expect(mockPush).toHaveBeenCalledWith("/food/food-milk");
 });
 
+it("builds a row's swipe actions only once the row is dragged", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+  expect(screen.queryByLabelText("Toss")).toBeNull();
+
+  const eggsRow = dragOpen("Eggs");
+
+  expect(within(eggsRow).getByLabelText("Toss")).toBeTruthy();
+  expect(screen.getAllByLabelText("Toss")).toHaveLength(1);
+});
+
 it("records every batch a row stacks when its swipe action is tapped", async () => {
   renderScreen();
   await screen.findByText("2 items · 1 expired");
   fireEvent.press(screen.getByRole("tab", { name: "Category" }));
-  const milkRow = screen.getAllByTestId("swipe-row").find((row) => within(row).queryByText("Milk"));
+  const milkRow = dragOpen("Milk");
 
   fireEvent.press(within(milkRow!).getByLabelText("Toss"));
 
@@ -139,7 +156,7 @@ it("records a row once when its actions are tapped again before the first record
   mockRpc.mockReturnValue(new Promise((resolve) => (finish = resolve)));
   renderScreen();
   await screen.findByText("2 items · 1 expired");
-  const milkRow = screen.getAllByTestId("swipe-row").find((row) => within(row).queryByText("Milk"));
+  const milkRow = dragOpen("Milk");
 
   fireEvent.press(within(milkRow!).getByLabelText("Used up"));
   fireEvent.press(within(milkRow!).getByLabelText("Used up"));
@@ -154,7 +171,7 @@ it("takes taps again after a record fails", async () => {
   renderScreen();
   await screen.findByText("2 items · 1 expired");
   fireEvent.press(screen.getByRole("tab", { name: "Category" }));
-  const milkRow = screen.getAllByTestId("swipe-row").find((row) => within(row).queryByText("Milk"));
+  const milkRow = dragOpen("Milk");
 
   fireEvent.press(within(milkRow!).getByLabelText("Used up"));
   await waitFor(() => expect(mockRpc).toHaveBeenCalledTimes(1));
@@ -233,7 +250,7 @@ it("swipes away only the unexpired batches of a row, leaving the expired one for
   ];
   renderScreen();
   await screen.findByText("1 item · 1 expired");
-  const milkRow = screen.getAllByTestId("swipe-row").find((row) => within(row).queryByText("Milk"));
+  const milkRow = dragOpen("Milk");
 
   fireEvent.press(within(milkRow!).getByLabelText("Used up"));
 
@@ -401,4 +418,16 @@ it("asks for a row's photo only once the row has been on screen", async () => {
 
   await waitFor(() => expect(mockFetchFoodImage).toHaveBeenCalledTimes(1));
   expect(mockFetchFoodImage.mock.calls[0][0]).toBe("food-milk");
+});
+
+it("mounts only the first rows of a long inventory", async () => {
+  mockLots.current = Array.from({ length: 60 }, (_, i) =>
+    lotRow(`lot-${i}`, { ...milk, id: `food-${i}`, name: `Food ${i}` }, 5, "fridge", 100),
+  );
+  renderScreen();
+  await screen.findByText("60 items · 0 expired");
+
+  const shown = screen.getAllByText(/^Food \d+$/).length;
+  expect(shown).toBeGreaterThan(0);
+  expect(shown).toBeLessThan(60);
 });

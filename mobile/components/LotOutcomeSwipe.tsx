@@ -1,4 +1,4 @@
-import { type ReactNode, useRef } from "react";
+import { type ReactNode, useCallback, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { RectButton } from "react-native-gesture-handler";
 import ReanimatedSwipeable, {
@@ -40,11 +40,18 @@ const HAPTIC_REARM_BELOW_PROGRESS = 0.35;
  * Only the first tap counts: the row stays on screen until the list refetches,
  * and a second record of the same batches would be refused. A failed record
  * closes the swipe and takes taps again.
+ *
+ * Until the row is first dragged open, an empty space as wide as the action
+ * buttons stands in for them. The swipe measures it when a drag starts to
+ * find where the row snaps open.
  */
 export default function LotOutcomeSwipe({ lotIds, name, children }: LotOutcomeSwipeProps) {
   const { record } = useLotOutcome();
   const swipeRef = useRef<SwipeableMethods>(null);
   const firedRef = useRef(false);
+  const [actionsMounted, setActionsMounted] = useState(false);
+  // Stable, because a new callback rebuilds the swipe's pan gesture mid-drag.
+  const mountActions = useCallback(() => setActionsMounted(true), []);
 
   const act = (outcome: LotOutcome) => {
     if (firedRef.current) return;
@@ -62,7 +69,14 @@ export default function LotOutcomeSwipe({ lotIds, name, children }: LotOutcomeSw
       friction={1}
       rightThreshold={ACTIONS_WIDTH / 2}
       overshootRight={false}
-      renderRightActions={(progress) => <Actions progress={progress} onPress={act} />}
+      onSwipeableOpenStartDrag={mountActions}
+      renderRightActions={(progress) =>
+        actionsMounted ? (
+          <Actions progress={progress} onPress={act} />
+        ) : (
+          <View style={{ width: ACTIONS_WIDTH }} />
+        )
+      }
     >
       {children}
     </ReanimatedSwipeable>

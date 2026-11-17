@@ -158,6 +158,7 @@ it("records a swiped batch on its own", async () => {
   renderScreen();
   const card = await screen.findByLabelText("1000 ml, Fridge, Expires in 2 days");
   const row = screen.getAllByTestId("swipe-row").find((r) => within(r).queryByLabelText(card.props.accessibilityLabel));
+  fireEvent(row!, "swipeableOpenStartDrag", "left");
 
   fireEvent.press(within(row!).getByLabelText("Used up"));
 
