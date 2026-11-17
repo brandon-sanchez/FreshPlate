@@ -340,7 +340,8 @@ it("filters by place from the menu as each option is checked, and clears from th
   });
 
   fireEvent.press(screen.getByRole("button", { name: "Done" }));
-  await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Freezer" })).toBeNull());
+  expect(screen.queryByRole("checkbox", { name: "Freezer" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Sort and filter", expanded: false })).toBeTruthy();
   fireEvent.press(screen.getByRole("button", { name: "Clear filters" }));
 
   expect(rowNames()).toEqual(["Eggs", "Milk", "Milk"]);
@@ -359,7 +360,7 @@ it("says nothing matches when a switch leaves no rows, offering to clear the fil
   expect(screen.getByText("No matches.")).toBeTruthy();
 
   fireEvent.press(screen.getByRole("button", { name: "Done" }));
-  await waitFor(() => expect(screen.queryByRole("switch")).toBeNull());
+  expect(screen.queryByRole("switch")).toBeNull();
   fireEvent.press(screen.getByText("Clear filters"));
   expect(rowNames()).toEqual(["Eggs", "Milk", "Milk"]);
 });
@@ -371,6 +372,6 @@ it("closes the menu when tapped outside, keeping the current sort", async () => 
   await openMenu();
   fireEvent(screen.getByLabelText("Close sort and filter", { includeHiddenElements: true }), "pressIn");
 
-  await waitFor(() => expect(screen.queryByRole("radio")).toBeNull());
+  expect(screen.queryByRole("radio")).toBeNull();
   expect(rowNames()).toEqual(["Eggs", "Milk", "Milk"]);
 });

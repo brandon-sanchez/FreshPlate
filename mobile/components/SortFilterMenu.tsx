@@ -102,99 +102,107 @@ export default function SortFilterMenu({
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <Animated.View
-        style={[{ flex: 1, backgroundColor: palette.scrim }, scrimStyle]}
+      {/* While it fades out, the menu takes no taps and screen readers skip it. */}
+      <View
+        style={{ flex: 1 }}
+        pointerEvents={open ? "box-none" : "none"}
+        accessibilityElementsHidden={!open}
+        importantForAccessibility={open ? "auto" : "no-hide-descendants"}
       >
-        {/* Closing on touch-down lets a drag that starts outside the menu
-            dismiss it; onPress covers screen readers, which send only a press. */}
-        <Pressable
-          onPressIn={onClose}
-          onPress={onClose}
-          accessibilityLabel="Close sort and filter"
-          accessibilityRole="button"
-          style={{ flex: 1 }}
-        />
-      </Animated.View>
-      <Animated.View
-        accessibilityViewIsModal
-        accessibilityLabel="Sort and filter"
-        style={[
-          {
-            position: "absolute",
-            top: frame.top,
-            left: frame.left,
-            width: frame.width,
-            maxHeight: frame.maxHeight,
-            borderRadius: 14,
-            backgroundColor: colors.surface,
-            boxShadow: palette.menuShadow,
-            transformOrigin: [frame.originX, 0, 0],
-          },
-          menuStyle,
-        ]}
-      >
-        <ScrollView
-          bounces={false}
-          contentContainerStyle={{ paddingVertical: 6 }}
-          style={{
-            flexShrink: 1,
-            borderTopLeftRadius: 14,
-            borderTopRightRadius: 14,
-          }}
+        <Animated.View
+          style={[{ flex: 1, backgroundColor: palette.scrim }, scrimStyle]}
         >
-          <MenuHeading text="Sort by" />
-          <SortList sortBy={sortBy} onSortChange={onSortChange} />
-          <View
-            style={{
-              height: 1,
-              marginVertical: 6,
-              backgroundColor: colors.border,
-            }}
+          {/* Closing on touch-down lets a drag that starts outside the menu
+            dismiss it; onPress covers screen readers, which send only a press. */}
+          <Pressable
+            onPressIn={onClose}
+            onPress={onClose}
+            accessibilityLabel="Close sort and filter"
+            accessibilityRole="button"
+            style={{ flex: 1 }}
           />
-          <MenuHeading text="Filter" />
-          {FILTER_LISTS.map(({ key, label }) => {
-            const chosen: string[] = filters[key];
-            return (
-              <Disclosure
+        </Animated.View>
+        <Animated.View
+          accessibilityViewIsModal
+          accessibilityLabel="Sort and filter"
+          style={[
+            {
+              position: "absolute",
+              top: frame.top,
+              left: frame.left,
+              width: frame.width,
+              maxHeight: frame.maxHeight,
+              borderRadius: 14,
+              backgroundColor: colors.surface,
+              boxShadow: palette.menuShadow,
+              transformOrigin: [frame.originX, 0, 0],
+            },
+            menuStyle,
+          ]}
+        >
+          <ScrollView
+            bounces={false}
+            contentContainerStyle={{ paddingVertical: 6 }}
+            style={{
+              flexShrink: 1,
+              borderTopLeftRadius: 14,
+              borderTopRightRadius: 14,
+            }}
+          >
+            <MenuHeading text="Sort by" />
+            <SortList sortBy={sortBy} onSortChange={onSortChange} />
+            <View
+              style={{
+                height: 1,
+                marginVertical: 6,
+                backgroundColor: colors.border,
+              }}
+            />
+            <MenuHeading text="Filter" />
+            {FILTER_LISTS.map(({ key, label }) => {
+              const chosen: string[] = filters[key];
+              return (
+                <Disclosure
+                  key={key}
+                  label={label}
+                  summary={summarizeChoices(chosen, options[key])}
+                  active={chosen.length > 0}
+                >
+                  {options[key].map((option) => (
+                    <CheckRow
+                      key={option.value}
+                      option={option}
+                      checked={chosen.includes(option.value)}
+                      onPress={() =>
+                        onFiltersChange((f) =>
+                          toggleChoice(
+                            f,
+                            key,
+                            option.value as InventoryFilters[typeof key][number],
+                          ),
+                        )
+                      }
+                    />
+                  ))}
+                </Disclosure>
+              );
+            })}
+            {FILTER_SWITCHES.map(({ key, label }) => (
+              <SwitchRow
                 key={key}
                 label={label}
-                summary={summarizeChoices(chosen, options[key])}
-                active={chosen.length > 0}
-              >
-                {options[key].map((option) => (
-                  <CheckRow
-                    key={option.value}
-                    option={option}
-                    checked={chosen.includes(option.value)}
-                    onPress={() =>
-                      onFiltersChange((f) =>
-                        toggleChoice(
-                          f,
-                          key,
-                          option.value as InventoryFilters[typeof key][number],
-                        ),
-                      )
-                    }
-                  />
-                ))}
-              </Disclosure>
-            );
-          })}
-          {FILTER_SWITCHES.map(({ key, label }) => (
-            <SwitchRow
-              key={key}
-              label={label}
-              on={filters[key]}
-              onPress={() => onFiltersChange((f) => toggleSwitch(f, key))}
-            />
-          ))}
-        </ScrollView>
-        <MenuFooter
-          canClear={countActiveFilters(filters) > 0}
-          onClear={() => onFiltersChange(() => EMPTY_FILTERS)}
-          onDone={onClose}
-        />
-      </Animated.View>
+                on={filters[key]}
+                onPress={() => onFiltersChange((f) => toggleSwitch(f, key))}
+              />
+            ))}
+          </ScrollView>
+          <MenuFooter
+            canClear={countActiveFilters(filters) > 0}
+            onClear={() => onFiltersChange(() => EMPTY_FILTERS)}
+            onDone={onClose}
+          />
+        </Animated.View>
+      </View>
     </Modal>
   );
 }
