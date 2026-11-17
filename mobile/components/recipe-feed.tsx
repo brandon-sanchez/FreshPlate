@@ -13,11 +13,7 @@ import RecipeFeedMessage from "@/components/recipe-feed-message";
 import RecipeIngredientsSheet from "@/components/recipe-ingredients-sheet";
 import RecipeSweepExit from "@/components/recipe-sweep-exit";
 import { showUndoToast } from "@/components/toastConfig";
-import {
-  RECIPE_FEED_HEADER_TOP_GAP,
-  RecipeContextBar,
-  RecipeScreenHeader,
-} from "@/components/recipe-screen-header";
+import { RecipeContextBar } from "@/components/recipe-screen-header";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useRecipeSweep } from "@/hooks/useRecipeSweep";
 import type { SteerDirection } from "@/lib/recipe-steering";
@@ -34,7 +30,6 @@ type RecipeFeedProps = {
   isExhausted: boolean;
   /** Why the feed ended, which picks the copy shown once it is exhausted. */
   ending: RecipeFeedEnding;
-  topInset: number;
   bottomInset: number;
   onAsk: () => void;
   /**
@@ -56,7 +51,8 @@ type RecipeFeedProps = {
   savedIds?: Set<string>;
   onToggleSave?: (recipe: RecipeSuggestion, saved: boolean) => void;
   isSavePending?: boolean;
-  header?: ReactNode;
+  /** The screen header above the context bar. The feed adds no top inset, so it owns the safe-area spacing. */
+  header: ReactNode;
   onOpenDetail?: (recipe: RecipeSuggestion) => void;
   /** Starts a cook of the recipe from a right swipe on its card or from the preview sheet. */
   onCook: (recipe: RecipeSuggestion) => void;
@@ -90,7 +86,6 @@ export default function RecipeFeed({
   prefetchError,
   isExhausted,
   ending,
-  topInset,
   bottomInset,
   onAsk,
   onDismiss,
@@ -293,13 +288,9 @@ export default function RecipeFeed({
   return (
     <View
       key={fontScale}
-      style={{
-        flex: 1,
-        backgroundColor: colors.bg,
-        paddingTop: topInset + RECIPE_FEED_HEADER_TOP_GAP,
-      }}
+      style={{ flex: 1, backgroundColor: colors.bg }}
     >
-      {header ?? <RecipeScreenHeader />}
+      {header}
       <RecipeContextBar
         itemCount={itemCount}
         preferences={preferences}

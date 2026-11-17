@@ -2,22 +2,26 @@ import ActiveCookBanner from "@/components/active-cook-banner";
 import { RecipePressable } from "@/components/recipe-motion";
 import { StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@/hooks/useTheme";
 import { countAnsweredPreferences, recipeContextLabel } from "@/lib/recipes";
 import type { RecipePreferences } from "@/types/recipes";
 
-/**
- * Space, in points, between the top safe area and the recipe feed's header.
- * The loading state before a restored feed uses it too, so the header doesn't
- * move when the feed replaces it.
- */
-export const RECIPE_FEED_HEADER_TOP_GAP = 8;
+const HEADER_TOP_GAP = 16;
 
-export function RecipeScreenHeader({ subtitle }: { subtitle?: string }) {
+/**
+ * Renders the Recipes tab's title and, during a cook, the Cooking banner,
+ * below the top safe area.
+ */
+export function RecipeScreenHeader() {
   const { colors, fonts } = useTheme();
+  const insets = useSafeAreaInsets();
 
   return (
-    <View style={styles.topBar}>
+    <View
+      testID="recipes-header"
+      style={[styles.topBar, { paddingTop: insets.top + HEADER_TOP_GAP }]}
+    >
       <Text
         style={[
           styles.screenTitle,
@@ -26,16 +30,6 @@ export function RecipeScreenHeader({ subtitle }: { subtitle?: string }) {
       >
         Recipes
       </Text>
-      {subtitle && (
-        <Text
-          style={[
-            styles.screenSubtitle,
-            { color: colors.textMuted, fontFamily: fonts.body },
-          ]}
-        >
-          {subtitle}
-        </Text>
-      )}
       <ActiveCookBanner style={styles.cookBanner} />
     </View>
   );
@@ -104,18 +98,12 @@ export function RecipeContextBar({
 const styles = StyleSheet.create({
   topBar: {
     paddingHorizontal: 24,
-    paddingTop: 8,
     marginBottom: 18,
   },
   screenTitle: {
     fontSize: 32,
     lineHeight: 39,
     letterSpacing: -0.8,
-  },
-  screenSubtitle: {
-    fontSize: 13,
-    lineHeight: 20,
-    marginTop: 4,
   },
   cookBanner: { marginTop: 14 },
   contextBar: {
