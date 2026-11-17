@@ -58,6 +58,20 @@ describe("KitchenBasicsEditor", () => {
     expect(mockAdd).not.toHaveBeenCalled();
   });
 
+  it("tells its parent when the add field gains and loses focus", () => {
+    const onInputFocus = jest.fn();
+    const onInputBlur = jest.fn();
+    const screen = render(
+      <KitchenBasicsEditor onInputFocus={onInputFocus} onInputBlur={onInputBlur} />,
+    );
+    const field = screen.getByLabelText("New kitchen basic");
+
+    fireEvent(field, "focus");
+    expect(onInputFocus).toHaveBeenCalledTimes(1);
+    fireEvent(field, "blur");
+    expect(onInputBlur).toHaveBeenCalledTimes(1);
+  });
+
   it("stops offering to add once the list is full", () => {
     mockBasics.current = { data: [SALT, OIL, { id: "b3", name: "Water" }], isError: false };
     const screen = render(<KitchenBasicsEditor />);

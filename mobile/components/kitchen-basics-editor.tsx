@@ -10,11 +10,21 @@ import {
   useRemoveKitchenBasic,
 } from "@/hooks/useKitchenBasics";
 
+type KitchenBasicsEditorProps = {
+  /** Called when the add field gains focus. */
+  onInputFocus?: () => void;
+  /** Called when the add field loses focus. */
+  onInputBlur?: () => void;
+};
+
 /**
  * Lists the household's kitchen basics as removable pills, with a field to add
  * one. Reads and writes through the `useKitchenBasics` hooks.
  */
-export default function KitchenBasicsEditor() {
+export default function KitchenBasicsEditor({
+  onInputFocus,
+  onInputBlur,
+}: KitchenBasicsEditorProps) {
   const { colors, fonts } = useTheme();
   const basics = useKitchenBasics();
   const add = useAddKitchenBasic();
@@ -99,6 +109,8 @@ export default function KitchenBasicsEditor() {
             value={draft}
             onChangeText={setDraft}
             onSubmitEditing={submit}
+            onFocus={onInputFocus}
+            onBlur={onInputBlur}
             placeholder="Add a basic, like butter"
             placeholderTextColor={colors.textSubtle}
             accessibilityLabel="New kitchen basic"
