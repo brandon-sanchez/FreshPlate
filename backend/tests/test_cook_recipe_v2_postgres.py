@@ -35,13 +35,17 @@ from tests.pg_support import (
 
 pytestmark = pytest.mark.skipif(not DSN, reason="Requires disposable local PostgreSQL")
 
-MIGRATIONS = (
+# Timestamped names sort into the order the migrations ship in.
+MIGRATIONS = tuple(sorted((
     *FOODS_MIGRATIONS,
+    "20260905130000_add_demo_household_reset.sql",
     "20261113120000_add_cook_recipe_v2.sql",
     "20261113130000_add_cook_event_lines.sql",
     "20261115180000_restrict_cook_event_writes.sql",
+    "20261116100000_reset_demo_household_into_foods_and_lots.sql",
     "20261117120000_refuse_cook_on_changed_stock.sql",
-)
+    "20261117200000_drop_inventory_items_and_cook_recipe.sql",
+)))
 
 
 @pytest.fixture(scope="module")
@@ -304,12 +308,13 @@ def test_members_read_only_their_own_households_cook_events(database):
     assert "permission denied for table cook_events" in database.run(select, role="anon", user=None, check=False).stderr
 
 
-def test_cook_recipe_is_not_callable(database):
-    home = household(database)
-    recipe = str(uuid4())
-    sql = f"SELECT public.cook_recipe({q(home)}, {q(uuid4())}, {q(recipe)}, {j({'recipe_id': recipe})}, '[]');"
+def test_the_old_inventory_table_and_cook_rpc_are_gone(database):
+    gone = database.run(
+        "SELECT to_regclass('public.inventory_items') IS NULL AND NOT EXISTS ("
+        "SELECT 1 FROM pg_proc WHERE proname = 'cook_recipe' AND pronamespace = 'public'::regnamespace)"
+    )
 
-    assert "permission denied for function cook_recipe" in database.run(sql, role="authenticated", user=USER, check=False).stderr
+    assert gone == "t"
 
 
 def test_snapshot_must_name_the_recipe(database):

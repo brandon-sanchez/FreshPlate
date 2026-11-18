@@ -1,7 +1,6 @@
-// Mirrors `normalize_unit` and the unit tables in backend/app/inventory/units.py
-// and the table and bare-word rules of `parse_unit` in
-// backend/app/inventory/backfill.py. backend/tests/fixtures/stock_unit_cases.json
-// holds the cases both sides must read the same way.
+// Mirrors `normalize_unit` and the unit tables in backend/app/inventory/units.py.
+// backend/tests/fixtures/stock_unit_cases.json holds the cases both sides must
+// read the same way.
 
 /** A stock base measured by weight (g) or volume (ml). */
 export type MeasuredBase = "g" | "ml";

@@ -1,69 +1,116 @@
-"""Structured LLM judge for recipe preference and quantity safety."""
+"""LLM judge that grades one recipe for preference fit and quantity sanity."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.models import Recipe
+from app.ai.llm.errors import ProviderError
 from app.ai.llm.protocol import LLMProvider
-from app.ai.llm.retry import PipelineDeadline
+from app.ai.prompts.loader import load_prompt
+
+
+class PreferenceCheck(BaseModel):
+    """The judge's answer for one preference the cook stated.
+
+    The reasoning field comes before ``met`` because structured output is
+    written in key order, so the model explains before it answers.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    preference: str = Field(
+        description="The preference key being checked, such as diet."
+    )
+    reasoning: str = Field(
+        description="How the recipe does or does not meet the cook's answer."
+    )
+    met: bool
 
 
 class JudgeResult(BaseModel):
-    """The single rubric returned for one generated recipe."""
+    """The judge's grade for one recipe under the single rubric.
+
+    Attributes:
+        preference_checks: One check per stated preference, in request order.
+        quantity_reasoning: The judge's comparison of amounts with servings
+            and stock, written before it lists violations.
+        quantity_violations: One sentence per gross or implausible amount.
+            Empty when every amount is reasonable.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    preference_alignment: int = Field(ge=0, le=100)
-    quantity_violations: list[str] = Field(default_factory=list)
-    rationale: str = Field(min_length=1)
+    preference_checks: list[PreferenceCheck]
+    quantity_reasoning: str
+    quantity_violations: list[str]
 
     @property
-    def passed(self) -> bool:
-        """Return whether the recipe has no gross quantity violations."""
-        return not self.quantity_violations
-
-
-JUDGE_SYSTEM = """You judge FreshPlate recipes with one rubric.
-Score preference alignment from 0 to 100 against the requested dish name and inventory.
-List every gross or implausible quantity violation. A quantity is a violation when it
-exceeds the available inventory, is zero or negative, or is implausible for the unit.
-Return only the requested JSON object. Do not reward ingredients that are absent from
-the inventory merely because they are common pantry staples."""
-
-
-def build_judge_prompt(
-    recipe: Recipe,
-    *,
-    request: str,
-    inventory: Sequence[Mapping[str, Any]],
-) -> str:
-    """Build the stable, inspectable judge input."""
-    return "\n".join(
-        (
-            f"Requested dish: {request}",
-            f"Inventory: {list(inventory)}",
-            f"Recipe: {recipe.model_dump(mode='json')}",
-            "Evaluate preference alignment and quantity safety.",
-        )
-    )
+    def preference_alignment(self) -> int | None:
+        """Return the percentage of stated preferences met, or None if none."""
+        if not self.preference_checks:
+            return None
+        met = sum(check.met for check in self.preference_checks)
+        return round(met * 100 / len(self.preference_checks))
 
 
 async def judge_recipe(
     provider: LLMProvider,
     recipe: Recipe,
     *,
-    request: str,
-    inventory: Sequence[Mapping[str, Any]],
-    deadline: PipelineDeadline | None = None,
+    preferences: Mapping[str, str],
+    kitchen: Sequence[Mapping[str, Any]],
+    kitchen_basics: KitchenBasics,
 ) -> JudgeResult:
-    """Run the one-rubric judge through the normal structured provider seam."""
-    return await provider.generate(
-        build_judge_prompt(recipe, request=request, inventory=inventory),
+    """Grade ``recipe`` with one provider call.
+
+    The call runs under the provider's default deadline. Blank answers in
+    ``preferences`` are dropped, so the judge checks only what the cook
+    actually said.
+
+    Args:
+        provider: The model the judge runs on.
+        recipe: The recipe the pipeline returned, with real food ids.
+        preferences: The cook's answers, keyed by preference question.
+        kitchen: The foods the recipe could use, each with ``id``, ``name``,
+            ``quantity`` and ``unit``, as the pipeline's usable items carry
+            them. Other keys are not sent.
+        kitchen_basics: The staples the recipe may use without stock.
+
+    Returns:
+        The judge's checks and violations.
+
+    Raises:
+        ProviderError: When the call fails, its output doesn't fit
+            ``JudgeResult``, or it doesn't answer every stated preference
+            exactly once.
+    """
+    template = load_prompt("judge_recipe")
+    stated = {key: value for key, value in preferences.items() if value.strip()}
+    payload = {
+        "preferences": stated,
+        "kitchen": [
+            {key: item[key] for key in ("id", "name", "quantity", "unit")}
+            for item in kitchen
+        ],
+        "kitchen_basics": list(kitchen_basics.names),
+        "recipe": recipe.model_dump(mode="json"),
+    }
+    result = await provider.generate(
+        json.dumps(payload, default=str),
         response_model=JudgeResult,
-        system_instruction=JUDGE_SYSTEM,
-        deadline=deadline,
+        system_instruction=template.system,
+        thinking=template.thinking,
     )
+    answered = [check.preference for check in result.preference_checks]
+    if sorted(answered) != sorted(stated):
+        raise ProviderError(
+            "Judge must answer every stated preference exactly once: "
+            f"asked {list(stated)}, answered {answered}"
+        )
+    return result

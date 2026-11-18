@@ -56,7 +56,6 @@ def _state(**overrides: Any) -> dict[str, Any]:
         "preferences": {},
         "exclude_titles": [],
         "batch_ceiling": 3,
-        "retry_count": 0,
         **overrides,
     }
 

@@ -29,13 +29,13 @@ Preconditions:
 - **Search.** Tap "Search your fridge", type `verify-inv`. Only the test item remains. `shot.sh inventory-search`.
 - **Filter.** Clear the search, open the filter control, choose "Expiring this week". Only items expiring within 7 days remain. `shot.sh inventory-filter`.
 - **Open detail.** Tap the test item's row, scrolled above the tab bar first. To reach it without testing navigation, `route.sh item/<id>` with the id from `db.py`. The screen has a "< Inventory" back button, the name, a quantity stepper (− / +), unit, an "Expires in" slider, storage segments, notes, and "Remove" and "Save" buttons at the bottom. `shot.sh item-detail`.
-- **Edit.** Tap + on the quantity, then "Save". Back in the list the row shows the new quantity. Prove it with `db.py inventory_items "household_id=eq.<id>&name=ilike.verify-inv-<id>&select=name,quantity,unit,expiration_date"`.
+- **Edit.** Tap + on the quantity, then "Save". Back in the list the row shows the new quantity. Prove it with `db.py lots "household_id=eq.<id>&depleted_at=is.null&select=id,quantity,expiration_date,food:foods!inner(name,stock_base,each_label)&food.name=ilike.verify-inv-<id>"`.
 - **Delete.** Tap "Remove" [116, 902]. A "Remove item?" dialog says "<name> will be removed from your fridge." Tap its "Remove" [294, 538]. The app returns to Inventory with a "Removed" toast, the header count drops by one, and the same `db.py` query returns `[]`. `shot.sh removed`.
 
 ## Gotchas
 
 - Urgency is computed from `expiration_date` relative to today, so the same item can move between "Use this week" and "Expired" across days.
-- Home's three counts ("In fridge", "Use this week", "Expired") come from the same query. Check them after any change to the list.
+- Home's three counts ("In kitchen", "Use this week", "Expired") come from the same query. Check them after any change to the list.
 - "Item not found" on the detail screen means the id is stale (the item was deleted or merged).
 - The glass tab bar covers everything below about y = 820 pt, even where rows show through it. A tap there hits the tab bar (often Home), so scroll the row higher first.
 - Brandon's real household has many expired items, so a new item lands at the bottom under "FRESH" and is off screen.

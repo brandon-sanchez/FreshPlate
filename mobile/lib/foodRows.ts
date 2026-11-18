@@ -98,6 +98,18 @@ export function stackLots(lots: InventoryItem[]): FoodRow[] {
 }
 
 /**
+ * Returns how many foods have at least one unexpired lot: the foods recipe
+ * generation may cook with. The backend applies the same rule when it reads
+ * only foods with `food_stock.available > 0`. Near midnight the two can
+ * disagree by a day, because this count uses the phone's local date and
+ * `food_stock` uses the database's `current_date`. Kitchen basics are not
+ * lots and are never counted.
+ */
+export function countUsableFoods(lots: InventoryItem[]): number {
+  return stackLots(lots).filter((row) => row.urgency !== "expired").length;
+}
+
+/**
  * Splits lots into the sections of one inventory view, stacking each
  * section's lots per food. The Urgency and Category views hold one row per
  * food. The Location view partitions lots by place first, so a food stored in

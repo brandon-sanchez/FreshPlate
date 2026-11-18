@@ -8,44 +8,27 @@ import pytest
 
 from app.ai.agents.graph import build_recipe_generation_graph, build_recipe_graph
 from app.ai.agents.kitchen_basics import KitchenBasics
-from app.ai.agents.meal_quality import MealChecklist, assess_meals, review_recipes
-from app.ai.agents.models import Recipe, RecipeGenerationResponse
+from app.ai.agents.meal_quality import MealCheck, assess_meal, review_recipe
+from app.ai.agents.models import Recipe
 from app.ai.agents.nodes import (
     MEAL_REVIEW_RESERVE_SECONDS,
+    QUALITY_RETRY_MIN_BUDGET_SECONDS,
     analyze_inventory,
-    generate_recipes,
 )
 from app.ai.llm.errors import ProviderError
-from app.ai.llm.providers import FakeProvider
 from app.ai.llm.retry import PipelineDeadline
 from app.inventory.units import table_unit
-from tests.recipe_fakes import NO_BASICS, model_answer
+from tests.recipe_fakes import (
+    ELIGIBLE,
+    NO_BASICS,
+    WRONG_DISH,
+    MealFakeProvider,
+    model_answer,
+)
 
 CASES = json.loads(
     (Path(__file__).parents[1] / "app/ai/eval/meal_fixtures.json").read_text()
 )
-
-
-class RecordingProvider(FakeProvider):
-    def __init__(self, responses):
-        super().__init__(responses)
-        self.calls = []
-
-    async def generate(self, prompt, **kwargs):
-        self.calls.append({"prompt": prompt, **kwargs})
-        return await super().generate(prompt, **kwargs)
-
-
-def _kind(response_model):
-    if issubclass(response_model, RecipeGenerationResponse):
-        return RecipeGenerationResponse
-    return response_model
-
-
-class EmptyRetriever:
-    async def search(self, query, **kwargs):
-        return []
-
 
 CHECKLIST_ANSWERS = {
     "eligible": {},
@@ -54,24 +37,16 @@ CHECKLIST_ANSWERS = {
     "incoherent": {"coherent_method": False},
     "unsupported_ingredient": {"unlisted_foods": ["cod"]},
 }
+RETRY_MARKER = "\n\nQuality feedback from the previous attempt:\n"
 
 
-def check(index, answers="eligible"):
-    return {
-        "candidate_index": index,
-        "main_component": "Fixture main component",
-        "dish_reasoning": "Fixture dish",
-        "portion_reasoning": "Fixture portions",
-        "unlisted_foods": [],
-        "is_requested_dish": True,
-        "realistic_portions": True,
-        "coherent_method": True,
-        **CHECKLIST_ANSWERS[answers],
-    }
+def check(answers="eligible"):
+    return {**ELIGIBLE, **CHECKLIST_ANSWERS[answers]}
 
 
-def assessment(*verdicts):
-    return {"checks": [check(i, verdict) for i, verdict in enumerate(verdicts)]}
+class EmptyRetriever:
+    async def search(self, query, **kwargs):
+        return []
 
 
 TBSP_ML = table_unit("tbsp")[1]
@@ -95,113 +70,351 @@ def _food_line(ingredient):
 
 def inventory():
     return [
-        _food_line(item)
-        for case in CASES[:2] for item in case["recipe"]["ingredients"]
+        _food_line(item) for case in CASES[:2] for item in case["recipe"]["ingredients"]
     ]
+
+
+def _pasta(title):
+    """Return the substantial pasta fixture as the model writes it, retitled."""
+    return model_answer({**CASES[1]["recipe"], "title": title}, inventory(), NO_BASICS)
+
+
+def _state(**overrides):
+    return {
+        **analyze_inventory({"kitchen_basics": NO_BASICS, "inventory": inventory()}),
+        **overrides,
+    }
+
+
+def _graph_state(batch_ceiling, **overrides):
+    return {
+        "kitchen_basics": NO_BASICS,
+        "inventory": inventory(),
+        "batch_ceiling": batch_ceiling,
+        **overrides,
+    }
+
+
+def _titles(recipes):
+    return [recipe.title for recipe in recipes]
+
+
+def _generations(provider):
+    return [c for c in provider.calls if c["response_model"] is not MealCheck]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case["name"])
 async def test_curated_meal_decisions_control_returned_recipes(case):
     recipe = Recipe.model_validate(case["recipe"])
-    provider = RecordingProvider([assessment(case["expected_verdict"])])
+    provider = MealFakeProvider(judge={recipe.title: check(case["expected_verdict"])})
     state = {"kitchen_basics": NO_BASICS, "preferences": case.get("preferences", {})}
-    valid, feedback, _ = await assess_meals(
-        [recipe], state, provider, deadline=PipelineDeadline(30)
+
+    verdict, _ = await assess_meal(
+        recipe, state, provider, deadline=PipelineDeadline(30)
     )
-    assert valid == ([recipe] if case["expected_verdict"] == "eligible" else [])
-    assert (feedback is None) == (case["expected_verdict"] == "eligible")
+
+    assert verdict == case["expected_verdict"]
     payload = json.loads(provider.calls[0]["prompt"])
     assert payload["requested_dish"] == case.get("requested_dish", "meal")
 
 
 @pytest.mark.asyncio
+async def test_each_recipe_is_judged_as_soon_as_its_own_call_returns():
+    class LaterCallsWaitForTheFirstJudgement(MealFakeProvider):
+        """Holds every generation call but the first until a judge call runs."""
+
+        def __init__(self, generations):
+            super().__init__(generations)
+            self.judged = asyncio.Event()
+            self.generation_calls = 0
+
+        async def generate(self, prompt, **kwargs):
+            if kwargs["response_model"] is MealCheck:
+                self.judged.set()
+            else:
+                self.generation_calls += 1
+                if self.generation_calls > 1:
+                    await asyncio.wait_for(self.judged.wait(), timeout=1)
+            return await super().generate(prompt, **kwargs)
+
+    provider = LaterCallsWaitForTheFirstJudgement(
+        [
+            {"recipes": [_pasta("Quick tomato pasta")]},
+            {"recipes": [_pasta("Baked rigatoni")]},
+            {"recipes": [_pasta("Garlic noodle bowl")]},
+        ]
+    )
+
+    result = await build_recipe_graph(provider, EmptyRetriever()).ainvoke(
+        _graph_state(3)
+    )
+
+    assert provider.judged_titles == [
+        "Quick tomato pasta",
+        "Baked rigatoni",
+        "Garlic noodle bowl",
+    ]
+    assert len(result["valid_recipes"]) == 3
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("refill", [False, True])
-async def test_both_graphs_regenerate_rejected_meals_under_one_deadline(refill):
-    token, substantial = [case["recipe"] for case in CASES[:2]]
-    provider = RecordingProvider([
-        {"recipes": [model_answer(token, inventory(), NO_BASICS)]},
-        assessment("wrong_dish"),
-        {"recipes": [model_answer(substantial, inventory(), NO_BASICS)]},
-        assessment("eligible"),
-    ])
-    state = {
-        "kitchen_basics": NO_BASICS,
-        "inventory": inventory(),
-        "metadata": {"trace_key": "keep"},
-        "batch_ceiling": 1,
-    }
+async def test_a_rejected_recipe_is_rewritten_alone_under_one_deadline(refill):
+    provider = MealFakeProvider(
+        [
+            {"recipes": [_pasta("Tomato pasta")]},
+            {"recipes": [_pasta("Plain garlic noodles")]},
+            {"recipes": [_pasta("Baked rigatoni")]},
+            {"recipes": [_pasta("Garlic chickpea pasta")]},
+        ],
+        judge={"Plain garlic noodles": WRONG_DISH},
+    )
+    state = _graph_state(3, metadata={"trace_key": "keep"})
     if refill:
         state.update(analyze_inventory(state))
         graph = build_recipe_generation_graph(provider)
     else:
         graph = build_recipe_graph(provider, EmptyRetriever())
+
     result = await graph.ainvoke(state)
-    assert [r.model_dump() for r in result["valid_recipes"]] == [
-        Recipe.model_validate(substantial).model_dump()
+
+    assert sorted(_titles(result["valid_recipes"])) == [
+        "Baked rigatoni",
+        "Garlic chickpea pasta",
+        "Tomato pasta",
     ]
     assert result["retry_count"] == 1
-    assert [_kind(call["response_model"]) for call in provider.calls] == [
-        RecipeGenerationResponse, MealChecklist,
-        RecipeGenerationResponse, MealChecklist,
-    ]
-    review_calls = provider.calls[1::2]
-    assert all(call["deadline"] is result["deadline"] for call in review_calls)
+    assert result["quality_feedback"] is None
+    generations = _generations(provider)
+    assert len(generations) == 4
+    [retry] = [call for call in generations if RETRY_MARKER in call["prompt"]]
+    first_try, feedback = retry["prompt"].split(RETRY_MARKER)
+    assert first_try in [call["prompt"] for call in generations]
+    assert feedback.startswith(
+        "Recipe 'Plain garlic noodles': wrong_dish: not a meal on its own"
+    )
+    judge_calls = [c for c in provider.calls if c["response_model"] is MealCheck]
+    assert len(judge_calls) == 4
+    assert all(call["deadline"] is result["deadline"] for call in judge_calls)
     review_end = result["deadline"].remaining_seconds - MEAL_REVIEW_RESERVE_SECONDS
     assert all(
         abs(call["deadline"].remaining_seconds - review_end) < 0.5
-        for call in provider.calls[::2]
+        for call in generations
     )
-    assert "wrong_dish: not a meal on its own" in provider.calls[2]["prompt"]
     assert result["metadata"]["trace_key"] == "keep"
-    assert result["metadata"]["assessment_prompt_version"] == 4
+    assert result["metadata"]["assessment_prompt_version"] == 5
 
 
 @pytest.mark.asyncio
-async def test_semantically_rejected_meals_exhaust_existing_retry_and_return_empty():
-    recipe = model_answer(CASES[0]["recipe"], inventory(), NO_BASICS)
-    provider = RecordingProvider([
-        {"recipes": [recipe]}, assessment("wrong_dish"),
-        {"recipes": [recipe]}, assessment("wrong_dish"),
-    ])
-    result = await build_recipe_graph(provider, EmptyRetriever()).ainvoke(
-        {"kitchen_basics": NO_BASICS, "inventory": inventory(), "batch_ceiling": 1}
+async def test_a_feed_batch_with_a_kept_recipe_rewrites_nothing():
+    provider = MealFakeProvider(
+        [
+            {"recipes": [_pasta("Tomato pasta")]},
+            {"recipes": [_pasta("Plain garlic noodles")]},
+        ],
+        judge={"Plain garlic noodles": WRONG_DISH},
     )
-    assert result["valid_recipes"] == []
-    assert result["retry_count"] == 1
+    graph = build_recipe_graph(
+        provider, EmptyRetriever(), retry_only_when_no_valid=True
+    )
+
+    result = await graph.ainvoke(_graph_state(2))
+
+    assert _titles(result["valid_recipes"]) == ["Tomato pasta"]
+    assert result["retry_count"] == 0
+    assert "Plain garlic noodles" in result["quality_feedback"]
     assert len(provider.calls) == 4
 
 
 @pytest.mark.asyncio
-async def test_invalid_inventory_skips_semantic_provider_call():
-    recipe = Recipe.model_validate(CASES[0]["recipe"])
-    result = await review_recipes(
-        {
-            "kitchen_basics": NO_BASICS,
-            "usable_items": [],
-            "generated_recipes": [recipe],
-        },
-        FakeProvider([]), deadline=PipelineDeadline(30),
+async def test_a_feed_batch_that_kept_nothing_rewrites_each_rejected_recipe():
+    provider = MealFakeProvider(
+        [
+            {"recipes": [_pasta("Garlic noodles")]},
+            {"recipes": []},
+            {"recipes": [_pasta("Tomato pasta")]},
+        ],
+        judge={"Garlic noodles": WRONG_DISH},
     )
-    assert result["valid_recipes"] == []
-    assert "missing inventory" in result["quality_feedback"]
+    graph = build_recipe_graph(
+        provider, EmptyRetriever(), retry_only_when_no_valid=True
+    )
+
+    result = await graph.ainvoke(_graph_state(2))
+
+    assert _titles(result["valid_recipes"]) == ["Tomato pasta"]
+    assert result["retry_count"] == 1
+    generations = _generations(provider)
+    assert len(generations) == 3
+    assert "Recipe 'Garlic noodles'" in generations[2]["prompt"]
 
 
 @pytest.mark.asyncio
-async def test_quality_feedback_keeps_inventory_and_semantic_rejections():
-    recipe = Recipe.model_validate(CASES[0]["recipe"])
-    invalid = recipe.model_copy(update={"title": "Invalid inventory"})
-    invalid.ingredients = [recipe.ingredients[0].model_copy(
-        update={"inventory_item_id": "foreign"}
-    )]
-    state = {**analyze_inventory({"kitchen_basics": NO_BASICS,
-                                  "inventory": inventory()}),
-             "generated_recipes": [invalid, recipe]}
-    provider = RecordingProvider([assessment("wrong_dish")])
-    result = await review_recipes(state, provider, deadline=PipelineDeadline(30))
-    assert "missing inventory" in result["quality_feedback"]
+async def test_rejected_meals_exhaust_their_retry_and_return_empty():
+    provider = MealFakeProvider(
+        [{"recipes": [_pasta("Garlic noodles")]}] * 2,
+        judge={"Garlic noodles": [WRONG_DISH, WRONG_DISH]},
+    )
+
+    result = await build_recipe_graph(provider, EmptyRetriever()).ainvoke(
+        _graph_state(1)
+    )
+
+    assert result["valid_recipes"] == []
+    assert result["retry_count"] == 1
+    assert len(provider.calls) == 4
     assert "wrong_dish" in result["quality_feedback"]
-    assert len(json.loads(provider.calls[0]["prompt"])["candidates"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_no_rewrite_starts_without_time_for_its_call_and_review():
+    provider = MealFakeProvider(
+        [{"recipes": [_pasta("Garlic noodles")]}],
+        judge={"Garlic noodles": WRONG_DISH},
+    )
+    deadline = PipelineDeadline(QUALITY_RETRY_MIN_BUDGET_SECONDS - 1)
+
+    result = await build_recipe_graph(provider, EmptyRetriever()).ainvoke(
+        _graph_state(1, deadline=deadline)
+    )
+
+    assert result["valid_recipes"] == []
+    assert result["retry_count"] == 0
+    assert len(provider.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_failed_judge_call_drops_only_its_recipe():
+    provider = MealFakeProvider(
+        [
+            {"recipes": [_pasta("Tomato pasta")]},
+            {"recipes": [_pasta("Garlic noodles")]},
+        ],
+        judge={"Garlic noodles": ProviderError("offline")},
+    )
+
+    result = await build_recipe_graph(provider, EmptyRetriever()).ainvoke(
+        _graph_state(2)
+    )
+
+    assert _titles(result["valid_recipes"]) == ["Tomato pasta"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response", [ProviderError("offline"), {"checks": []}])
+async def test_a_batch_whose_judge_never_answers_fails_rather_than_reading_empty(
+    response,
+):
+    provider = MealFakeProvider(
+        [{"recipes": [_pasta("Garlic noodles")]}],
+        judge={"Garlic noodles": response},
+    )
+
+    with pytest.raises(ProviderError):
+        await build_recipe_graph(provider, EmptyRetriever()).ainvoke(_graph_state(1))
+
+
+@pytest.mark.asyncio
+async def test_an_empty_batch_with_a_failed_call_is_an_outage_not_an_empty_kitchen():
+    provider = MealFakeProvider(
+        [{"recipes": [_pasta("Garlic noodles")]}, ProviderError("timeout")],
+        judge={"Garlic noodles": WRONG_DISH},
+    )
+    graph = build_recipe_graph(provider, EmptyRetriever(), quality_retry_limit=0)
+
+    with pytest.raises(ProviderError):
+        await graph.ainvoke(_graph_state(2))
+
+
+@pytest.mark.asyncio
+async def test_invalid_inventory_skips_the_judge():
+    recipe = Recipe.model_validate(CASES[0]["recipe"])
+    provider = MealFakeProvider()
+
+    review = await review_recipe(
+        recipe, _state(usable_items=[]), provider, deadline=PipelineDeadline(30)
+    )
+
+    assert review.recipe is None
+    assert "missing inventory" in review.feedback
+    assert provider.calls == []
+
+
+GRAM_KITCHEN = [
+    {
+        "id": "chicken",
+        "name": "Chicken thighs",
+        "available": 2000,
+        "stock_base": "g",
+        "category": "Meat & Seafood",
+    },
+    {
+        "id": "parsley",
+        "name": "Parsley",
+        "available": 500,
+        "stock_base": "g",
+        "category": "Produce",
+    },
+]
+
+
+def _gram_recipe(*ingredients):
+    return Recipe.model_validate(
+        {
+            "title": "Fixture dish",
+            "cook_time_minutes": 20,
+            "servings": 2,
+            "ingredients": [
+                {
+                    "name": name,
+                    "inventory_item_id": food,
+                    "use_amount": grams,
+                    "unit": "g",
+                }
+                for food, name, grams in ingredients
+            ],
+            "steps": ["Cook it."],
+        }
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ingredients", "verdict"),
+    [
+        ([("parsley", "Parsley", 60)], "wrong_dish: no main component"),
+        ([("chicken", "Chicken thighs", 150)], "insufficient: about 75 g"),
+    ],
+    ids=["no main component", "under-portioned"],
+)
+async def test_code_rejects_a_clear_non_meal_without_a_judge_call(ingredients, verdict):
+    provider = MealFakeProvider()
+    state = analyze_inventory({"kitchen_basics": NO_BASICS, "inventory": GRAM_KITCHEN})
+
+    review = await review_recipe(
+        _gram_recipe(*ingredients), state, provider, deadline=PipelineDeadline(30)
+    )
+
+    assert review.recipe is None
+    assert f"Recipe 'Fixture dish': {verdict}" in review.feedback
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_full_portion_goes_on_to_the_judge():
+    provider = MealFakeProvider()
+    state = analyze_inventory({"kitchen_basics": NO_BASICS, "inventory": GRAM_KITCHEN})
+
+    review = await review_recipe(
+        _gram_recipe(("chicken", "Chicken thighs", 400)),
+        state,
+        provider,
+        deadline=PipelineDeadline(30),
+    )
+
+    assert review.recipe is not None
+    assert provider.judged_titles == ["Fixture dish"]
 
 
 @pytest.mark.asyncio
@@ -216,40 +429,44 @@ async def test_quality_feedback_keeps_inventory_and_semantic_rejections():
 )
 async def test_any_failed_checklist_answer_rejects_the_meal(answers, verdict):
     recipe = Recipe.model_validate(CASES[1]["recipe"])
-    valid, feedback, _ = await assess_meals(
-        [recipe], {"kitchen_basics": NO_BASICS},
-        FakeProvider([{"checks": [check(0, answers)]}]),
-        deadline=PipelineDeadline(30),
+    provider = MealFakeProvider(judge={recipe.title: check(answers)})
+
+    review = await review_recipe(
+        recipe, _state(), provider, deadline=PipelineDeadline(30)
     )
-    assert valid == []
-    assert f"Recipe '{recipe.title}': {verdict}" in feedback
+
+    assert review.recipe is None
+    assert review.feedback.startswith(f"Recipe '{recipe.title}': {verdict}")
 
 
 @pytest.mark.asyncio
 async def test_the_judge_catches_a_food_written_on_a_basics_label():
     basics = KitchenBasics(["Salt", "Water"])
     pasta = CASES[1]["recipe"]
-    water = {"name": "Water", "inventory_item_id": None, "use_amount": 250,
-             "unit": "ml"}
+    water = {
+        "name": "Water",
+        "inventory_item_id": None,
+        "use_amount": 250,
+        "unit": "ml",
+    }
     answer = model_answer(
         {**pasta, "ingredients": [*pasta["ingredients"], water]}, inventory(), basics
     )
     answer["ingredients"][-1]["name"] = "Chicken stock"
-    rejection = {**check(0), "unlisted_foods": ["Chicken stock"]}
-    provider = RecordingProvider([{"recipes": [answer]}, {"checks": [rejection]}])
-    state = {
-        **analyze_inventory({"kitchen_basics": basics, "inventory": inventory()}),
-        "batch_ceiling": 1,
-    }
-
-    generated = await generate_recipes(state, provider)
-    result = await review_recipes(
-        {**state, **generated}, provider, deadline=PipelineDeadline(30)
+    provider = MealFakeProvider(
+        [{"recipes": [answer]}],
+        judge={pasta["title"]: {**ELIGIBLE, "unlisted_foods": ["Chicken stock"]}},
     )
+    state = {"kitchen_basics": basics, "inventory": inventory(), "batch_ceiling": 1}
 
-    [candidate] = json.loads(provider.calls[1]["prompt"])["candidates"]
+    result = await build_recipe_graph(
+        provider, EmptyRetriever(), quality_retry_limit=0
+    ).ainvoke(state)
+
+    payload = json.loads(provider.calls[1]["prompt"])
     assert {"name": "Chicken stock", "inventory_item_id": None}.items() <= next(
-        item for item in candidate["recipe"]["ingredients"]
+        item
+        for item in payload["recipe"]["ingredients"]
         if item["name"] == "Chicken stock"
     ).items()
     assert result["valid_recipes"] == []
@@ -259,16 +476,18 @@ async def test_the_judge_catches_a_food_written_on_a_basics_label():
 @pytest.mark.asyncio
 async def test_kitchen_basics_are_never_unlisted_foods():
     recipe = Recipe.model_validate(CASES[1]["recipe"])
-    response = {"checks": [{**check(0), "unlisted_foods": [" salt ", "Water"]}]}
-    provider = RecordingProvider([response])
-    valid, feedback, _ = await assess_meals(
-        [recipe],
+    provider = MealFakeProvider(
+        judge={recipe.title: {**ELIGIBLE, "unlisted_foods": [" salt ", "Water"]}}
+    )
+
+    verdict, _ = await assess_meal(
+        recipe,
         {"kitchen_basics": KitchenBasics(["Salt", "Water"])},
         provider,
         deadline=PipelineDeadline(30),
     )
-    assert valid == [recipe]
-    assert feedback is None
+
+    assert verdict == "eligible"
     assert json.loads(provider.calls[0]["prompt"])["kitchen_basics"] == [
         "Salt",
         "Water",
@@ -278,17 +497,22 @@ async def test_kitchen_basics_are_never_unlisted_foods():
 @pytest.mark.asyncio
 async def test_water_is_unlisted_when_the_household_has_no_such_basic():
     recipe = Recipe.model_validate(CASES[1]["recipe"])
-    response = {"checks": [{**check(0), "unlisted_foods": ["Water"]}]}
-    valid, feedback, _ = await assess_meals(
-        [recipe], {"kitchen_basics": NO_BASICS}, FakeProvider([response]),
+    provider = MealFakeProvider(
+        judge={recipe.title: {**ELIGIBLE, "unlisted_foods": ["Water"]}}
+    )
+
+    verdict, _ = await assess_meal(
+        recipe,
+        {"kitchen_basics": NO_BASICS},
+        provider,
         deadline=PipelineDeadline(30),
     )
-    assert valid == []
-    assert "unsupported_ingredient" in feedback
+
+    assert verdict == "unsupported_ingredient"
 
 
 @pytest.mark.asyncio
-async def test_judge_sees_only_each_recipes_own_inventory_items_at_minimal_thinking():
+async def test_judge_sees_only_its_recipes_inventory_items_at_minimal_thinking():
     recipe = Recipe.model_validate(CASES[1]["recipe"])
     unrelated = {
         "id": "unrelated",
@@ -300,54 +524,32 @@ async def test_judge_sees_only_each_recipes_own_inventory_items_at_minimal_think
     state = analyze_inventory(
         {"kitchen_basics": NO_BASICS, "inventory": [*inventory(), unrelated]}
     )
-    provider = RecordingProvider([assessment("eligible")])
-    await assess_meals([recipe], state, provider, deadline=PipelineDeadline(30))
+    provider = MealFakeProvider()
+
+    await assess_meal(recipe, state, provider, deadline=PipelineDeadline(30))
 
     payload = json.loads(provider.calls[0]["prompt"])
     assert "inventory" not in payload
-    [candidate] = payload["candidates"]
-    assert sorted(item["name"] for item in candidate["kitchen_items"]) == sorted(
+    assert payload["recipe"]["title"] == recipe.title
+    assert sorted(item["name"] for item in payload["kitchen_items"]) == sorted(
         ingredient.name for ingredient in recipe.ingredients
     )
     assert all(
-        item["recipe_names"] == [item["name"]] for item in candidate["kitchen_items"]
+        item["recipe_names"] == [item["name"]] for item in payload["kitchen_items"]
     )
     assert provider.calls[0]["thinking"] == "minimal"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("indices", [[], [0], [0, 0], [-1, 0], [0, 2], [True, 0]])
-async def test_incomplete_or_ambiguous_assessments_never_release_recipes(indices):
-    recipes = [Recipe.model_validate(case["recipe"]) for case in CASES[:2]]
-    response = {"checks": [check(index) for index in indices]}
-    with pytest.raises(ProviderError):
-        await assess_meals(
-            recipes, {"kitchen_basics": NO_BASICS}, FakeProvider([response]),
-            deadline=PipelineDeadline(30),
-        )
-
-
-@pytest.mark.asyncio
-async def test_reordered_decisions_preserve_original_recipe_order_and_content():
-    recipes = [Recipe.model_validate(case["recipe"]) for case in CASES[:2]]
-    before = [recipe.model_dump() for recipe in recipes]
-    response = assessment("eligible", "eligible")
-    response["checks"].reverse()
-    result, _, _ = await assess_meals(
-        recipes, {"kitchen_basics": NO_BASICS}, FakeProvider([response]),
-        deadline=PipelineDeadline(30),
-    )
-    assert all(actual is original for actual, original in zip(result, recipes))
-    assert [recipe.model_dump() for recipe in result] == before
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("response", [ProviderError("offline"), {"checks": None}])
 async def test_provider_or_schema_failure_never_releases_unreviewed_recipe(response):
+    recipe = Recipe.model_validate(CASES[1]["recipe"])
     with pytest.raises(ProviderError):
-        await assess_meals(
-            [Recipe.model_validate(CASES[0]["recipe"])], {"kitchen_basics": NO_BASICS},
-            FakeProvider([response]), deadline=PipelineDeadline(30),
+        await review_recipe(
+            recipe,
+            _state(),
+            MealFakeProvider(judge={recipe.title: response}),
+            deadline=PipelineDeadline(30),
         )
 
 
@@ -358,9 +560,11 @@ async def test_assessment_cancellation_propagates():
             raise asyncio.CancelledError
 
     with pytest.raises(asyncio.CancelledError):
-        await assess_meals(
-            [Recipe.model_validate(CASES[0]["recipe"])], {"kitchen_basics": NO_BASICS},
-            CancelledProvider(), deadline=PipelineDeadline(30),
+        await assess_meal(
+            Recipe.model_validate(CASES[0]["recipe"]),
+            {"kitchen_basics": NO_BASICS},
+            CancelledProvider(),
+            deadline=PipelineDeadline(30),
         )
 
 
@@ -372,12 +576,14 @@ async def test_assessment_cannot_release_a_response_after_deadline():
     class LateProvider:
         async def generate(self, *args, **kwargs):
             now[0] = 31.0
-            return MealChecklist.model_validate(assessment("eligible"))
+            return MealCheck.model_validate(ELIGIBLE)
 
     with pytest.raises(ProviderError, match="deadline"):
-        await assess_meals(
-            [Recipe.model_validate(CASES[0]["recipe"])], {"kitchen_basics": NO_BASICS},
-            LateProvider(), deadline=deadline,
+        await assess_meal(
+            Recipe.model_validate(CASES[0]["recipe"]),
+            {"kitchen_basics": NO_BASICS},
+            LateProvider(),
+            deadline=deadline,
         )
 
 
@@ -391,15 +597,17 @@ async def test_assessment_cannot_release_a_response_after_deadline():
         ({"meal": "Dessert"}, "dessert"),
     ],
 )
-async def test_a_failed_dish_check_names_the_dish_the_cook_asked_for(
-    preferences, dish
-):
+async def test_a_failed_dish_check_names_the_dish_the_cook_asked_for(preferences, dish):
     recipe = Recipe.model_validate(CASES[1]["recipe"])
-    provider = RecordingProvider([{"checks": [check(0, "wrong_dish")]}])
-    valid, feedback, _ = await assess_meals(
-        [recipe], {"kitchen_basics": NO_BASICS, "preferences": preferences}, provider,
+    provider = MealFakeProvider(judge={recipe.title: WRONG_DISH})
+
+    verdict, reason = await assess_meal(
+        recipe,
+        {"kitchen_basics": NO_BASICS, "preferences": preferences},
+        provider,
         deadline=PipelineDeadline(30),
     )
-    assert valid == []
-    assert f"wrong_dish: not a {dish} on its own" in feedback
+
+    assert verdict == "wrong_dish"
+    assert reason.startswith(f"not a {dish} on its own")
     assert json.loads(provider.calls[0]["prompt"])["requested_dish"] == dish
