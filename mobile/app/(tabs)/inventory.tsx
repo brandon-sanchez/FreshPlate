@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Pressable,
   RefreshControl,
+  ScrollView,
   SectionList,
   Text,
   TextInput,
@@ -19,6 +20,7 @@ import SegmentedControl from "@/components/SegmentedControl";
 import InventoryRow from "@/components/InventoryRow";
 import { useSeenKeys } from "@/hooks/useSeenKeys";
 import LotOutcomeSwipe from "@/components/LotOutcomeSwipe";
+import RecentlyUsedUp from "@/components/RecentlyUsedUp";
 import LoadingState from "@/components/LoadingState";
 import EmptyState from "@/components/EmptyState";
 import ErrorState from "@/components/ErrorState";
@@ -36,6 +38,15 @@ import {
 } from "@/lib/foodRows";
 
 const GROUP_BY_OPTIONS: GroupBy[] = ["Urgency", "Location", "Category"];
+
+// The Recently used up amount field sits at the end of the content and its
+// numeric keypad has no return key, so the list scrolls it above the keyboard
+// and lets a tap reach the Restore button while the keyboard is up.
+const KEYBOARD_SCROLL_PROPS = {
+  automaticallyAdjustKeyboardInsets: true,
+  keyboardShouldPersistTaps: "handled",
+  keyboardDismissMode: "interactive",
+} as const;
 
 export default function InventoryScreen() {
   const { colors, fonts } = useTheme();
@@ -113,6 +124,7 @@ export default function InventoryScreen() {
   const allRows = useMemo(() => stackLots(items), [items]);
   const expiredCount = allRows.filter((r) => r.expiredLots > 0).length;
   const openReview = () => router.push("/review-expired");
+  const highlightRestored = (lotId: string) => router.setParams({ added: lotId });
 
   if (inventory.isPending) {
     return (
@@ -137,21 +149,29 @@ export default function InventoryScreen() {
       <View
         style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}
       >
-        <TopBar
-          title="Inventory"
-          subtitle="Nothing here yet"
-          colors={colors}
-          fonts={fonts}
-        />
-        <EmptyState
-          icon={
-            <FontAwesome name="archive" size={36} color={colors.textSubtle} />
-          }
-          title="Your fridge is empty"
-          message="Track what's in your fridge and pantry so you waste less and cook more."
-          ctaLabel="Add your first item"
-          onCtaPress={() => router.push("/(tabs)/add-item")}
-        />
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1, paddingBottom: tabBarHeight + 24 }}
+          {...KEYBOARD_SCROLL_PROPS}
+        >
+          <TopBar
+            title="Inventory"
+            subtitle="Nothing here yet"
+            colors={colors}
+            fonts={fonts}
+          />
+          <EmptyState
+            icon={
+              <FontAwesome name="archive" size={36} color={colors.textSubtle} />
+            }
+            title="Your fridge is empty"
+            message="Track what's in your fridge and pantry so you waste less and cook more."
+            ctaLabel="Add your first item"
+            onCtaPress={() => router.push("/(tabs)/add-item")}
+          />
+          <View style={{ paddingHorizontal: 16 }}>
+            <RecentlyUsedUp search="" onRestored={highlightRestored} />
+          </View>
+        </ScrollView>
       </View>
     );
   }
@@ -164,6 +184,7 @@ export default function InventoryScreen() {
         sections={visibleSections}
         keyExtractor={(row) => row.key}
         {...seenRows.listProps}
+        {...KEYBOARD_SCROLL_PROPS}
         stickySectionHeadersEnabled
         contentContainerStyle={{
           paddingHorizontal: 16,
@@ -443,6 +464,9 @@ export default function InventoryScreen() {
             />
           </LotOutcomeSwipe>
         )}
+        ListFooterComponent={
+          <RecentlyUsedUp search={query} onRestored={highlightRestored} />
+        }
         ListEmptyComponent={
           <View style={{ paddingVertical: 40, alignItems: "center" }}>
             <Text
