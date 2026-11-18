@@ -16,7 +16,7 @@ export const RECIPE_FEED_PAGE_SIZE = 5;
  * server's own answer instead of aborting first.
  * `backend/tests/test_request_budgets.py` checks the gap.
  */
-export const RECIPE_FEED_REQUEST_TIMEOUT_MS = 50_000;
+export const RECIPE_FEED_REQUEST_TIMEOUT_MS = 56_000;
 /**
  * How long the app waits to read a feed back after a restart. It is above
  * the backend's restore budget plus a backend cold start, and short because

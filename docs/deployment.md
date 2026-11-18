@@ -165,8 +165,8 @@ A request's budget starts when its endpoint runs. The app's timeout must also co
 
 | Request | Backend budget | Outside the budget on a cold start | Limit |
 | --- | --- | --- | --- |
-| First feed page, `POST /api/recipes/sessions` | 41 s (`RECIPE_FEED_INITIAL_BUDGET_SECONDS`) | 6.5 s | App timeout, 50 s |
-| Next feed page, `POST /api/recipes/sessions/{id}/pages` | 41 s (`RECIPE_FEED_PAGE_BUDGET_SECONDS`) | 6.5 s | App timeout, 50 s |
+| First feed page, `POST /api/recipes/sessions` | 48 s (`RECIPE_FEED_INITIAL_BUDGET_SECONDS`) | 6.5 s | App timeout, 56 s |
+| Next feed page, `POST /api/recipes/sessions/{id}/pages` | 43 s (`RECIPE_FEED_PAGE_BUDGET_SECONDS`) | 6.5 s | App timeout, 56 s |
 | Feed restore, `GET /api/recipes/sessions/latest` | 3 s (`RECIPE_FEED_RESTORE_BUDGET_SECONDS`) | 5.5 s | App timeout, 10 s |
 | Photo, `POST /api/images/*` | 120 s for OpenAI (`IMAGE_GENERATION_TIMEOUT_SECONDS`), plus about 1 s of Supabase calls | 5.5 s | Function timeout, 150 s |
 

@@ -311,9 +311,8 @@ class _Retriever:
 
 
 async def test_feed_budgets_leave_the_recipe_steps_time_for_a_slow_generation():
-    # Reading foods, analysis and generation. The budgets leave room for a
-    # Lambda cold start, which a slower generation gives up to.
-    slow_generation = 16
+    # Measured in a live feed load: reading foods, analysis and generation.
+    slow_generation = 18
     for budget in (
         settings.recipe_feed_initial_budget_seconds,
         settings.recipe_feed_page_budget_seconds,
