@@ -1,4 +1,4 @@
-"""LangGraph wiring for the recipe pipeline and its optional photo step."""
+"""LangGraph wiring for the recipe pipeline and its optional photos."""
 
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -17,15 +17,14 @@ from app.ai.agents.nodes import (
 )
 from app.ai.agents.photos import (
     PHOTO_RESERVE_SECONDS,
+    BatchPhotos,
     RecipePhotoSource,
-    add_recipe_photos,
 )
 from app.ai.agents.state import (
-    GenerationResult,
-    PhotoResult,
     RecipeReview,
     RecipeState,
     RetrievalResult,
+    WriteResult,
 )
 from app.ai.llm.protocol import LLMProvider
 from app.ai.llm.retry import PipelineDeadline
@@ -54,9 +53,12 @@ def build_recipe_graph(
     fetches. Feed sessions request a pool larger than one generation window
     so later refill runs can draw on docs no earlier run has used.
 
-    With ``photos``, a photo step follows the write step, and the recipe
-    steps stop ``PHOTO_RESERVE_SECONDS`` before the state's deadline to leave
-    it time. See ``add_recipe_photos``.
+    With ``photos``, the write step starts a recipe's photo as soon as the
+    review keeps it, for the first ``BATCH_PHOTO_LIMIT`` recipes. Once those
+    photos are done it stops waiting for slower recipes, which are dropped,
+    and ``recipe_photos`` holds the photos by photo key. The recipe steps
+    stop ``PHOTO_RESERVE_SECONDS`` before the state's deadline to leave the
+    photos time. See ``BatchPhotos``.
     """
     _validate_quality_retry_limit(quality_retry_limit)
     template = prompt or load_prompt("generate_recipes")
@@ -84,7 +86,7 @@ def build_recipe_graph(
             deadline=step_deadline(state),
         )
 
-    async def write_node(state: RecipeState) -> GenerationResult:
+    async def write_node(state: RecipeState) -> WriteResult:
         return await _write_recipes(
             state,
             provider,
@@ -93,6 +95,7 @@ def build_recipe_graph(
             step_deadline(state),
             quality_retry_limit=quality_retry_limit,
             retry_only_when_no_valid=retry_only_when_no_valid,
+            photos=photos,
         )
 
     builder.add_node("analyze_inventory", analyze_node)
@@ -101,7 +104,7 @@ def build_recipe_graph(
     builder.add_edge(START, "analyze_inventory")
     builder.add_edge("analyze_inventory", "retrieve_recipes")
     builder.add_edge("retrieve_recipes", "write_recipes")
-    _finish_with_photos(builder, photos)
+    builder.add_edge("write_recipes", END)
     return builder.compile()
 
 
@@ -129,7 +132,7 @@ def build_recipe_generation_graph(
     async def initialize_node(state: RecipeState) -> dict[str, Any]:
         return {"deadline": _deadline_for_state(state)}
 
-    async def write_node(state: RecipeState) -> GenerationResult:
+    async def write_node(state: RecipeState) -> WriteResult:
         return await _write_recipes(
             state,
             provider,
@@ -138,13 +141,14 @@ def build_recipe_generation_graph(
             step_deadline(state),
             quality_retry_limit=quality_retry_limit,
             retry_only_when_no_valid=retry_only_when_no_valid,
+            photos=photos,
         )
 
     builder.add_node("initialize", initialize_node)
     builder.add_node("write_recipes", write_node)
     builder.add_edge(START, "initialize")
     builder.add_edge("initialize", "write_recipes")
-    _finish_with_photos(builder, photos)
+    builder.add_edge("write_recipes", END)
     return builder.compile()
 
 
@@ -157,28 +161,49 @@ async def _write_recipes(
     *,
     quality_retry_limit: int,
     retry_only_when_no_valid: bool,
-) -> GenerationResult:
+    photos: RecipePhotoSource | None,
+) -> WriteResult:
     async def review(recipe: Recipe) -> RecipeReview:
         return await review_recipe(
             recipe, state, provider, prompt=judge, deadline=deadline
         )
 
-    result = await generate_recipes(
-        state,
-        provider,
-        prompt=template,
-        deadline=deadline,
-        review=review,
-        quality_retry_limit=quality_retry_limit,
-        retry_only_when_no_valid=retry_only_when_no_valid,
+    batch_photos = (
+        None
+        if photos is None
+        else BatchPhotos(
+            photos,
+            exclude_titles=state.get("exclude_titles", []),
+            deadline=_deadline_for_state(state),
+        )
     )
+    try:
+        result = await generate_recipes(
+            state,
+            provider,
+            prompt=template,
+            deadline=deadline,
+            review=review,
+            quality_retry_limit=quality_retry_limit,
+            retry_only_when_no_valid=retry_only_when_no_valid,
+            on_kept=None if batch_photos is None else batch_photos.add,
+            stop=None if batch_photos is None else batch_photos.done,
+        )
+    except BaseException:
+        if batch_photos is not None:
+            batch_photos.cancel()
+        raise
+    metadata = {
+        **state.get("metadata", {}),
+        "assessment_prompt_name": judge.name,
+        "assessment_prompt_version": judge.version,
+    }
+    if batch_photos is None:
+        return {**result, "metadata": metadata}
     return {
         **result,
-        "metadata": {
-            **state.get("metadata", {}),
-            "assessment_prompt_name": judge.name,
-            "assessment_prompt_version": judge.version,
-        },
+        "metadata": metadata,
+        "recipe_photos": await batch_photos.results(),
     }
 
 
@@ -188,21 +213,6 @@ def _recipe_steps_deadline(
     if photos is None:
         return _deadline_for_state
     return lambda state: _deadline_for_state(state).ending_before(PHOTO_RESERVE_SECONDS)
-
-
-def _finish_with_photos(builder: StateGraph, photos: RecipePhotoSource | None) -> None:
-    if photos is None:
-        builder.add_edge("write_recipes", END)
-        return
-
-    async def photo_node(state: RecipeState) -> PhotoResult:
-        return await add_recipe_photos(
-            state, photos, deadline=_deadline_for_state(state)
-        )
-
-    builder.add_node("add_photos", photo_node)
-    builder.add_edge("write_recipes", "add_photos")
-    builder.add_edge("add_photos", END)
 
 
 def _validate_quality_retry_limit(value: int) -> None:

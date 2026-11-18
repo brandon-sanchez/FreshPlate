@@ -771,6 +771,21 @@ describe("useRecipeFeed", () => {
       expect(mockFetchPage).toHaveBeenCalledTimes(1);
     });
 
+    it("keeps only cards alike to More like this from stored cards that answer it", async () => {
+      mockCreateSession.mockResolvedValueOnce(page([salmon, ...head], "10", true, 12));
+      mockFetchPage.mockResolvedValueOnce(page([stew, salmonToo], "12", true, 12));
+      const { result } = renderHook(() => useRecipeFeed(), { wrapper });
+      act(() => result.current.start(request));
+      await waitFor(() => expect(result.current.recipes).toHaveLength(10));
+      expect(mockFetchPage).not.toHaveBeenCalled();
+
+      act(() => result.current.steer("more", salmon));
+
+      await waitFor(() => expect(mockFetchPage).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(result.current.recipes).toHaveLength(11));
+      expect(result.current.recipes.at(-1)?.recipe_id).toBe("salmon-too");
+    });
+
     it("forgets steering when a new feed starts", async () => {
       mockFetchPage.mockResolvedValue(page([], null, false));
       const { result } = await startFeed();
