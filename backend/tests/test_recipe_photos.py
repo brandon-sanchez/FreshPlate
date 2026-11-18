@@ -1,17 +1,19 @@
-"""Behavior of the photo step that ends both recipe graphs."""
+"""Behavior of the photos a recipe graph takes for each feed batch."""
 
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import date
 from typing import Any
 
 import pytest
 
 from app.ai.agents.graph import build_recipe_generation_graph, build_recipe_graph
+from app.ai.agents.meal_quality import MealCheck
 from app.ai.agents.models import Recipe
 from app.ai.agents.nodes import MEAL_REVIEW_RESERVE_SECONDS, analyze_inventory
-from app.ai.agents.photos import PHOTO_RESERVE_SECONDS, add_recipe_photos
+from app.ai.agents.photos import PHOTO_RESERVE_SECONDS, photograph
 from app.ai.llm.providers import GEMINI_MIN_DEADLINE_SECONDS
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.rag.vector_store import RetrievedRecipe
@@ -246,12 +248,10 @@ async def test_no_photo_starts_when_the_deadline_leaves_no_time_for_one():
     photos = RecordingPhotos(delay=0)
     dish = Recipe.model_validate(_recipe("Roast tomatoes"))
 
-    result = await add_recipe_photos(
-        {"valid_recipes": [dish]}, photos, deadline=PipelineDeadline(7)
-    )
+    result = await photograph(photos, [dish], deadline=PipelineDeadline(7))
 
     assert photos.titles == []
-    photo = result["recipe_photos"][ImageService.recipe_key(dish)]
+    photo = result[ImageService.recipe_key(dish)]
     assert photo.status == "unavailable" and photo.reason == "late"
 
 
@@ -288,6 +288,72 @@ async def test_graphs_without_a_photo_source_keep_their_full_deadline():
 class _Retriever:
     async def search(self, query: str, **_: Any) -> list[RetrievedRecipe]:
         return []
+
+
+class SlowCallsProvider:
+    """Answers from a queue, holding each generation call for its delay."""
+
+    def __init__(self, responses: list[Any], delays: list[float]) -> None:
+        self._inner = MealFakeProvider(responses)
+        self._delays = list(delays)
+        self.generation_calls = 0
+
+    async def generate(self, prompt: str, **kwargs: Any) -> Any:
+        if kwargs["response_model"] is MealCheck:
+            return await self._inner.generate(prompt, **kwargs)
+        delay = self._delays[self.generation_calls]
+        self.generation_calls += 1
+        response = await self._inner.generate(prompt, **kwargs)
+        await asyncio.sleep(delay)
+        return response
+
+
+async def test_a_batch_returns_once_its_first_three_recipes_have_photos():
+    photos = RecordingPhotos(delay=0.05)
+    provider = SlowCallsProvider(
+        batch_responses(*(_recipe(f"Dish {n}") for n in range(1, 6))),
+        delays=[0.04, 0.01, 0.03, 0.02, 5.0],
+    )
+    graph = build_recipe_generation_graph(
+        provider, photos=photos, quality_retry_limit=0
+    )
+
+    started = time.monotonic()
+    result = await graph.ainvoke(_refill_state(PipelineDeadline(45)))
+
+    assert time.monotonic() - started < 1.0
+    assert [r.title for r in result["valid_recipes"]] == [
+        "Dish 2",
+        "Dish 4",
+        "Dish 3",
+        "Dish 1",
+    ]
+    assert photos.titles == ["Dish 2", "Dish 4", "Dish 3"]
+    assert [_photo_of(result, title).status for title in photos.titles] == [
+        "ready"
+    ] * 3
+    assert len(result["recipe_photos"]) == 3
+
+
+async def test_a_near_duplicate_dish_never_takes_one_of_the_first_photos():
+    photos = RecordingPhotos(delay=0)
+    provider = SlowCallsProvider(
+        batch_responses(
+            _recipe("Roast tomatoes"),
+            _recipe("The roast tomatoes"),
+            _recipe("Tomato soup"),
+            _recipe("Tomato salad"),
+        ),
+        delays=[0.01, 0.02, 0.03, 0.04, 0.05],
+    )
+    graph = build_recipe_generation_graph(
+        provider, photos=photos, quality_retry_limit=0
+    )
+
+    result = await graph.ainvoke(_refill_state(PipelineDeadline(45)))
+
+    assert photos.titles == ["Roast tomatoes", "Tomato soup", "Tomato salad"]
+    assert [r.title for r in result["valid_recipes"]] == photos.titles
 
 
 async def test_feed_budgets_leave_the_recipe_steps_time_for_a_slow_generation():

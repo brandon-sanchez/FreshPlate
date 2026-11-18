@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import date
 from decimal import Decimal
 from typing import Any, Protocol
@@ -225,6 +226,8 @@ async def generate_recipes(
     review: SlotReviewer | None = None,
     quality_retry_limit: int = MAX_QUALITY_RETRIES,
     retry_only_when_no_valid: bool = False,
+    on_kept: Callable[[Recipe], None] | None = None,
+    stop: asyncio.Event | None = None,
 ) -> GenerationResult:
     """Generate a batch with one concurrent provider call per recipe.
 
@@ -242,7 +245,8 @@ async def generate_recipes(
     returns, and a rejected recipe is rewritten alone with its rejection as
     feedback (see ``write_slots``). A rewrite needs
     ``QUALITY_RETRY_MIN_BUDGET_SECONDS`` left on the deadline. Kept recipes
-    whose titles repeat an earlier one's dish are then dropped.
+    are listed in the order they were kept, so the fastest come first, and
+    any whose title repeats an earlier one's dish is dropped.
 
     Calls stop ``MEAL_REVIEW_RESERVE_SECONDS`` before the pipeline deadline
     when that still leaves them Gemini's minimum call time, so the meal
@@ -260,6 +264,9 @@ async def generate_recipes(
         quality_retry_limit: The most rewrites per rejected recipe.
         retry_only_when_no_valid: Rewrite rejected recipes only when no
             recipe in the batch was kept.
+        on_kept: Called with each recipe the moment it is kept.
+        stop: When set, ends the batch at once. Recipes still being written
+            or reviewed are dropped.
 
     Returns:
         Every recipe written and the number of rewrites. With ``review``,
@@ -307,6 +314,13 @@ async def generate_recipes(
             deadline=calls_deadline,
         )
 
+    kept: list[Recipe] = []
+
+    def keep(recipe: Recipe) -> None:
+        kept.append(recipe)
+        if on_kept is not None:
+            on_kept(recipe)
+
     outcomes = await write_slots(
         recipe_directions(
             usable_items,
@@ -320,9 +334,10 @@ async def generate_recipes(
         retry_only_when_no_valid=retry_only_when_no_valid,
         can_retry=lambda: active_deadline is None
         or active_deadline.remaining_seconds >= QUALITY_RETRY_MIN_BUDGET_SECONDS,
+        on_kept=keep,
+        stop=stop,
     )
 
-    kept = [outcome.accepted for outcome in outcomes if outcome.accepted]
     failures = [outcome.failure for outcome in outcomes if outcome.failure]
     if failures and not kept:
         raise ProviderError(

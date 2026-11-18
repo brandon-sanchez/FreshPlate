@@ -245,7 +245,7 @@ def _install_dependencies(
     _install_images(app, FakeStore())
 
 
-def test_initial_feed_page_uses_a_five_card_head_batch(
+def test_first_feed_page_shows_three_photographed_cards_and_stores_the_rest(
     signing_key: SigningKey,
     patch_jwks,
 ) -> None:
@@ -255,13 +255,11 @@ def test_initial_feed_page_uses_a_five_card_head_batch(
             *batch_responses(*(_recipe(f"Recipe {index}") for index in range(1, 6))),
         ]
     )
+    store = InMemoryRecipeFeedStore()
+    image_provider = FakeImageProvider()
     app = create_app()
-    _install_dependencies(
-        app,
-        provider,
-        StubRetriever(),
-        InMemoryRecipeFeedStore(),
-    )
+    _install_dependencies(app, provider, StubRetriever(), store)
+    _install_images(app, FakeStore(), image_provider)
 
     with TestClient(app) as client:
         response = client.post(
@@ -271,15 +269,99 @@ def test_initial_feed_page_uses_a_five_card_head_batch(
         )
 
     assert response.status_code == 200
-    assert [recipe["title"] for recipe in response.json()["data"]["recipes"]] == [
+    data = response.json()["data"]
+    assert [card["title"] for card in data["recipes"]] == [
         "Recipe 1",
         "Recipe 2",
         "Recipe 3",
-        "Recipe 4",
-        "Recipe 5",
     ]
-    assert response.json()["data"]["next_cursor"] == "5"
-    assert response.json()["data"]["ready_count"] == 5
+    assert {card["image"]["status"] for card in data["recipes"]} == {"ready"}
+    assert len(image_provider.prompts) == 3
+    assert data["next_cursor"] == "3"
+    assert data["ready_count"] == 5
+    stored = store.items[UUID(data["session_id"])]
+    assert [recipe.title for recipe in stored] == [
+        f"Recipe {index}" for index in range(1, 6)
+    ]
+
+
+def test_next_page_photographs_the_rest_of_the_batch_without_generating_recipes(
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    patch_jwks([signing_key])
+    provider = MealFakeProvider(
+        [
+            *batch_responses(*(_recipe(f"Recipe {index}") for index in range(1, 6))),
+        ]
+    )
+    image_provider = FakeImageProvider()
+    app = create_app()
+    _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
+    _install_images(app, FakeStore(), image_provider)
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        )
+        data = first.json()["data"]
+        calls_before_page = len(provider.calls)
+        rest = client.post(
+            f"/api/recipes/sessions/{data['session_id']}/pages",
+            headers=_auth_headers(signing_key),
+            json={"cursor": data["next_cursor"], "limit": 5},
+        )
+
+    assert rest.status_code == 200
+    cards = rest.json()["data"]["recipes"]
+    assert [card["title"] for card in cards] == ["Recipe 4", "Recipe 5"]
+    assert {card["image"]["status"] for card in cards} == {"ready"}
+    assert len(image_provider.prompts) == 5
+    assert len(provider.calls) == calls_before_page
+    assert rest.json()["data"]["next_cursor"] == "5"
+
+
+def test_a_refill_page_returns_the_cards_its_batch_photographed(
+    signing_key: SigningKey,
+    patch_jwks,
+) -> None:
+    patch_jwks([signing_key])
+    provider = MealFakeProvider(
+        [
+            *batch_responses(*(_recipe(f"Recipe {index}") for index in range(1, 6))),
+            *batch_responses(*(_recipe(f"Refill {index}") for index in range(1, 6))),
+        ]
+    )
+    image_provider = FakeImageProvider()
+    app = create_app()
+    _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
+    _install_images(app, FakeStore(), image_provider)
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        )
+        session_id = first.json()["data"]["session_id"]
+        refill = client.post(
+            f"/api/recipes/sessions/{session_id}/pages",
+            headers=_auth_headers(signing_key),
+            json={"cursor": "5", "limit": 5},
+        )
+
+    data = refill.json()["data"]
+    assert [card["title"] for card in data["recipes"]] == [
+        "Refill 1",
+        "Refill 2",
+        "Refill 3",
+    ]
+    assert {card["image"]["status"] for card in data["recipes"]} == {"ready"}
+    assert data["next_cursor"] == "8"
+    assert data["ready_count"] == 10
+    assert len(image_provider.prompts) == 6
 
 
 def test_initial_feed_keeps_partial_results_without_a_quality_retry(
@@ -384,7 +466,7 @@ def test_refill_returns_partial_results_without_a_second_quality_pass(
         refill = client.post(
             f"/api/recipes/sessions/{session_id}/pages",
             headers=_auth_headers(signing_key),
-            json={"cursor": first.json()["data"]["next_cursor"], "limit": 5},
+            json={"cursor": "5", "limit": 5},
         )
 
     assert refill.status_code == 200
@@ -452,7 +534,7 @@ def test_feed_refills_season_with_the_basics_the_session_started_with(
         refill = client.post(
             f"/api/recipes/sessions/{session_id}/pages",
             headers=_auth_headers(signing_key),
-            json={"cursor": first.json()["data"]["next_cursor"], "limit": 5},
+            json={"cursor": "5", "limit": 5},
         )
 
     assert store.sessions[UUID(session_id)].kitchen_basics == KitchenBasics(["Salt"])
@@ -733,10 +815,8 @@ def test_feed_pages_from_a_server_owned_pool_before_refilling(
         "Recipe 1",
         "Recipe 2",
         "Recipe 3",
-        "Recipe 4",
-        "Recipe 5",
     ]
-    assert first.json()["data"]["next_cursor"] == "5"
+    assert first.json()["data"]["next_cursor"] == "3"
 
     assert second.status_code == 200
     assert [recipe["title"] for recipe in second.json()["data"]["recipes"]] == [
@@ -1001,6 +1081,65 @@ async def test_concurrent_refills_share_the_last_generation_run(
     )
 
 
+@pytest.mark.asyncio
+async def test_a_request_that_waits_on_a_refill_returns_the_same_photographed_page(
+    signing_key,
+    patch_jwks,
+) -> None:
+    import asyncio
+
+    import httpx
+
+    patch_jwks([signing_key])
+
+    class SlowProvider(PromptRecordingProvider):
+        async def generate(self, *args, **kwargs):
+            await asyncio.sleep(0.1)
+            return await super().generate(*args, **kwargs)
+
+    provider = SlowProvider(
+        [
+            *batch_responses(_recipe("Initial")),
+            *batch_responses(*(_recipe(f"Refill {index}") for index in range(1, 6))),
+        ]
+    )
+    image_provider = FakeImageProvider()
+    app = create_app()
+    _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
+    _install_images(app, FakeStore(), image_provider)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        first = await client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID},
+        )
+        session_id = first.json()["data"]["session_id"]
+        pages = await asyncio.gather(
+            *[
+                client.post(
+                    f"/api/recipes/sessions/{session_id}/pages",
+                    headers=_auth_headers(signing_key),
+                    json={"cursor": "1"},
+                )
+                for _ in range(2)
+            ]
+        )
+
+    owner, waiter = (_without_photo_expiry(page.json()) for page in pages)
+    assert owner == waiter
+    assert [card["title"] for card in owner["data"]["recipes"]] == [
+        "Refill 1",
+        "Refill 2",
+        "Refill 3",
+    ]
+    assert {card["image"]["status"] for card in owner["data"]["recipes"]} == {
+        "ready"
+    }
+    assert len(image_provider.prompts) == 4
+
+
 def test_failed_refill_can_retry_without_refunding_its_run(signing_key, patch_jwks):
     from app.ai.llm.errors import ProviderError
 
@@ -1115,7 +1254,7 @@ def test_a_failed_photo_never_fails_the_feed(signing_key, patch_jwks) -> None:
     assert card["image"]["reason"] == "failed"
 
 
-def test_stored_pages_reuse_cached_photos_and_never_generate(
+def test_a_stored_card_gets_its_missing_photo_and_keeps_its_cached_one(
     signing_key, patch_jwks
 ) -> None:
     patch_jwks([signing_key])
@@ -1143,11 +1282,11 @@ def test_stored_pages_reuse_cached_photos_and_never_generate(
         )
 
     cards = again.json()["data"]["recipes"]
-    assert [card["image"] and card["image"]["status"] for card in cards] == [
-        None,
-        "ready",
-    ]
-    assert len(image_provider.prompts) == 2
+    assert [card["image"]["status"] for card in cards] == ["ready", "ready"]
+    assert [prompt for _, prompt in image_provider.prompts].count(
+        image_provider.prompts[0][1]
+    ) == 2
+    assert len(image_provider.prompts) == 3
 
 
 def _steering_session(
@@ -1398,6 +1537,37 @@ def test_latest_session_returns_its_stored_cards_without_generating(
     assert data["preferences"] == {"meal": "Dinner"}
     assert len(provider.prompts) == model_calls
     assert len(image_provider.prompts) == photo_calls
+
+
+def test_latest_session_ends_before_the_first_card_without_a_photo(
+    signing_key: SigningKey, patch_jwks
+) -> None:
+    patch_jwks([signing_key])
+    provider = PromptRecordingProvider(
+        [*batch_responses(*(_recipe(f"Recipe {index}") for index in range(1, 6)))]
+    )
+    image_provider = FakeImageProvider()
+    app = create_app()
+    _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
+    _install_images(app, FakeStore(), image_provider)
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        )
+        latest = client.get(_LATEST_PATH, headers=_auth_headers(signing_key))
+
+    created = first.json()["data"]
+    data = latest.json()["data"]
+    assert data["ready_count"] > len(created["recipes"])
+    assert [card["title"] for card in data["recipes"]] == [
+        card["title"] for card in created["recipes"]
+    ]
+    assert all(card["image"]["status"] == "ready" for card in data["recipes"])
+    assert data["next_cursor"] == str(len(data["recipes"]))
+    assert data["has_more"] is True
 
 
 def test_latest_session_never_refills_a_short_pool(

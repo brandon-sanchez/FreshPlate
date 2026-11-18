@@ -124,9 +124,10 @@ class RecipeFeedCard(RecipeSuggestion):
     """A feed recipe as served, with its photo.
 
     Attributes:
-        image: The recipe's photo, or its placeholder result. None only on a
-            page served from a stored pool without a stored photo. The app
-            then requests the photo from `POST /api/images/recipes/{id}`.
+        image: The recipe's photo, or its placeholder result. None only when
+            a read that generates no photos serves a stored card that has
+            none. The app then requests the photo from
+            `POST /api/images/recipes/{id}`.
             The signed URL is never stored with the recipe.
     """
 
