@@ -145,7 +145,8 @@ def test_trace_config_rejects_an_empty_request_id() -> None:
 def test_meal_judge_prompt_is_a_minimal_thinking_checklist() -> None:
     prompt = load_prompt("assess_meals")
 
-    assert prompt.version == 4
+    assert prompt.version == 5
+    assert "whether one recipe is the requested_dish" in prompt.system
     assert prompt.thinking == "minimal"
     assert "reasoning fields before the yes/no fields" in prompt.system
     assert "kitchen_basics are always available" in prompt.system

@@ -23,12 +23,21 @@ export function countAnsweredPreferences(
   ).length;
 }
 
+/**
+ * Returns the Recipes header's context line. With no answered preferences
+ * the line counts the usable ingredients. Otherwise it says how many
+ * preferences tune the feed.
+ *
+ * @param ingredientCount - Foods with unexpired stock, as `countUsableFoods` counts them.
+ */
 export function recipeContextLabel(
-  itemCount: number,
+  ingredientCount: number,
   preferences: RecipePreferences,
 ): string {
   const answered = countAnsweredPreferences(preferences);
-  if (answered === 0) return `From your ${itemCount} items`;
+  if (answered === 0) {
+    return `From your ${ingredientCount} ingredient${ingredientCount === 1 ? "" : "s"}`;
+  }
   return `Tuned · ${answered} preference${answered === 1 ? "" : "s"}`;
 }
 

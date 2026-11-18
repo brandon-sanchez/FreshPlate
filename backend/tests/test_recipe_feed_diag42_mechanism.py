@@ -25,7 +25,12 @@ from app.api.recipes import (
 from app.core.config import settings
 from app.main import create_app
 from tests.conftest import HOUSEHOLD_ID, FakeFoodLineSource
-from tests.recipe_fakes import NO_BASICS, batch_responses, model_answer
+from tests.recipe_fakes import (
+    NO_BASICS,
+    MealFakeProvider,
+    batch_responses,
+    model_answer,
+)
 
 
 def _inventory() -> list[dict[str, Any]]:
@@ -219,7 +224,7 @@ async def test_refill_deadline_observes_provider_failure_during_cancellation(
     import httpx
 
     from app.ai.agents.photos import PHOTO_RESERVE_SECONDS
-    from app.ai.llm.providers import FakeProvider, GeminiProvider
+    from app.ai.llm.providers import GeminiProvider
     from tests.test_recipe_feed import (
         InMemoryRecipeFeedStore,
         StubRetriever,
@@ -257,25 +262,7 @@ async def test_refill_deadline_observes_provider_failure_during_cancellation(
     app = create_app()
     _install_dependencies(
         app,
-        FakeProvider(
-            [
-                *batch_responses(_recipe("Initial")),
-                {
-                    "checks": [
-                        {
-                            "candidate_index": 0,
-                            "main_component": "vegetables",
-                            "portion_reasoning": "complete meal",
-                            "unlisted_foods": [],
-                            "dish_reasoning": "a meal on its own",
-                            "is_requested_dish": True,
-                            "realistic_portions": True,
-                            "coherent_method": True,
-                        }
-                    ]
-                },
-            ]
-        ),
+        MealFakeProvider(batch_responses(_recipe("Initial"))),
         StubRetriever(),
         store,
     )

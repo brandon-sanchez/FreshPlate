@@ -27,7 +27,7 @@ It boots the pinned simulator (`iPhone 17 Pro Max`, iOS 26.3, `60ACCFBE-…`), s
 
 **Right after launch, attach the simulator panel** so Brandon can watch the run inside the Claude app: call the iOS Simulator tool with `action: "attach"` and `device: "60ACCFBE-1E1D-4C9B-A88E-497999D8DB5F"`. If it errors because the input connection is still starting, wait about 10 seconds and retry. The standalone Simulator app stays closed unless `VERIFY_SIMULATOR_APP=1` is set for the cliclick fallback.
 
-**Ready** means `00-launch.png` shows the Home screen ("Good afternoon/morning, …", the "What do you want to cook?" card, and the bottom tab bar) with the counts and fridge list loaded. "Loading your fridge…" that never resolves, or a "Network request failed" toast, means not ready: run the doctor.
+**Ready** means `00-launch.png` shows the Home screen ("Good afternoon/morning, …", the "What do you want to cook?" card, and the bottom tab bar) with the counts and fridge list loaded. Gray placeholder bars that never fill in, or a "Network request failed" toast, mean not ready: run the doctor.
 
 A server already on a port is reused only if it runs from this repo. If an earlier verify run started it, `launch.sh` prints where its log is (in that earlier run's directory). If Brandon started it, its logs are in his terminal and the run has no `api.log` or `metro.log`.
 
@@ -101,7 +101,7 @@ It stops only the API and Metro process groups that `launch.sh` started, and shu
 
 ## Known traps
 
-- **Supabase pauses.** The free-tier project pauses after about a week without traffic. The app then hangs on "Loading your fridge…" with a "Network request failed" toast, and the doctor reports Supabase unreachable. `supabase projects list -o json` shows `INACTIVE`. Only Brandon restores it, from the Supabase dashboard.
+- **Supabase pauses.** The free-tier project pauses after about a week without traffic. Home then stays on its gray placeholder bars with a "Network request failed" toast, and the doctor reports Supabase unreachable. `supabase projects list -o json` shows `INACTIVE`. Only Brandon restores it, from the Supabase dashboard.
 - **New dependencies after a pull.** Metro exits with `"<package>" is added as a dependency … but it doesn't seem to be installed`. Run `npm install` in `mobile/` (and `venv/bin/pip install -r requirements.txt` in `backend/` for Python changes), then cleanup and launch again.
 - **LAN API URL.** `mobile/.env` points the app at the Mac's LAN IP. After a network change the doctor flags it. Fix the IP and restart Metro (cleanup, launch), because Expo inlines env values at bundle time.
 - **Expo Go version.** Expo Go must stay on 54.x to match SDK 54. Other simulators on this Mac have Expo Go 57 and no signed-in session.

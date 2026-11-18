@@ -12,7 +12,7 @@ from typing import Any
 from app.ai.agents.food_labels import FoodLabels
 from app.ai.agents.graph import build_recipe_graph
 from app.ai.agents.kitchen_basics import KitchenBasics
-from app.ai.agents.meal_quality import MealChecklist
+from app.ai.agents.meal_quality import MealCheck
 from app.ai.agents.models import Recipe, RecipeIngredient, RecipeStep
 from app.ai.agents.nodes import analyze_inventory
 from app.ai.eval.judge import JudgeResult, judge_recipe
@@ -31,7 +31,11 @@ _DEFAULT_BASICS = KitchenBasics(
 
 
 def _fixture_recipe(case: dict[str, Any]) -> Recipe:
-    """Return the offline model's answer: a recipe of the first usable food."""
+    """Return the offline model's answer: a recipe of all of the first usable food.
+
+    Using the whole stock gives the recipe a meal-sized portion, so the code
+    portion checks pass it on to the offline judge.
+    """
     analysis = analyze_inventory(
         {"inventory": case["inventory"], "kitchen_basics": _DEFAULT_BASICS}
     )
@@ -52,9 +56,8 @@ def _fixture_recipe(case: dict[str, Any]) -> Recipe:
             RecipeIngredient(
                 name=item.name,
                 inventory_item_id=food_label,
-                use_amount=1,
+                use_amount=item.available,
                 unit=item.stock_unit,
-                display_amount="1",
             ),
         ],
         steps=[
@@ -93,21 +96,14 @@ async def run(mode: str, experiment: str) -> dict[str, float | int | str]:
     for index, case in enumerate(cases):
         rejected = index in {0, len(cases) - 1}
         recipe = _fixture_recipe(case)
-        assessment = MealChecklist.model_validate(
-            {
-                "checks": [
-                    {
-                        "candidate_index": 0,
-                        "main_component": "Grounded offline fixture",
-                        "portion_reasoning": "Deterministic offline fixture",
-                        "unlisted_foods": [],
-                        "dish_reasoning": "Deterministic offline fixture",
-                        "is_requested_dish": not rejected,
-                        "realistic_portions": True,
-                        "coherent_method": True,
-                    }
-                ]
-            }
+        assessment = MealCheck(
+            main_component="Grounded offline fixture",
+            dish_reasoning="Deterministic offline fixture",
+            portion_reasoning="Deterministic offline fixture",
+            unlisted_foods=[],
+            is_requested_dish=not rejected,
+            realistic_portions=True,
+            coherent_method=True,
         )
         responses: list[dict[str, Any]] = []
         for _ in range(4):

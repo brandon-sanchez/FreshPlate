@@ -12,9 +12,18 @@ import { useTheme } from "@/hooks/useTheme";
 import { getUrgency } from "@/constants/theme";
 import { RecipePressable } from "@/components/recipe-motion";
 import UrgencyBar from "@/components/UrgencyBar";
-import FoodPhoto from "@/components/food-photo";
+import FoodPhoto, { FOOD_PHOTO_RADIUS_RATIO } from "@/components/food-photo";
+import { SkeletonBar } from "@/components/skeleton";
 import type { FoodRow } from "@/lib/foodRows";
 import { formatAmount } from "@/lib/amount";
+
+const PHOTO_SIZE = 48;
+const ROW_CONTENT_STYLE = {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 12,
+  padding: 12,
+} as const;
 
 type InventoryRowProps = {
   /** The food to show, with its lots stacked. A single-lot row reads like one batch. */
@@ -119,17 +128,10 @@ function InventoryRow({
           animatedStyle,
         ]}
       >
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 12,
-            padding: 12,
-          }}
-        >
+        <View style={ROW_CONTENT_STYLE}>
           <FoodPhoto
             foodId={row.foodId}
-            size={48}
+            size={PHOTO_SIZE}
             icon={row.category?.icon}
             enabled={photoEnabled}
           />
@@ -176,6 +178,37 @@ function InventoryRow({
         </View>
       </Animated.View>
     </RecipePressable>
+  );
+}
+
+/**
+ * Renders a placeholder with an inventory row's size and shape: a photo block
+ * and two text bars. Wrap it in `SkeletonPulse` to animate it.
+ */
+export function InventoryRowSkeleton() {
+  const { colors } = useTheme();
+  return (
+    <View
+      style={[
+        ROW_CONTENT_STYLE,
+        {
+          borderRadius: CARD_RADIUS,
+          borderWidth: 1,
+          borderColor: colors.border,
+          backgroundColor: colors.surface,
+        },
+      ]}
+    >
+      <SkeletonBar
+        width={PHOTO_SIZE}
+        height={PHOTO_SIZE}
+        radius={PHOTO_SIZE * FOOD_PHOTO_RADIUS_RATIO}
+      />
+      <View style={{ flex: 1, gap: 8 }}>
+        <SkeletonBar width="45%" height={13} />
+        <SkeletonBar width="62%" height={10} />
+      </View>
+    </View>
   );
 }
 

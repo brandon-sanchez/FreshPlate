@@ -14,10 +14,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.ai.agents.kitchen_basics import KitchenBasics
+from app.ai.agents.meal_quality import MealCheck
 from app.ai.agents.models import Recipe, RecipeGenerationResponse
 from app.ai.eval.scorers import ingredient_coverage_percent
 from app.ai.llm.errors import ProviderError
-from app.ai.llm.providers import FakeProvider
 from app.ai.rag.vector_store import RetrievedRecipe
 from app.api.recipes import (
     get_food_line_source,
@@ -29,7 +29,13 @@ from app.inventory.food_facts import FoodLine
 from app.main import create_app
 from app.services.food_lines import FoodLinesError
 from tests.conftest import HOUSEHOLD_ID, FakeFoodLineSource, SigningKey
-from tests.recipe_fakes import NO_BASICS, batch_responses, model_answer
+from tests.recipe_fakes import (
+    ELIGIBLE,
+    NO_BASICS,
+    MealFakeProvider,
+    batch_responses,
+    model_answer,
+)
 
 OLIVE_OIL_ID = "5b0c4e1d-8f2a-4c3b-9d6e-7a8b9c0d1e2f"
 
@@ -91,17 +97,6 @@ def _answer(title: str = "Spinach Pasta") -> dict[str, Any]:
     return model_answer(_recipe(title), _inventory(), NO_BASICS)
 
 
-def _eligible(index: int = 0) -> dict[str, Any]:
-    return {
-        "candidate_index": index,
-        "main_component": "pasta",
-        "portion_reasoning": "complete meal",
-        "unlisted_foods": [],
-        "dish_reasoning": "a meal on its own",
-        "is_requested_dish": True,
-        "realistic_portions": True,
-        "coherent_method": True,
-    }
 
 
 class StubRetriever:
@@ -150,12 +145,9 @@ def test_authenticated_suggestion_returns_identity_match_and_expiry_badge(
     patch_jwks([signing_key])
     _install_graph_dependencies(
         recipe_app,
-        FakeProvider(
+        MealFakeProvider(
             [
                 *batch_responses(_answer()),
-                {
-                    "checks": [_eligible()]
-                },
             ]
         ),
     )
@@ -195,12 +187,11 @@ def test_suggestions_may_season_with_the_households_kitchen_basics(
     foods = FakeFoodLineSource(_inventory(), ["Salt"])
     _install_graph_dependencies(
         recipe_app,
-        FakeProvider(
+        MealFakeProvider(
             [
                 *batch_responses(
                     model_answer(seasoned, _inventory(), KitchenBasics(["Salt"]))
                 ),
-                {"checks": [_eligible()]},
             ]
         ),
         foods=foods,
@@ -247,7 +238,7 @@ def test_a_basic_the_household_tracks_is_a_food_the_cook_deducts(
     answer = model_answer(oiled, kitchen, basics)
     _install_graph_dependencies(
         recipe_app,
-        FakeProvider([*batch_responses(answer), {"checks": [_eligible()]}]),
+        MealFakeProvider([*batch_responses(answer)]),
         NoRetriever(),
         foods=FakeFoodLineSource(kitchen, list(basics.names)),
     )
@@ -281,12 +272,9 @@ def test_same_title_regeneration_gets_a_new_recipe_id(
 ) -> None:
     patch_jwks([signing_key])
     _install_graph_dependencies(recipe_app, None)
-    recipe_app.dependency_overrides[get_recipe_provider] = lambda: FakeProvider(
+    recipe_app.dependency_overrides[get_recipe_provider] = lambda: MealFakeProvider(
         [
             *batch_responses(_answer()),
-            {
-                "checks": [_eligible()]
-            },
         ]
     )
 
@@ -334,15 +322,11 @@ def test_suggestion_honors_exclusions_and_batch_ceiling(
     patch_jwks,
 ) -> None:
     patch_jwks([signing_key])
-    provider = FakeProvider(
+    provider = MealFakeProvider(
         [
             *batch_responses(
                 _answer("First Recipe"), _answer("Excluded Recipe"), calls=2
             ),
-            {"checks": [
-                _eligible(),
-                _eligible(1),
-            ]},
         ]
     )
     _install_graph_dependencies(
@@ -418,7 +402,7 @@ def test_provider_failure_returns_ai_unavailable(
     patch_jwks([signing_key])
     _install_graph_dependencies(
         recipe_app,
-        FakeProvider([ProviderError("provider unavailable")]),
+        MealFakeProvider([ProviderError("provider unavailable")]),
     )
 
     with TestClient(recipe_app) as client:
@@ -450,8 +434,8 @@ class DelayedProvider:
     ) -> Any:
         del system_instruction, deadline, thinking
         await asyncio.sleep(self.delay_seconds)
-        if response_model.__name__ == "MealChecklist":
-            return response_model(checks=[_eligible()])
+        if response_model is MealCheck:
+            return MealCheck.model_validate(ELIGIBLE)
         return RecipeGenerationResponse(recipes=[_answer()])
 
 
@@ -512,7 +496,7 @@ def test_suggestion_reads_the_requested_households_foods(
     foods = FakeFoodLineSource(_inventory())
     _install_graph_dependencies(
         recipe_app,
-        FakeProvider([*batch_responses(_answer()), {"checks": [_eligible()]}]),
+        MealFakeProvider([*batch_responses(_answer())]),
         foods=foods,
     )
 
@@ -563,7 +547,7 @@ def test_unreadable_foods_return_ai_unavailable(
             return []
 
     patch_jwks([signing_key])
-    _install_graph_dependencies(recipe_app, FakeProvider([]))
+    _install_graph_dependencies(recipe_app, MealFakeProvider([]))
     recipe_app.dependency_overrides[get_food_line_source] = FailingFoods
 
     with TestClient(recipe_app) as client:
