@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   Keyboard,
@@ -88,6 +88,9 @@ export default function RecipesScreen() {
   const startCook = async (recipe: RecipeSuggestion) => {
     if (await cook.start(recipe)) setDetailRecipe(recipe);
   };
+  const checklistAfterDismiss = useRef(false);
+  const openChecklist = () =>
+    router.push({ pathname: "/cook", params: { stage: "checklist" } });
   const detail = (
     <RecipeDetail
       recipe={detailRecipe}
@@ -98,8 +101,18 @@ export default function RecipesScreen() {
       cooking={detailCooking}
       cookPending={cook.pending}
       onCook={(recipe) => void startCook(recipe)}
-      onDoneCooking={async () => {
-        if (await cook.finish()) setDetailRecipe(null);
+      onDoneCooking={() => {
+        setDetailRecipe(null);
+        // iOS drops a screen presented while this modal is still sliding
+        // away, so the checklist opens once it has dismissed. Android's
+        // Modal has no onDismiss and needs no wait.
+        if (Platform.OS === "ios") checklistAfterDismiss.current = true;
+        else openChecklist();
+      }}
+      onDismiss={() => {
+        if (!checklistAfterDismiss.current) return;
+        checklistAfterDismiss.current = false;
+        openChecklist();
       }}
     />
   );

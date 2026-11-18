@@ -53,3 +53,10 @@ def test_a_row_without_a_profile_key_has_no_profile():
 def test_non_numeric_or_non_positive_facts_raise_value_error(changes):
     with pytest.raises(ValueError):
         food_facts_from_row(rice_row(**changes))
+
+
+def test_whole_units_only_reaches_the_facts_and_defaults_to_false():
+    eggs = rice_row(stock_base="each", each_label="egg", profile_key=None,
+                    profile_g_per_ml=None, profile_unit_grams=None)
+    assert food_facts_from_row({**eggs, "whole_units_only": True}).whole_units_only
+    assert not food_facts_from_row(eggs).whole_units_only

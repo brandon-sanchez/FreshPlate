@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentProps } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import {
   Animated,
   Easing,
@@ -12,6 +12,7 @@ import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useTheme } from "@/hooks/useTheme";
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+const REDUCED_PRESSED_OPACITY = 0.6;
 type RecipePressableProps = Omit<
   ComponentProps<typeof AnimatedPressable>,
   "style"
@@ -19,6 +20,12 @@ type RecipePressableProps = Omit<
   style?: StyleProp<ViewStyle>;
 };
 
+/**
+ * A Pressable that shrinks to 97 percent in 90 ms while held and springs
+ * back, and draws an accent outline while it has keyboard focus. With Reduce
+ * Motion on, it dims to 60 percent of its own opacity while held instead of
+ * shrinking.
+ */
 export function RecipePressable({
   onPressIn,
   onPressOut,
@@ -29,12 +36,18 @@ export function RecipePressable({
 }: RecipePressableProps) {
   const { colors } = useTheme();
   const scale = useRef(new Animated.Value(1)).current;
+  const dim = useRef(new Animated.Value(1)).current;
   const [focused, setFocused] = useState(false);
   const reducedMotion = useReducedMotion();
   useEffect(() => {
     if (reducedMotion) scale.setValue(1);
     return () => scale.stopAnimation();
   }, [reducedMotion, scale]);
+  const callerOpacity = StyleSheet.flatten(style)?.opacity ?? 1;
+  const dimmed = useMemo(
+    () => ({ opacity: Animated.multiply(dim, callerOpacity) }),
+    [dim, callerOpacity],
+  );
   return (
     <AnimatedPressable
       {...props}
@@ -47,7 +60,8 @@ export function RecipePressable({
         onBlur?.(event);
       }}
       onPressIn={(event) => {
-        if (!reducedMotion)
+        if (reducedMotion) dim.setValue(REDUCED_PRESSED_OPACITY);
+        else
           Animated.timing(scale, {
             toValue: 0.97,
             duration: 90,
@@ -56,6 +70,7 @@ export function RecipePressable({
         onPressIn?.(event);
       }}
       onPressOut={(event) => {
+        dim.setValue(1);
         if (reducedMotion) scale.setValue(1);
         else
           Animated.spring(scale, {
@@ -74,6 +89,7 @@ export function RecipePressable({
           outlineWidth: 2,
           outlineOffset: 3,
         },
+        reducedMotion && dimmed,
         { transform: [{ scale }] },
       ]}
     />
