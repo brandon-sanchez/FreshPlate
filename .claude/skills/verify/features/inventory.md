@@ -35,7 +35,7 @@ Preconditions:
 ## Gotchas
 
 - Urgency is computed from `expiration_date` relative to today, so the same item can move between "Use this week" and "Expired" across days.
-- Home's three counts ("In fridge", "Use this week", "Expired") come from the same query. Check them after any change to the list.
+- Home's three counts ("In kitchen", "Use this week", "Expired") come from the same query. Check them after any change to the list.
 - "Item not found" on the detail screen means the id is stale (the item was deleted or merged).
 - The glass tab bar covers everything below about y = 820 pt, even where rows show through it. A tap there hits the tab bar (often Home), so scroll the row higher first.
 - Brandon's real household has many expired items, so a new item lands at the bottom under "FRESH" and is off screen.

@@ -280,3 +280,28 @@ def test_two_eggs_from_eggs_counted_in_cartons_ask_instead_of_taking_two_cartons
     assert eggs.draw == 0
     assert eggs.small is None
     assert eggs.asks == (LineAsk(0, D(2), unit, "needs_package_size"),)
+
+
+def _line_plans(plan: FoodPlan) -> list[tuple[int, str, Decimal | None]]:
+    return [(p.line, p.mode, p.stock_amount) for p in plan.line_plans]
+
+
+def test_each_line_records_its_own_converted_amount() -> None:
+    [oil] = _plan((OIL, "1", "tbsp"), (OIL, "100", "ml"))
+    assert _line_plans(oil) == [(0, "draw", D("14.8")), (1, "draw", D("100.0"))]
+
+
+def test_seasoning_lines_under_the_limit_are_small_lines() -> None:
+    [salt] = _plan((SALT, "1", "pinch"), (SALT, "1", "tsp"))
+    assert _line_plans(salt) == [(0, "small", None), (1, "small", None)]
+
+
+def test_lines_without_a_conversion_are_ask_lines() -> None:
+    [salt] = _plan((SALT, "100", "g"), (SALT, "1", "container"))
+    assert _line_plans(salt) == [(0, "ask", None), (1, "draw", D("1.000"))]
+
+
+def test_whole_unit_lines_keep_their_unrounded_amounts() -> None:
+    [cola] = _plan((WHOLE_COLA, "500", "ml"))
+    assert cola.draw == 2
+    assert _line_plans(cola) == [(0, "draw", D("1.408"))]

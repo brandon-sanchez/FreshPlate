@@ -40,6 +40,7 @@ MIGRATIONS = (
     "20261113120000_add_cook_recipe_v2.sql",
     "20261113130000_add_cook_event_lines.sql",
     "20261115180000_restrict_cook_event_writes.sql",
+    "20261117120000_refuse_cook_on_changed_stock.sql",
 )
 
 
@@ -67,11 +68,16 @@ def draw_lines(deductions) -> list[dict]:
     ]
 
 
-def cook_sql(home, deductions, *, lines=None, operation=None, recipe=None, snapshot=None) -> str:
+def expecting_nothing(deductions) -> list[dict]:
+    return [{"expected_amount": 0, **d} if isinstance(d, dict) else d for d in deductions]
+
+
+def cook_sql(home, deductions, *, lines=None, operation=None, recipe=None, snapshot=None, fill_expected=True) -> str:
     operation = operation or str(uuid4())
     recipe = recipe or str(uuid4())
     snapshot = snapshot or {"recipe_id": recipe, "title": "Stew"}
     lines = draw_lines(deductions) if lines is None else lines
+    deductions = expecting_nothing(deductions) if fill_expected else deductions
     return f"SELECT public.cook_recipe_v2({q(home)}, {q(operation)}, {q(recipe)}, {j(snapshot)}, {j(deductions)}, {j(lines)});"
 
 
@@ -258,7 +264,7 @@ def test_replay_returns_the_first_result_and_a_changed_payload_fails(database):
     other_snapshot = cook(database, home, deductions, operation=operation, recipe=recipe, snapshot={"recipe_id": recipe, "title": "Other"}, check=False)
 
     assert replay == first
-    assert "different payload" in changed.stderr and "different payload" in other_snapshot.stderr
+    assert "COOK_ALREADY_CONFIRMED" in changed.stderr and "COOK_ALREADY_CONFIRMED" in other_snapshot.stderr
     assert lot_state(database, own)["quantity"] == 150
     assert database.run(f"SELECT count(*) FROM cook_events WHERE operation_id = {q(operation)}") == "1"
 
@@ -486,7 +492,7 @@ def test_lines_that_disagree_with_the_deductions_change_nothing(database):
     milk_line = line(milk, "milk", 100, "ml", "draw", 100)
 
     attempts = [
-        ([], "Invalid cook request"),
+        ([], "LINES_MISMATCH"),
         ([line(flour, "flour", 1, "cup", "ask")], "LINES_MISMATCH"),
         ([milk_line, line(flour, "flour", 1, "cup", "draw", 120)], "LINES_MISMATCH"),
         ([milk_line, line(flour, "flour", 1, "cup", "small", 120)], "Invalid cook line"),
@@ -523,6 +529,112 @@ def test_a_replayed_cook_returns_the_same_lines_and_changed_lines_fail(database)
     assert lot_state(database, own)["quantity"] == 222
 
 
+def stock_changed_detail(failed) -> list[dict]:
+    assert failed.returncode != 0 and "ERROR:  STOCK_CHANGED" in failed.stderr, failed.stderr
+    return json.loads(failed.stderr.split("DETAIL:", 1)[1].split("\n")[0])
+
+
+def events_in(db: DB, home) -> str:
+    return db.run(f"SELECT count(*) FROM cook_events WHERE household_id = {q(home)}")
+
+
+def test_less_stock_than_expected_refuses_the_whole_cook(database):
+    home = household(database)
+    milk, milk_lot = lot(database, home, "Milk", "ml", 1000)
+    eggs, eggs_lot = lot(database, home, "Eggs", "each", 2, each_label="egg", whole_units_only=True)
+
+    failed = cook(database, home, [
+        {"inventory_item_id": milk, "confirmed_amount": 200, "expected_amount": 200},
+        {"inventory_item_id": eggs, "confirmed_amount": 3, "expected_amount": 3},
+    ], check=False)
+
+    assert stock_changed_detail(failed) == [{"food_id": eggs, "expected_amount": 3, "available": 2}]
+    assert lot_state(database, milk_lot)["quantity"] == 1000
+    assert lot_state(database, eggs_lot)["quantity"] == 2
+    assert events_in(database, home) == "0"
+
+
+def test_expired_batches_do_not_count_toward_the_expected_stock(database, today):
+    home = household(database)
+    food, expired = lot(database, home, "Cream", "ml", 500, expiration_date=today - timedelta(days=1))
+    _, fresh = lot(database, home, "Cream", "ml", 100, expiration_date=today)
+
+    failed = cook(database, home, [{"inventory_item_id": food, "confirmed_amount": 150, "expected_amount": 150}], check=False)
+    covered = cook(database, home, [{"inventory_item_id": food, "confirmed_amount": 100, "expected_amount": 100}])
+
+    assert stock_changed_detail(failed) == [{"food_id": food, "expected_amount": 150, "available": 100}]
+    assert covered["deductions"][0]["committed_amount"] == 100
+    assert lot_state(database, expired)["quantity"] == 500
+    assert lot_state(database, fresh)["quantity"] == 0
+
+
+def test_using_more_than_the_checklist_expected_stock_to_cover_records_a_shortfall(database):
+    home = household(database)
+    food, own = lot(database, home, "Rice", "g", 300, "pantry")
+
+    result = cook(database, home, [{"inventory_item_id": food, "confirmed_amount": 500, "expected_amount": 300}])
+
+    assert (result["deductions"][0]["committed_amount"], result["lines"][0]["shortfall"]) == (300, 200)
+    assert lot_state(database, own) == {"quantity": 0, "opened": True, "reason": "used"}
+
+
+@pytest.mark.parametrize("expected", [-1, "5", None, "missing"])
+def test_a_deduction_without_a_valid_expected_amount_is_rejected(database, expected):
+    home = household(database)
+    food, own = lot(database, home, "Oats", "g", 500, "pantry")
+    deduction = {"inventory_item_id": food, "confirmed_amount": 5, "expected_amount": expected}
+    if expected == "missing":
+        del deduction["expected_amount"]
+    failed = cook(database, home, [deduction], fill_expected=False, check=False)
+
+    assert "Invalid deduction line" in failed.stderr
+    assert lot_state(database, own)["quantity"] == 500
+
+
+def test_a_cook_where_nothing_was_used_is_still_recorded(database):
+    home = household(database)
+
+    result = cook(database, home, [], lines=[])
+
+    assert (result["deductions"], result["lines"]) == ([], [])
+    assert events_in(database, home) == "1"
+
+
+def test_a_replay_after_stock_ran_out_returns_the_first_result(database):
+    home = household(database)
+    food, own = lot(database, home, "Butter", "g", 250)
+    operation, recipe = str(uuid4()), str(uuid4())
+    deductions = [{"inventory_item_id": food, "confirmed_amount": 250, "expected_amount": 250}]
+
+    first = cook(database, home, deductions, operation=operation, recipe=recipe)
+    replay = cook(database, home, deductions, operation=operation, recipe=recipe)
+
+    assert replay == first
+    assert lot_state(database, own)["reason"] == "used"
+
+
+def test_two_members_racing_for_the_last_eggs_one_cooks_and_the_other_changes_nothing(database):
+    home = household(database)
+    database.run(f"INSERT INTO household_members VALUES ({q(home)}, {q(OTHER)})")
+    eggs, eggs_lot = lot(database, home, "Eggs", "each", 4, each_label="egg", whole_units_only=True)
+    flour, flour_lot = lot(database, home, "Flour", "g", 1000, "pantry")
+    first = cook_sql(home, [{"inventory_item_id": eggs, "confirmed_amount": 3, "expected_amount": 3}])
+    second = [
+        {"inventory_item_id": flour, "confirmed_amount": 200, "expected_amount": 200},
+        {"inventory_item_id": eggs, "confirmed_amount": 2, "expected_amount": 2},
+    ]
+
+    refused = while_holding(
+        database, first, lambda: cook(database, home, second, user=OTHER, check=False),
+        role="authenticated", user=USER,
+    )
+
+    assert stock_changed_detail(refused) == [{"food_id": eggs, "expected_amount": 2, "available": 1}]
+    assert lot_state(database, eggs_lot)["quantity"] == 1
+    assert lot_state(database, flour_lot)["quantity"] == 1000
+    assert database.run(f"SELECT user_id FROM cook_events WHERE household_id = {q(home)}") == USER
+
+
 class _RpcHttpClient:
     """Stands in for Supabase's REST API by running each RPC call through psql as the JWT's user."""
 
@@ -537,7 +649,8 @@ class _RpcHttpClient:
         result = await asyncio.to_thread(self.db.run, sql, role="authenticated", user=user, check=False)
         request = httpx.Request("POST", url)
         if result.returncode:
-            return httpx.Response(400, request=request, json={"message": result.stderr})
+            message = result.stderr.split("ERROR:", 1)[-1].split("\n")[0].strip()
+            return httpx.Response(400, request=request, json={"code": "22023", "message": message, "details": None, "hint": None})
         return httpx.Response(200, request=request, content=result.stdout.strip())
 
 
@@ -562,7 +675,7 @@ def body(home, deductions, operation=None, lines=None):
     recipe = str(uuid4())
     return {
         "household_id": home, "operation_id": operation or str(uuid4()), "recipe_id": recipe,
-        "recipe_snapshot": {"recipe_id": recipe, "title": "Stew"}, "deductions": deductions,
+        "recipe_snapshot": {"recipe_id": recipe, "title": "Stew"}, "deductions": expecting_nothing(deductions),
         "lines": draw_lines(deductions) if lines is None else lines,
     }
 
@@ -603,3 +716,29 @@ def test_confirm_endpoint_retried_in_parallel_deducts_once(api, database):
     assert [r.status_code for r in responses] == [200, 200]
     assert responses[0].json() == responses[1].json()
     assert lot_state(database, own)["quantity"] == 600
+
+
+def test_confirm_endpoint_reports_stock_that_changed_since_the_checklist_loaded(api, database):
+    home = household(database)
+    food, own = lot(database, home, "Eggs", "each", 2, each_label="egg", whole_units_only=True)
+    deductions = [{"inventory_item_id": food, "confirmed_amount": 3, "expected_amount": 3}]
+
+    response = api.post("/api/cook/confirm", headers=headers_for(USER), json=body(home, deductions))
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "STOCK_CHANGED"
+    assert lot_state(database, own)["quantity"] == 2
+
+
+def test_confirm_endpoint_says_a_differing_retry_was_already_confirmed(api, database):
+    home = household(database)
+    food, own = lot(database, home, "Eggs", "each", 3, each_label="egg", whole_units_only=True)
+    first = body(home, [{"inventory_item_id": food, "confirmed_amount": 3, "expected_amount": 3}])
+    retry = {**first, "deductions": [{"inventory_item_id": food, "confirmed_amount": 3, "expected_amount": 0}]}
+
+    assert api.post("/api/cook/confirm", headers=headers_for(USER), json=first).status_code == 200
+    response = api.post("/api/cook/confirm", headers=headers_for(USER), json=retry)
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "COOK_ALREADY_CONFIRMED"
+    assert lot_state(database, own)["quantity"] == 0

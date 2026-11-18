@@ -90,8 +90,11 @@ class QualityResult(TypedDict):
     metadata: NotRequired[dict[str, Any]]
 
 
-class PhotoResult(TypedDict):
-    """State update returned by the photo step."""
+class WriteResult(GenerationResult, total=False):
+    """State update returned by the graph's write step.
+
+    ``recipe_photos`` is set only when the graph has a photo source.
+    """
 
     recipe_photos: dict[str, ImageResult]
 
@@ -121,11 +124,12 @@ class RecipeState(TypedDict, total=False):
     inventory, such as salt. Every graph needs it. ``analyze_inventory``
     replaces it with the basics the kitchen doesn't also track as a food,
     and a feed refill passes the session's.
-    ``recipe_photos`` maps each valid recipe's photo cache key
-    (``ImageService.recipe_key``) to its photo. Only graphs built with a
-    photo source set it. ``steering`` is absent when the cook hasn't picked
-    "More like this" or "Less like this" on any recipe. ``retry_count``
-    counts the rewrites the write step made across all its slots.
+    ``recipe_photos`` maps the photo cache key (``ImageService.recipe_key``)
+    of each of the batch's first ``BATCH_PHOTO_LIMIT`` valid recipes to its
+    photo. Only graphs built with a photo source set it. ``steering`` is
+    absent when the cook hasn't picked "More like this" or "Less like this"
+    on any recipe. ``retry_count`` counts the rewrites the write step made
+    across all its slots.
     """
 
     inventory: list[Mapping[str, Any]]

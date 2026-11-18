@@ -130,7 +130,7 @@ const defaultProps = {
   isPrefetching: false,
   prefetchError: null,
   isExhausted: false,
-  topInset: 0,
+  header: null,
   bottomInset: 24,
   onAsk: jest.fn(),
   onDismiss: jest.fn(),
