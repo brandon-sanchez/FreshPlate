@@ -26,7 +26,8 @@ const FRACTIONS: [number, string][] = [
 // tidies generated recipes. This copy tidies string-step recipes.
 const COPIED_STEP_PREFIX = /^\s*(?:step\s*\d+\s*[:.)\-–—]?|\d+\s*[:.)])\s*/i;
 
-function pluralize(word: string): string {
+/** Returns the plural of a unit word: "clove" is "cloves", "dash" is "dashes". */
+export function pluralize(word: string): string {
   if (/[^s]s$/.test(word)) return word;
   if (/(s|x|z|ch|sh)$/.test(word)) return word + "es";
   if (/[^aeiou]y$/.test(word)) return word.slice(0, -1) + "ies";

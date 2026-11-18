@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING
 from app.ai.llm.errors import ProviderError
+from app.ai.llm.providers import FakeProvider
 from app.ai.rag.vector_store import RetrievedRecipe
 from app.api.images import get_image_service
 from app.api.recipes import (
@@ -125,6 +126,16 @@ class InMemoryRecipeFeedStore:
         if session is None or session.user_id != user_id:
             return None
         return session
+
+    async def get_latest_session(self, user_id: str) -> RecipeFeedSession | None:
+        now = datetime.now(timezone.utc)
+        live = [
+            session
+            for session in self.sessions.values()
+            if session.user_id == user_id
+            and (session.expires_at is None or session.expires_at > now)
+        ]
+        return live[-1] if live else None
 
     async def list_candidates(
         self,
@@ -1474,3 +1485,221 @@ def test_an_empty_session_names_the_dish_the_cook_asked_for(
     assert response.status_code == 200
     assert response.json()["data"]["empty_reason"] == "INVENTORY_UNSUPPORTED"
     assert response.json()["data"]["requested_dish"] == dish
+
+
+_LATEST_PATH = "/api/recipes/sessions/latest"
+
+
+def test_latest_session_returns_its_stored_cards_without_generating(
+    signing_key: SigningKey, patch_jwks
+) -> None:
+    patch_jwks([signing_key])
+    provider = PromptRecordingProvider(
+        [
+            *batch_responses(_recipe("Recipe 1"), _recipe("Recipe 2")),
+            *batch_responses(_recipe("Recipe 3")),
+        ]
+    )
+    image_provider = FakeImageProvider()
+    app = create_app()
+    _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
+    _install_images(app, FakeStore(), image_provider)
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {"meal": "Dinner"}},
+        )
+        session_id = first.json()["data"]["session_id"]
+        client.post(
+            f"/api/recipes/sessions/{session_id}/pages",
+            headers=_auth_headers(signing_key),
+            json={"cursor": "2", "limit": 5},
+        )
+        model_calls = len(provider.prompts)
+        photo_calls = len(image_provider.prompts)
+        latest = client.get(_LATEST_PATH, headers=_auth_headers(signing_key))
+
+    assert latest.status_code == 200
+    data = latest.json()["data"]
+    assert data["session_id"] == session_id
+    assert [card["title"] for card in data["recipes"]] == [
+        "Recipe 1",
+        "Recipe 2",
+        "Recipe 3",
+    ]
+    assert {card["image"]["status"] for card in data["recipes"]} == {"ready"}
+    assert data["next_cursor"] == "3"
+    assert data["has_more"] is True
+    assert data["ready_count"] == 3
+    assert data["requested_dish"] == "meal"
+    assert data["preferences"] == {"meal": "Dinner"}
+    assert len(provider.prompts) == model_calls
+    assert len(image_provider.prompts) == photo_calls
+
+
+def test_latest_session_ends_before_the_first_card_without_a_photo(
+    signing_key: SigningKey, patch_jwks
+) -> None:
+    patch_jwks([signing_key])
+    provider = PromptRecordingProvider(
+        [*batch_responses(*(_recipe(f"Recipe {index}") for index in range(1, 6)))]
+    )
+    image_provider = FakeImageProvider()
+    app = create_app()
+    _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
+    _install_images(app, FakeStore(), image_provider)
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        )
+        latest = client.get(_LATEST_PATH, headers=_auth_headers(signing_key))
+
+    created = first.json()["data"]
+    data = latest.json()["data"]
+    assert data["ready_count"] > len(created["recipes"])
+    assert [card["title"] for card in data["recipes"]] == [
+        card["title"] for card in created["recipes"]
+    ]
+    assert all(card["image"]["status"] == "ready" for card in data["recipes"])
+    assert data["next_cursor"] == str(len(data["recipes"]))
+    assert data["has_more"] is True
+
+
+def test_latest_session_never_refills_a_short_pool(
+    signing_key: SigningKey, patch_jwks
+) -> None:
+    patch_jwks([signing_key])
+    provider = MealFakeProvider([*batch_responses(_recipe("Recipe 1"))])
+    store = InMemoryRecipeFeedStore()
+    app = create_app()
+    _install_dependencies(app, provider, StubRetriever(), store)
+
+    with TestClient(app) as client:
+        client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        )
+        latest = client.get(_LATEST_PATH, headers=_auth_headers(signing_key))
+
+    assert latest.status_code == 200
+    assert [card["title"] for card in latest.json()["data"]["recipes"]] == [
+        "Recipe 1"
+    ]
+    assert latest.json()["data"]["next_cursor"] == "1"
+    [session] = store.sessions.values()
+    assert session.generation_runs == 1
+
+
+def test_latest_session_is_the_most_recent_one(
+    signing_key: SigningKey, patch_jwks
+) -> None:
+    patch_jwks([signing_key])
+    provider = MealFakeProvider(
+        [
+            *batch_responses(_recipe("Older")),
+            *batch_responses(_recipe("Newer")),
+        ]
+    )
+    app = create_app()
+    _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
+
+    with TestClient(app) as client:
+        for _ in range(2):
+            newest = client.post(
+                "/api/recipes/sessions",
+                headers=_auth_headers(signing_key),
+                json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+            )
+        latest = client.get(_LATEST_PATH, headers=_auth_headers(signing_key))
+
+    data = latest.json()["data"]
+    assert data["session_id"] == newest.json()["data"]["session_id"]
+    assert [card["title"] for card in data["recipes"]] == ["Newer"]
+
+
+def test_latest_session_requires_a_jwt() -> None:
+    app = create_app()
+    _install_dependencies(
+        app, FakeProvider(), StubRetriever(), InMemoryRecipeFeedStore()
+    )
+
+    with TestClient(app) as client:
+        response = client.get(_LATEST_PATH)
+
+    assert response.status_code == 401
+
+
+def test_latest_session_hides_another_users_session(
+    signing_key: SigningKey, patch_jwks
+) -> None:
+    patch_jwks([signing_key])
+    provider = MealFakeProvider([*batch_responses(_recipe("Private recipe"))])
+    app = create_app()
+    _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
+
+    with TestClient(app) as client:
+        client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        )
+        other = client.get(
+            _LATEST_PATH,
+            headers={
+                "Authorization": "Bearer "
+                + signing_key.sign(sub="00000000-0000-0000-0000-000000000002")
+            },
+        )
+
+    assert other.status_code == 200
+    assert other.json() == {"data": None}
+
+
+def test_latest_session_is_empty_when_none_is_live(
+    signing_key: SigningKey, patch_jwks
+) -> None:
+    patch_jwks([signing_key])
+    store = InMemoryRecipeFeedStore()
+    expired = RecipeFeedSession(
+        id=UUID("00000000-0000-0000-0000-0000000000e1"),
+        user_id="00000000-0000-0000-0000-000000000001",
+        candidate_count=0,
+        expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    app = create_app()
+    _install_dependencies(app, FakeProvider(), StubRetriever(), store)
+
+    with TestClient(app) as client:
+        missing = client.get(_LATEST_PATH, headers=_auth_headers(signing_key))
+        store.sessions[expired.id] = expired
+        store.items[expired.id] = []
+        after_expiry = client.get(_LATEST_PATH, headers=_auth_headers(signing_key))
+
+    assert missing.status_code == 200
+    assert missing.json() == {"data": None}
+    assert after_expiry.json() == {"data": None}
+
+
+def test_latest_session_is_unavailable_when_the_store_fails(
+    signing_key: SigningKey, patch_jwks
+) -> None:
+    patch_jwks([signing_key])
+
+    class FailingStore(InMemoryRecipeFeedStore):
+        async def get_latest_session(self, user_id: str) -> RecipeFeedSession | None:
+            raise RecipeFeedStoreError("down")
+
+    app = create_app()
+    _install_dependencies(app, FakeProvider(), StubRetriever(), FailingStore())
+
+    with TestClient(app) as client:
+        response = client.get(_LATEST_PATH, headers=_auth_headers(signing_key))
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "RECIPE_FEED_UNAVAILABLE"

@@ -15,6 +15,7 @@ import type {
 
 const mockCreateSession = jest.fn();
 const mockFetchPage = jest.fn();
+const mockFetchLatest = jest.fn();
 
 const mockLoadImage = jest.fn();
 
@@ -27,6 +28,7 @@ jest.mock("@/lib/recipe-feed-api", () => ({
   RECIPE_FEED_REQUEST_TIMEOUT_MS: 50_000,
   createRecipeFeedSession: (...args: unknown[]) => mockCreateSession(...args),
   fetchRecipeFeedPage: (...args: unknown[]) => mockFetchPage(...args),
+  fetchLatestRecipeFeed: (...args: unknown[]) => mockFetchLatest(...args),
 }));
 
 jest.mock("@/lib/supabase", () => ({ supabase: {} }));
@@ -105,6 +107,8 @@ describe("useRecipeFeed", () => {
   beforeEach(() => {
     mockCreateSession.mockReset();
     mockFetchPage.mockReset();
+    mockFetchLatest.mockReset();
+    mockFetchLatest.mockResolvedValue({ data: null });
     mockLoadImage.mockReset();
     mockLoadImage.mockResolvedValue({ release: jest.fn() });
   });

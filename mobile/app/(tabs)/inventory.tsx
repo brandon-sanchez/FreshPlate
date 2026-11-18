@@ -1,49 +1,91 @@
-import { useEffect, useMemo, useState } from "react";
 import {
-  Pressable,
-  RefreshControl,
-  SectionList,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { RefreshControl, ScrollView, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
+import {
+  LayoutAnimationConfig,
+  useReducedMotion,
+} from "react-native-reanimated";
 import { useTheme } from "@/hooks/useTheme";
 import { useInventoryItems } from "@/hooks/useInventoryItems";
-import { daysUntilExpiration } from "@/lib/expiry";
-import { useFoodCategories } from "@/hooks/useFoodCategories";
-import SegmentedControl from "@/components/SegmentedControl";
-import InventoryRow from "@/components/InventoryRow";
+import { useInventoryView } from "@/hooks/useInventoryView";
+import { useListMotion } from "@/hooks/useListMotion";
+import { useRegroup } from "@/hooks/useRegroup";
+import InventoryViewControls from "@/components/InventoryViewControls";
+import InventorySectionHeader from "@/components/InventorySectionHeader";
+import InventoryListRow from "@/components/InventoryListRow";
+import PinnedSectionList, {
+  type PinnedSectionListHandle,
+} from "@/components/PinnedSectionList";
+import {
+  InventoryListHeader,
+  NoMatches,
+  TopBar,
+} from "@/components/InventoryListHeader";
 import { useSeenKeys } from "@/hooks/useSeenKeys";
-import LotOutcomeSwipe from "@/components/LotOutcomeSwipe";
+import RecentlyUsedUp from "@/components/RecentlyUsedUp";
 import LoadingState from "@/components/LoadingState";
 import EmptyState from "@/components/EmptyState";
 import ErrorState from "@/components/ErrorState";
-import FilterSheet, {
-  countActiveFilters,
-  EMPTY_FILTERS,
-  InventoryFilters,
-} from "@/components/FilterSheet";
 import {
+  GROUP_BYS,
   type FoodRow,
   type FoodSection,
   type GroupBy,
   groupFoodRows,
   stackLots,
 } from "@/lib/foodRows";
+import { sortSections, type SortBy } from "@/lib/foodSort";
+import {
+  countActiveFilters,
+  EMPTY_FILTERS,
+  filterInventory,
+  filterOptions,
+  type InventoryFilters,
+} from "@/lib/inventoryFilters";
+import { ListChange } from "@/lib/listMotion";
 
-const GROUP_BY_OPTIONS: GroupBy[] = ["Urgency", "Location", "Category"];
+const INITIAL_CELLS = 12;
+const WINDOW_SCREENS = 9;
+const ROWS_PER_BATCH = 3;
+
+type ListSection = {
+  key: string;
+  /** The rows the list shows, which are none while the section is closed. */
+  data: readonly FoodRow[];
+  fullSection: FoodSection;
+  open: boolean;
+};
+
+const NO_ROWS: readonly FoodRow[] = [];
+
+// The Recently used up amount field sits at the end of the content and its
+// numeric keypad has no return key, so the list scrolls it above the keyboard
+// and lets a tap reach the Restore button while the keyboard is up.
+const KEYBOARD_SCROLL_PROPS = {
+  automaticallyAdjustKeyboardInsets: true,
+  keyboardShouldPersistTaps: "handled",
+  keyboardDismissMode: "interactive",
+} as const;
 
 export default function InventoryScreen() {
   const { colors, fonts } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
+  const reducedMotion = useReducedMotion();
   const inventory = useInventoryItems();
-  const categoriesQuery = useFoodCategories();
+  const view = useInventoryView();
+  const { groupBy, sortBy, setGroupBy, setSortBy } = view;
 
   /* The `added` query param pulses the matching row once per navigation, then
    * clears so subsequent re-renders don't replay the animation. */
@@ -58,10 +100,9 @@ export default function InventoryScreen() {
     return () => clearTimeout(t);
   }, [added, router]);
 
-  const [groupBy, setGroupBy] = useState<GroupBy>("Urgency");
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [filters, setFilters] = useState<InventoryFilters>(EMPTY_FILTERS);
-  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
     expired: true,
     today: true,
@@ -69,27 +110,68 @@ export default function InventoryScreen() {
     fresh: false,
   });
 
+  const { motion, animate, hide, show } = useListMotion(reducedMotion);
+  const list = useRef<PinnedSectionListHandle>(null);
+  // The new grouping starts at its top, under the pinned controls.
+  const scrollToPinned = useCallback(() => list.current?.scrollToPinned(), []);
+  const { rowCap, regroup } = useRegroup({
+    hide,
+    show,
+    onHidden: scrollToPinned,
+    fillTo: INITIAL_CELLS,
+  });
+  const [pendingGroup, setPendingGroup] = useState<GroupBy | null>(null);
+
   const items = useMemo(() => inventory.data ?? [], [inventory.data]);
-  const categories = categoriesQuery.data ?? [];
+  const options = useMemo(() => filterOptions(items), [items]);
+  const sections = useMemo(
+    () =>
+      sortSections(
+        groupFoodRows(filterInventory(items, deferredQuery, filters), groupBy),
+        sortBy,
+      ),
+    [items, deferredQuery, filters, groupBy, sortBy],
+  );
+  const previousSections = useRef(new Map<string, ListSection>());
+  const listSections = useMemo(() => {
+    const list = capRows(sections, openGroups, rowCap, previousSections.current);
+    previousSections.current = new Map(list.map((section) => [section.key, section]));
+    return list;
+  }, [sections, openGroups, rowCap]);
 
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return items.filter((i) => {
-      if (needle && !i.name.toLowerCase().includes(needle)) return false;
-      if (filters.locations.length && !filters.locations.includes(i.storage_location))
-        return false;
-      if (filters.categories.length && !filters.categories.includes(i.category?.id ?? ""))
-        return false;
-      if (filters.leftoversOnly && !i.is_leftover) return false;
-      if (filters.expiringWeek) {
-        const d = daysUntilExpiration(i.expiration_date);
-        if (d === null || d > 6) return false;
-      }
-      return true;
-    });
-  }, [items, query, filters]);
-
-  const sections = useMemo(() => groupFoodRows(filtered, groupBy), [filtered, groupBy]);
+  const chooseGroup = useCallback(
+    (next: GroupBy) => {
+      const shown = pendingGroup ?? groupBy;
+      if (next === shown) return;
+      setPendingGroup(next);
+      regroup(GROUP_BYS.indexOf(shown), GROUP_BYS.indexOf(next), () => {
+        setGroupBy(next);
+        setPendingGroup(null);
+      });
+    },
+    [pendingGroup, groupBy, regroup, setGroupBy],
+  );
+  const chooseSort = useCallback(
+    (next: SortBy) => {
+      animate(ListChange.reorder);
+      setSortBy(next);
+    },
+    [animate, setSortBy],
+  );
+  const changeFilters = useCallback(
+    (update: (current: InventoryFilters) => InventoryFilters) => {
+      animate(ListChange.reorder);
+      setFilters(update);
+    },
+    [animate],
+  );
+  const toggleSection = useCallback(
+    (key: string) => {
+      animate(ListChange.collapse);
+      setOpenGroups((g) => ({ ...g, [key]: !(g[key] !== false) }));
+    },
+    [animate],
+  );
 
   /* Auto-open the collapsible section containing the highlighted row so the
    * pulse animation isn't hidden behind a closed group. */
@@ -105,16 +187,112 @@ export default function InventoryScreen() {
     }
   }, [highlightId, sections, openGroups]);
 
-  const visibleSections: FoodSection[] = sections
-    .filter((s) => s.data.length > 0)
-    .map((s) => ({ ...s, data: openGroups[s.key] === false ? [] : s.data }));
-
   const activeFilterCount = countActiveFilters(filters);
   const allRows = useMemo(() => stackLots(items), [items]);
   const expiredCount = allRows.filter((r) => r.expiredLots > 0).length;
-  const openReview = () => router.push("/review-expired");
+  const openReview = useCallback(() => router.push("/review-expired"), [router]);
+  const openFood = useCallback(
+    (row: FoodRow) => router.push(`/food/${row.foodId}`),
+    [router],
+  );
+  const { seen } = seenRows;
+  const renderRow = useCallback(
+    ({ item: row, index }: { item: FoodRow; index: number }) => (
+      <InventoryListRow
+        row={row}
+        highlight={highlightId !== null && holdsLot(row, highlightId)}
+        photoEnabled={seen.has(row.foodId)}
+        onPress={openFood}
+        entering={motion.rowEntering(index)}
+        exiting={motion.rowExiting}
+      />
+    ),
+    [highlightId, seen, openFood, motion],
+  );
+  const renderSectionHeader = useCallback(
+    ({ section }: { section: ListSection }) => (
+      <InventorySectionHeader
+        section={section.fullSection}
+        open={section.open}
+        onToggle={toggleSection}
+        onReview={
+          groupBy === "Urgency" && section.fullSection.key === "expired"
+            ? openReview
+            : undefined
+        }
+        entering={motion.rowEntering(0)}
+        exiting={motion.rowExiting}
+      />
+    ),
+    [toggleSection, groupBy, openReview, motion],
+  );
+  const highlightRestored = useCallback(
+    (lotId: string) => router.setParams({ added: lotId }),
+    [router],
+  );
 
-  if (inventory.isPending) {
+  const listHeader = useMemo(
+    () => (
+      <InventoryListHeader
+        itemCount={allRows.length}
+        expiredCount={expiredCount}
+        onReview={openReview}
+        initialQuery={query}
+        onQueryChange={setQuery}
+      />
+    ),
+    [allRows.length, expiredCount, openReview, query],
+  );
+  const noMatches = sections.every((section) => section.data.length === 0);
+  const canClear = activeFilterCount > 0;
+  const listFooter = useMemo(
+    () => (
+      <>
+        {noMatches ? (
+          <NoMatches
+            onClear={canClear ? () => changeFilters(() => EMPTY_FILTERS) : undefined}
+          />
+        ) : null}
+        <RecentlyUsedUp search={query} onRestored={highlightRestored} />
+      </>
+    ),
+    [noMatches, canClear, changeFilters, query, highlightRestored],
+  );
+  const refreshing = inventory.isFetching && !inventory.isPending;
+  const { refetch } = inventory;
+  const refreshControl = useMemo(
+    () => (
+      <RefreshControl
+        refreshing={refreshing}
+        onRefresh={() => refetch()}
+        tintColor={colors.accent}
+      />
+    ),
+    [refreshing, refetch, colors.accent],
+  );
+  const shownGroup = pendingGroup ?? groupBy;
+  const totalCount = allRows.length;
+  const controls = useMemo(
+    () => (
+      <InventoryViewControls
+        groupBy={shownGroup}
+        onGroupByChange={chooseGroup}
+        sortBy={sortBy}
+        onSortChange={chooseSort}
+        filters={filters}
+        onFiltersChange={changeFilters}
+        options={options}
+        totalCount={totalCount}
+      />
+    ),
+    [shownGroup, chooseGroup, sortBy, chooseSort, filters, changeFilters, options, totalCount],
+  );
+  const contentStyle = useMemo(
+    () => ({ paddingBottom: tabBarHeight + 24 }),
+    [tabBarHeight],
+  );
+
+  if (inventory.isPending || !view.hydrated) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.bg }}>
         <LoadingState label="Loading your fridge…" />
@@ -130,472 +308,98 @@ export default function InventoryScreen() {
     );
   }
 
-  const isEmpty = items.length === 0;
-
-  if (isEmpty) {
+  if (items.length === 0) {
     return (
       <View
         style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}
       >
-        <TopBar
-          title="Inventory"
-          subtitle="Nothing here yet"
-          colors={colors}
-          fonts={fonts}
-        />
-        <EmptyState
-          icon={
-            <FontAwesome name="archive" size={36} color={colors.textSubtle} />
-          }
-          title="Your fridge is empty"
-          message="Track what's in your fridge and pantry so you waste less and cook more."
-          ctaLabel="Add your first item"
-          onCtaPress={() => router.push("/(tabs)/add-item")}
-        />
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1, paddingBottom: tabBarHeight + 24 }}
+          {...KEYBOARD_SCROLL_PROPS}
+        >
+          <TopBar
+            title="Inventory"
+            subtitle="Nothing here yet"
+            colors={colors}
+            fonts={fonts}
+          />
+          <EmptyState
+            icon={
+              <FontAwesome name="archive" size={36} color={colors.textSubtle} />
+            }
+            title="Your fridge is empty"
+            message="Track what's in your fridge and pantry so you waste less and cook more."
+            ctaLabel="Add your first item"
+            onCtaPress={() => router.push("/(tabs)/add-item")}
+          />
+          <View style={{ paddingHorizontal: 16 }}>
+            <RecentlyUsedUp search="" onRestored={highlightRestored} />
+          </View>
+        </ScrollView>
       </View>
     );
   }
 
   return (
-    // The top inset pads the container rather than the list so sticky section
-    // headers pin below the status bar.
-    <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
-      <SectionList<FoodRow, FoodSection>
-        sections={visibleSections}
-        keyExtractor={(row) => row.key}
-        {...seenRows.listProps}
-        stickySectionHeadersEnabled
-        contentContainerStyle={{
-          paddingHorizontal: 16,
-          paddingTop: 8,
-          paddingBottom: tabBarHeight + 24,
-        }}
-        ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
-        SectionSeparatorComponent={null}
-        refreshControl={
-          <RefreshControl
-            refreshing={inventory.isFetching && !inventory.isPending}
-            onRefresh={() => inventory.refetch()}
-            tintColor={colors.accent}
-          />
-        }
-        ListHeaderComponent={
-          <View style={{ paddingTop: 4 }}>
-            <TopBar
-              title="Inventory"
-              subtitle={
-                <>
-                  {`${allRows.length} item${allRows.length === 1 ? "" : "s"} · `}
-                  <Text style={expiredCount > 0 ? { color: colors.crit } : undefined}>
-                    {`${expiredCount} expired`}
-                  </Text>
-                </>
-              }
-              onSubtitlePress={expiredCount > 0 ? openReview : undefined}
-              subtitleLabel={`${expiredCount} expired. Review expired batches`}
-              colors={colors}
-              fonts={fonts}
-              padded={false}
-            />
-
-            <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
-              <View
-                style={{
-                  flex: 1,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 8,
-                  backgroundColor: colors.surfaceAlt,
-                  borderRadius: 12,
-                  paddingHorizontal: 14,
-                  height: 44,
-                }}
-              >
-                <FontAwesome name="search" size={14} color={colors.textMuted} />
-                <TextInput
-                  value={query}
-                  onChangeText={setQuery}
-                  placeholder="Search your fridge"
-                  placeholderTextColor={colors.textSubtle}
-                  style={{
-                    flex: 1,
-                    fontFamily: fonts.body,
-                    fontSize: 14,
-                    color: colors.text,
-                  }}
-                />
-              </View>
-              <Pressable
-                onPress={() => setFilterSheetOpen(true)}
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 12,
-                  backgroundColor:
-                    activeFilterCount > 0 ? colors.accent : colors.surfaceAlt,
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <FontAwesome
-                  name="filter"
-                  size={16}
-                  color={
-                    activeFilterCount > 0 ? colors.accentInk : colors.textMuted
-                  }
-                />
-                {activeFilterCount > 0 ? (
-                  <View
-                    style={{
-                      position: "absolute",
-                      top: -4,
-                      right: -4,
-                      minWidth: 18,
-                      height: 18,
-                      borderRadius: 9,
-                      backgroundColor: colors.crit,
-                      paddingHorizontal: 5,
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: "#fff",
-                        fontSize: 10,
-                        fontFamily: fonts.bodyStrong,
-                      }}
-                    >
-                      {activeFilterCount}
-                    </Text>
-                  </View>
-                ) : null}
-              </Pressable>
-            </View>
-
-            {activeFilterCount > 0 ? (
-              <View
-                style={{
-                  flexDirection: "row",
-                  flexWrap: "wrap",
-                  gap: 6,
-                  marginTop: 10,
-                }}
-              >
-                {filters.locations.map((l) => (
-                  <ActiveChip
-                    key={`loc-${l}`}
-                    label={capitalize(l)}
-                    onRemove={() =>
-                      setFilters((f) => ({
-                        ...f,
-                        locations: f.locations.filter((x) => x !== l),
-                      }))
-                    }
-                  />
-                ))}
-                {filters.categories.map((cid) => {
-                  const cat = categories.find((c) => c.id === cid);
-                  return (
-                    <ActiveChip
-                      key={`cat-${cid}`}
-                      label={cat?.name ?? "Category"}
-                      onRemove={() =>
-                        setFilters((f) => ({
-                          ...f,
-                          categories: f.categories.filter((x) => x !== cid),
-                        }))
-                      }
-                    />
-                  );
-                })}
-                {filters.expiringWeek ? (
-                  <ActiveChip
-                    label="Expiring this week"
-                    onRemove={() =>
-                      setFilters((f) => ({ ...f, expiringWeek: false }))
-                    }
-                  />
-                ) : null}
-                {filters.leftoversOnly ? (
-                  <ActiveChip
-                    label="Leftovers only"
-                    onRemove={() =>
-                      setFilters((f) => ({ ...f, leftoversOnly: false }))
-                    }
-                  />
-                ) : null}
-                <Pressable onPress={() => setFilters(EMPTY_FILTERS)}>
-                  <Text
-                    style={{
-                      fontFamily: fonts.body,
-                      fontSize: 11.5,
-                      color: colors.textMuted,
-                      textDecorationLine: "underline",
-                      paddingVertical: 6,
-                      paddingHorizontal: 6,
-                    }}
-                  >
-                    Clear all
-                  </Text>
-                </Pressable>
-              </View>
-            ) : null}
-
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 10,
-                marginTop: 14,
-                marginBottom: 12,
-              }}
-            >
-              <Text
-                style={{
-                  fontFamily: fonts.body,
-                  fontSize: 11,
-                  color: colors.textSubtle,
-                }}
-              >
-                Group by
-              </Text>
-              <View style={{ flex: 1 }}>
-                <SegmentedControl
-                  options={GROUP_BY_OPTIONS as unknown as string[]}
-                  selected={groupBy}
-                  onSelect={(v) => setGroupBy(v as GroupBy)}
-                />
-              </View>
-            </View>
-          </View>
-        }
-        renderSectionHeader={({ section: s }) => {
-          const open = openGroups[s.key] !== false;
-          const labelColor =
-            s.tone === "crit"
-              ? colors.crit
-              : s.tone === "warn"
-                ? colors.warn
-                : colors.textMuted;
-          return (
-            <Pressable
-              onPress={() =>
-                setOpenGroups((g) => ({ ...g, [s.key]: !(g[s.key] !== false) }))
-              }
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 6,
-                paddingTop: 14,
-                paddingBottom: 8,
-                backgroundColor: colors.bg,
-              }}
-            >
-              <FontAwesome
-                name={open ? "angle-down" : "angle-right"}
-                size={14}
-                color={colors.textMuted}
-              />
-              <Text
-                style={{
-                  fontFamily: fonts.bodyStrong,
-                  fontSize: 12,
-                  color: labelColor,
-                  textTransform: "uppercase",
-                  letterSpacing: 1,
-                }}
-              >
-                {s.label}
-              </Text>
-              <Text
-                style={{
-                  fontFamily: fonts.body,
-                  fontSize: 11,
-                  color: colors.textSubtle,
-                }}
-              >
-                {sections.find((x) => x.key === s.key)?.data.length ?? 0}
-              </Text>
-              {groupBy === "Urgency" && s.key === "expired" ? (
-                <Pressable
-                  onPress={openReview}
-                  hitSlop={12}
-                  accessibilityRole="link"
-                  accessibilityLabel="Review expired batches"
-                  style={({ pressed }) => ({ marginLeft: "auto", opacity: pressed ? 0.6 : 1 })}
-                >
-                  <Text style={{ fontFamily: fonts.bodyStrong, fontSize: 12, color: colors.accent }}>
-                    Review
-                  </Text>
-                </Pressable>
-              ) : null}
-            </Pressable>
-          );
-        }}
-        renderItem={({ item: row }) => (
-          <LotOutcomeSwipe lotIds={row.countedLots.map((lot) => lot.id)} name={row.name}>
-            <InventoryRow
-              row={row}
-              highlight={highlightId !== null && holdsLot(row, highlightId)}
-              photoEnabled={seenRows.seen.has(row.foodId)}
-              onPress={() => router.push(`/food/${row.foodId}`)}
-            />
-          </LotOutcomeSwipe>
-        )}
-        ListEmptyComponent={
-          <View style={{ paddingVertical: 40, alignItems: "center" }}>
-            <Text
-              style={{
-                fontFamily: fonts.body,
-                fontSize: 13,
-                color: colors.textMuted,
-                textAlign: "center",
-              }}
-            >
-              No matches.{" "}
-              {activeFilterCount > 0
-                ? "Try clearing some filters."
-                : "Tap + to add one."}
-            </Text>
-          </View>
-        }
-      />
-
-      <FilterSheet
-        visible={filterSheetOpen}
-        filters={filters}
-        categories={categories}
-        onApply={setFilters}
-        onClose={() => setFilterSheetOpen(false)}
-      />
-    </View>
-  );
-}
-
-function TopBar({
-  title,
-  subtitle,
-  onSubtitlePress,
-  subtitleLabel,
-  colors,
-  fonts,
-  padded = true,
-}: {
-  title: string;
-  subtitle?: React.ReactNode;
-  /** Makes the subtitle a link, with a chevron after it. */
-  onSubtitlePress?: () => void;
-  /** The subtitle link's screen-reader label. */
-  subtitleLabel?: string;
-  colors: ReturnType<typeof useTheme>["colors"];
-  fonts: ReturnType<typeof useTheme>["fonts"];
-  padded?: boolean;
-}) {
-  const subtitleText = subtitle ? (
-    <Text
-      style={{
-        fontFamily: fonts.body,
-        fontSize: 13,
-        color: colors.textMuted,
-      }}
-    >
-      {subtitle}
-    </Text>
-  ) : null;
-  return (
     <View
-      style={{
-        paddingHorizontal: padded ? 16 : 0,
-        paddingTop: padded ? 12 : 0,
-      }}
+      style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}
     >
-      <Text
-        style={{
-          fontFamily: fonts.display,
-          fontSize: 26,
-          letterSpacing: -0.5,
-          color: colors.text,
-        }}
-      >
-        {title}
-      </Text>
-      {subtitleText && onSubtitlePress ? (
-        <Pressable
-          onPress={onSubtitlePress}
-          hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
-          accessibilityRole="link"
-          accessibilityLabel={subtitleLabel}
-          style={({ pressed }) => ({
-            flexDirection: "row",
-            alignItems: "center",
-            alignSelf: "flex-start",
-            gap: 5,
-            marginTop: 2,
-            opacity: pressed ? 0.6 : 1,
-          })}
-        >
-          {subtitleText}
-          <FontAwesome name="angle-right" size={13} color={colors.crit} />
-        </Pressable>
-      ) : subtitleText ? (
-        <View style={{ marginTop: 2 }}>{subtitleText}</View>
-      ) : null}
+      <LayoutAnimationConfig skipEntering>
+        <PinnedSectionList
+          sections={listSections}
+          keyExtractor={rowKey}
+          renderItem={renderRow}
+          renderSectionHeader={renderSectionHeader}
+          pinned={controls}
+          layout={motion.layout}
+          rowsMotion={motion.rows}
+          holdContentHeight={rowCap !== null}
+          ref={list}
+          {...seenRows.listProps}
+          initialNumToRender={INITIAL_CELLS}
+          windowSize={WINDOW_SCREENS}
+          maxToRenderPerBatch={ROWS_PER_BATCH}
+          {...KEYBOARD_SCROLL_PROPS}
+          contentContainerStyle={contentStyle}
+          refreshControl={refreshControl}
+          ListHeaderComponent={listHeader}
+          ListFooterComponent={listFooter}
+        />
+      </LayoutAnimationConfig>
     </View>
   );
 }
 
-function ActiveChip({
-  label,
-  onRemove,
-}: {
-  label: string;
-  onRemove: () => void;
-}) {
-  const { colors, fonts } = useTheme();
-  return (
-    <View
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 4,
-        paddingLeft: 10,
-        paddingRight: 5,
-        paddingVertical: 5,
-        borderRadius: 100,
-        backgroundColor: colors.accentSoft,
-      }}
-    >
-      <Text
-        style={{
-          fontFamily: fonts.bodyStrong,
-          fontSize: 11.5,
-          color: colors.accent,
-          letterSpacing: -0.1,
-        }}
-      >
-        {label}
-      </Text>
-      <Pressable
-        onPress={onRemove}
-        hitSlop={6}
-        style={{
-          width: 18,
-          height: 18,
-          borderRadius: 9,
-          backgroundColor: "rgba(0,0,0,0.08)",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <FontAwesome name="times" size={9} color={colors.accent} />
-      </Pressable>
-    </View>
-  );
+function capRows(
+  sections: readonly FoodSection[],
+  openGroups: Record<string, boolean>,
+  rowCap: number | null,
+  previous: ReadonlyMap<string, ListSection>,
+): ListSection[] {
+  let rowsLeft = rowCap ?? Infinity;
+  const list: ListSection[] = [];
+  for (const section of sections) {
+    if (section.data.length === 0) continue;
+    if (rowsLeft <= 0) break;
+    const open = openGroups[section.key] !== false;
+    const data = !open
+      ? NO_ROWS
+      : rowsLeft >= section.data.length
+        ? section.data
+        : section.data.slice(0, rowsLeft);
+    rowsLeft -= data.length;
+    const old = previous.get(section.key);
+    list.push(
+      old && old.fullSection === section && old.open === open && old.data === data
+        ? old
+        : { key: section.key, data, fullSection: section, open },
+    );
+  }
+  return list;
 }
 
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
+function rowKey(row: FoodRow): string {
+  return row.key;
 }
 
 function holdsLot(row: FoodRow, lotId: string): boolean {

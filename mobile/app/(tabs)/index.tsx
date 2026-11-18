@@ -1,5 +1,6 @@
 import ActiveCookBanner from "@/components/active-cook-banner";
 import { useMemo, useState } from "react";
+import type { QueryStatus } from "@tanstack/react-query";
 import {
   Pressable,
   ScrollView,
@@ -17,7 +18,8 @@ import { firstNameFromProfile, useProfile } from "@/hooks/useProfile";
 import { useInventoryItems } from "@/hooks/useInventoryItems";
 import { stackLots } from "@/lib/foodRows";
 import InventoryRow from "@/components/InventoryRow";
-import LoadingState from "@/components/LoadingState";
+import HomeListSkeleton from "@/components/home-list-skeleton";
+import { SkeletonBar, SkeletonPulse } from "@/components/skeleton";
 import ErrorState from "@/components/ErrorState";
 import EmptyState from "@/components/EmptyState";
 
@@ -26,6 +28,9 @@ const PROMPT_SUGGESTIONS = [
   "Use what's expiring",
   "Low effort dinner",
 ] as const;
+
+const NAME_LINE_HEIGHT = 36;
+const STAT_VALUE_LINE_HEIGHT = 30;
 
 export default function HomeScreen() {
   const { colors, fonts, card } = useTheme();
@@ -49,7 +54,7 @@ export default function HomeScreen() {
     (r) => r.expiredLots === 0 && r.days !== null && r.days >= 0 && r.days <= 2,
   );
   const useThisWeekCount = rows.filter(
-    (r) => r.days !== null && r.days >= 0 && r.days <= 6,
+    (r) => r.urgency === "today" || r.urgency === "week",
   ).length;
 
   const handleSubmitPrompt = () => {
@@ -89,34 +94,11 @@ export default function HomeScreen() {
           >
             Good {greeting},
           </Text>
-          {resolvedName ? (
-            <Text
-              style={{
-                fontFamily: fonts.display,
-                fontSize: 30,
-                letterSpacing: -0.7,
-                color: colors.text,
-                marginTop: 2,
-              }}
-            >
-              {resolvedName}
-            </Text>
-          ) : (
-            <Pressable onPress={() => router.push("/set-name")}>
-              <Text
-                style={{
-                  fontFamily: fonts.display,
-                  fontSize: 30,
-                  letterSpacing: -0.7,
-                  color: colors.accent,
-                  marginTop: 2,
-                  textDecorationLine: "underline",
-                }}
-              >
-                Set your name
-              </Text>
-            </Pressable>
-          )}
+          <NameLine
+            name={resolvedName}
+            status={profile.status}
+            onSetName={() => router.push("/set-name")}
+          />
         </View>
         <Pressable
           onPress={() => router.push("/(tabs)/profile")}
@@ -292,8 +274,9 @@ export default function HomeScreen() {
 
       <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
         <StatRow
-          inventoryCount={rows.length}
-          useSoonCount={useThisWeekCount}
+          status={inventory.status}
+          foodCount={rows.length}
+          useThisWeekCount={useThisWeekCount}
           expiredCount={expired.length}
           onPress={() => router.push("/(tabs)/inventory")}
           onExpiredPress={() => router.push("/review-expired")}
@@ -301,7 +284,7 @@ export default function HomeScreen() {
       </View>
 
       {inventory.isPending ? (
-        <LoadingState label="Loading your fridge…" />
+        <HomeListSkeleton />
       ) : inventory.isError ? (
         <ErrorState onRetry={() => inventory.refetch()} />
       ) : expired.length === 0 && useSoon.length === 0 ? (
@@ -436,14 +419,16 @@ function Section({
 }
 
 function StatRow({
-  inventoryCount,
-  useSoonCount,
+  status,
+  foodCount,
+  useThisWeekCount,
   expiredCount,
   onPress,
   onExpiredPress,
 }: {
-  inventoryCount: number;
-  useSoonCount: number;
+  status: QueryStatus;
+  foodCount: number;
+  useThisWeekCount: number;
   expiredCount: number;
   onPress: () => void;
   onExpiredPress: () => void;
@@ -451,10 +436,20 @@ function StatRow({
   const { colors, fonts } = useTheme();
   return (
     <View style={{ flexDirection: "row", gap: 8 }}>
-      <StatTile label="In fridge" value={inventoryCount} onPress={onPress} colors={colors} fonts={fonts} />
+      <StatTile
+        label="In kitchen"
+        accessibilityLabelFor={(n) => `${n} ${n === 1 ? "food" : "foods"} in your kitchen`}
+        value={foodCount}
+        status={status}
+        onPress={onPress}
+        colors={colors}
+        fonts={fonts}
+      />
       <StatTile
         label="Use this week"
-        value={useSoonCount}
+        accessibilityLabelFor={(n) => `${n} to use this week`}
+        value={useThisWeekCount}
+        status={status}
         accent
         onPress={onPress}
         colors={colors}
@@ -462,7 +457,9 @@ function StatRow({
       />
       <StatTile
         label="Expired"
+        accessibilityLabelFor={(n) => `${n} expired`}
         value={expiredCount}
+        status={status}
         warn={expiredCount > 0}
         onPress={onExpiredPress}
         colors={colors}
@@ -474,7 +471,9 @@ function StatRow({
 
 function StatTile({
   label,
+  accessibilityLabelFor,
   value,
+  status,
   accent,
   warn,
   onPress,
@@ -482,7 +481,9 @@ function StatTile({
   fonts,
 }: {
   label: string;
+  accessibilityLabelFor: (count: number) => string;
   value: number;
+  status: QueryStatus;
   accent?: boolean;
   warn?: boolean;
   onPress: () => void;
@@ -491,9 +492,17 @@ function StatTile({
 }) {
   const valueColor = warn ? colors.crit : accent ? colors.accent : colors.text;
   const borderColor = warn ? colors.crit : colors.border;
+  const spokenLabel = {
+    pending: `${label}, loading`,
+    error: `${label}, unavailable`,
+    success: accessibilityLabelFor(value),
+  }[status];
   return (
     <Pressable
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={spokenLabel}
+      accessibilityState={{ busy: status === "pending" }}
       style={{
         flex: 1,
         paddingHorizontal: 12,
@@ -504,16 +513,23 @@ function StatTile({
         borderColor,
       }}
     >
-      <Text
-        style={{
-          fontFamily: fonts.display,
-          fontSize: 26,
-          letterSpacing: -0.5,
-          color: valueColor,
-        }}
-      >
-        {value}
-      </Text>
+      {status === "pending" ? (
+        <SkeletonPulse style={{ height: STAT_VALUE_LINE_HEIGHT, justifyContent: "center" }}>
+          <SkeletonBar width={34} height={22} />
+        </SkeletonPulse>
+      ) : (
+        <Text
+          style={{
+            fontFamily: fonts.display,
+            fontSize: 26,
+            lineHeight: STAT_VALUE_LINE_HEIGHT,
+            letterSpacing: -0.5,
+            color: status === "error" ? colors.textSubtle : valueColor,
+          }}
+        >
+          {status === "error" ? "–" : value}
+        </Text>
+      )}
       <Text
         style={{
           fontFamily: fonts.body,
@@ -523,6 +539,56 @@ function StatTile({
         }}
       >
         {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function NameLine({
+  name,
+  status,
+  onSetName,
+}: {
+  name: string | null;
+  status: QueryStatus;
+  onSetName: () => void;
+}) {
+  const { colors, fonts } = useTheme();
+  const nameStyle = {
+    fontFamily: fonts.display,
+    fontSize: 30,
+    lineHeight: NAME_LINE_HEIGHT,
+    letterSpacing: -0.7,
+    marginTop: 2,
+  };
+
+  // Waits for the profile even when OAuth metadata already has a name,
+  // because a name set in the app wins and would replace it a moment later.
+  if (status === "pending") {
+    return (
+      <View
+        accessible
+        accessibilityRole="progressbar"
+        accessibilityLabel="Loading your name"
+        accessibilityState={{ busy: true }}
+      >
+        <SkeletonPulse style={{ height: NAME_LINE_HEIGHT, marginTop: 2, justifyContent: "center" }}>
+          <SkeletonBar width={140} height={26} radius={8} />
+        </SkeletonPulse>
+      </View>
+    );
+  }
+  if (name) {
+    return <Text style={[nameStyle, { color: colors.text }]}>{name}</Text>;
+  }
+  // A failed load does not mean the name is unset, so offer no link.
+  if (status === "error") {
+    return <View style={{ height: NAME_LINE_HEIGHT, marginTop: 2 }} />;
+  }
+  return (
+    <Pressable onPress={onSetName}>
+      <Text style={[nameStyle, { color: colors.accent, textDecorationLine: "underline" }]}>
+        Set your name
       </Text>
     </Pressable>
   );

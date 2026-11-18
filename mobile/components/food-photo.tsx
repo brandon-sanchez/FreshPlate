@@ -7,10 +7,12 @@ import { useTheme } from "@/hooks/useTheme";
 
 type IconName = ComponentProps<typeof FontAwesome>["name"];
 
-// Placeholder icon and corner radius as fractions of the tile's side, so a
-// 48 pt inventory tile gets a 22 pt icon and 12 pt corners.
+// The placeholder icon as a fraction of the tile's side, so a 48 pt
+// inventory tile gets a 22 pt icon.
 const ICON_RATIO = 0.46;
-const RADIUS_RATIO = 0.25;
+
+/** The tile's corner radius as a fraction of its side: 12 pt corners on a 48 pt tile. */
+export const FOOD_PHOTO_RADIUS_RATIO = 0.25;
 
 type FoodPhotoProps = {
   /**
@@ -70,7 +72,7 @@ export default function FoodPhoto({
         {
           width: size,
           height: size,
-          borderRadius: size * RADIUS_RATIO,
+          borderRadius: size * FOOD_PHOTO_RADIUS_RATIO,
           backgroundColor: colors.surfaceAlt,
           borderWidth: StyleSheet.hairlineWidth,
           borderColor: colors.photoOutline,
