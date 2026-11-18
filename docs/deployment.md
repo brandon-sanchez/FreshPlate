@@ -154,7 +154,7 @@ Lambda freezes an instance once the response is sent, so the API does all of its
 | --- | --- | --- |
 | Lambda function | `freshplate-api` | Container image, arm64, 2048 MB, 150 s timeout |
 | Function URL | Stack output `ApiUrl` | Public (`NONE` auth). The API checks each Supabase JWT. Buffered responses up to 6 MB |
-| ECR repository | `freshplate-api` | Scan on push. Commit tags are immutable. Keeps `live` and the 3 newest other images |
+| ECR repository | `freshplate-api` | Scan on push. Commit tags are immutable. Keeps the two newest images and `live` |
 | Parameters | `/freshplate/prod/*` | SecureString, encrypted with the AWS managed `aws/ssm` key |
 | Log group | Created by `FreshPlateApi` | Kept 14 days |
 | Deploy role | `freshplate-github-deploy` | See the role section above |
@@ -163,7 +163,7 @@ Each instance serves one request at a time. An idle function costs nothing. The 
 
 The 150 s timeout covers a photo request, which waits up to `IMAGE_GENERATION_TIMEOUT_SECONDS` (120 s by default) for OpenAI. A recipe feed request ends on the backend's own budget, 48 s for the first page. That budget starts when the endpoint runs, so a cold start comes out of the 2 s between it and the app's 50 s request timeout. If cold Generate requests time out in the app, lower `RECIPE_FEED_INITIAL_BUDGET_SECONDS` in Parameter Store.
 
-The setup fits the AWS free tier at demo traffic. Lambda includes 1 million requests and 400,000 GB-seconds a month, which is about 55 hours of requests at 2048 MB. Function URLs, standard Parameter Store parameters, and the `aws/ssm` key cost nothing. CloudWatch Logs includes 5 GB of log data a month. An image is about 170 MB compressed. When a deploy reuses CI's cached layers, images built from the same `requirements.txt` share their dependency layer in ECR, and each later image adds only its app layer. ECR storage past its free allowance costs $0.10 per GB-month.
+The setup fits the AWS free tier at demo traffic. Lambda includes 1 million requests and 400,000 GB-seconds a month, which is about 55 hours of requests at 2048 MB. Function URLs, standard Parameter Store parameters, and the `aws/ssm` key cost nothing. CloudWatch Logs includes 5 GB of log data a month. An image is about 170 MB compressed, and ECR's free tier holds 500 MB. The lifecycle policy keeps the two newest images, which after a healthy deploy are `live` and the image before it, so a rollback has an image to return to. After a deploy that fails `/health`, the two newest are the failed image and `live`. After two failed deploys in a row, `live` is kept as well, so three images stay until the next healthy deploy. When a deploy reuses CI's cached layers, images built from the same `requirements.txt` share their dependency layer in ECR, and each later image adds only its app layer. ECR applies the policy within 24 hours of a push, and storage past its free allowance costs $0.10 per GB-month.
 
 The Function URL has no request rate limit. Every endpoint except `/health` answers a request without a valid JWT with a 401 in a few milliseconds.
 
