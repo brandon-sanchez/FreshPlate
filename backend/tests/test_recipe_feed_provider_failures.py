@@ -1,10 +1,3 @@
-"""Deterministic mechanism repros for the intermittent post-loader error (#42).
-
-Offline companions to test_recipe_feed_live_repro.py. Each test replays one
-suspected failure mechanism through the real session endpoint and asserts the
-exact surface the mobile client turns into the error-with-retry state.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -181,13 +174,6 @@ def test_zero_valid_generation_late_in_budget_skips_the_quality_retry(
     patch_jwks,
     monkeypatch,
 ) -> None:
-    """Regression for the #42 fix: no retry without one generation's budget.
-
-    Before the fix this scenario fired a second generation with almost no
-    time left and surfaced as 503 AI_UNAVAILABLE. Now the router skips the
-    quality retry below its 20-second floor and the loader ends in the
-    explicit empty state instead of the error state.
-    """
     patch_jwks([signing_key])
     from tests.test_recipe_feed import InMemoryRecipeFeedStore
 
