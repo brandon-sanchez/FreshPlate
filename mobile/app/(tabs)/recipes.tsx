@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   Keyboard,
@@ -14,9 +14,9 @@ import Feather from "@expo/vector-icons/Feather";
 import Toast from "@/lib/toast";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useRouter } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@/hooks/useTheme";
 import { useInventoryItems } from "@/hooks/useInventoryItems";
+import { countUsableFoods } from "@/lib/foodRows";
 import { useRecipeFeed } from "@/hooks/useRecipeFeed";
 import { useSavedRecipes, type SavedRecipe } from "@/hooks/useSavedRecipes";
 import { useActiveCook, useIsActiveCook } from "@/hooks/useActiveCook";
@@ -25,7 +25,6 @@ import { useAuthStore } from "@/stores/auth";
 import {
   buildRecipeFeedSessionRequest,
   countAnsweredPreferences,
-  recipeContextLabel,
 } from "@/lib/recipes";
 import type { RecipePreferences, RecipeSuggestion } from "@/types/recipes";
 import EmptyState from "@/components/EmptyState";
@@ -45,20 +44,20 @@ import RecipePhoto from "@/components/recipe-photo";
 export default function RecipesScreen() {
   const { colors, fonts } = useTheme();
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
   const inventory = useInventoryItems();
   const householdId = useAuthStore((s) => s.householdId);
-  const feed = useRecipeFeed();
+  const [preferences, setPreferences] = useState<RecipePreferences>({});
+  const feed = useRecipeFeed({ onSessionRestored: setPreferences });
   const saved = useSavedRecipes();
   const cook = useActiveCook();
   const [tab, setTab] = useState<"for-you" | "saved">("for-you");
-  const [preferences, setPreferences] = useState<RecipePreferences>({});
   const [flowOpen, setFlowOpen] = useState(false);
   const [detailRecipe, setDetailRecipe] = useState<RecipeSuggestion | null>(null);
   const [previewRecipe, setPreviewRecipe] = useState<RecipeSuggestion | null>(null);
   const detailCooking = useIsActiveCook(detailRecipe?.recipe_id);
   const items = useMemo(() => inventory.data ?? [], [inventory.data]);
+  const ingredientCount = useMemo(() => countUsableFoods(items), [items]);
   const generate = useCallback(
     (nextPreferences: RecipePreferences) => {
       if (!householdId) return;
@@ -88,6 +87,9 @@ export default function RecipesScreen() {
   const startCook = async (recipe: RecipeSuggestion) => {
     if (await cook.start(recipe)) setDetailRecipe(recipe);
   };
+  const checklistAfterDismiss = useRef(false);
+  const openChecklist = () =>
+    router.push({ pathname: "/cook", params: { stage: "checklist" } });
   const detail = (
     <RecipeDetail
       recipe={detailRecipe}
@@ -98,33 +100,50 @@ export default function RecipesScreen() {
       cooking={detailCooking}
       cookPending={cook.pending}
       onCook={(recipe) => void startCook(recipe)}
-      onDoneCooking={async () => {
-        if (await cook.finish()) setDetailRecipe(null);
+      onDoneCooking={() => {
+        setDetailRecipe(null);
+        // iOS drops a screen presented while this modal is still sliding
+        // away, so the checklist opens once it has dismissed. Android's
+        // Modal has no onDismiss and needs no wait.
+        if (Platform.OS === "ios") checklistAfterDismiss.current = true;
+        else openChecklist();
+      }}
+      onDismiss={() => {
+        if (!checklistAfterDismiss.current) return;
+        checklistAfterDismiss.current = false;
+        openChecklist();
       }}
     />
   );
 
-  if (tab === "saved") {
-    return <View style={[styles.stateContainer, { backgroundColor: colors.bg, paddingTop: insets.top, paddingBottom: tabBarHeight }]}> 
-      <RecipeScreenHeader subtitle="Your household cookbook" />
+  const header = (
+    <>
+      <RecipeScreenHeader />
       <RecipeTabs tab={tab} onChange={setTab} />
+    </>
+  );
+
+  if (tab === "saved") {
+    return <View style={[styles.stateContainer, { backgroundColor: colors.bg, paddingBottom: tabBarHeight }]}>
+      {header}
       <SavedRecipesContent saved={saved} onOpen={setPreviewRecipe} />
       <RecipeIngredientsSheet recipe={previewRecipe} onClose={() => setPreviewRecipe(null)} onOpenDetail={setDetailRecipe} onCook={(recipe) => void startCook(recipe)} />
       {detail}
     </View>;
   }
 
-  if (inventory.isPending) {
+  if (inventory.isPending || feed.isRestoring) {
     return (
       <View
         style={[
           styles.stateContainer,
-          { backgroundColor: colors.bg, paddingTop: insets.top },
+          { backgroundColor: colors.bg },
         ]}
       >
-        <RecipeScreenHeader subtitle="AI picks from your kitchen" />
-        <RecipeTabs tab={tab} onChange={setTab} />
-        <LoadingState label="Loading your fridge..." />
+        {header}
+        <LoadingState
+          label={inventory.isPending ? "Loading your fridge..." : "Loading your recipes..."}
+        />
       </View>
     );
   }
@@ -134,11 +153,10 @@ export default function RecipesScreen() {
       <View
         style={[
           styles.stateContainer,
-          { backgroundColor: colors.bg, paddingTop: insets.top },
+          { backgroundColor: colors.bg },
         ]}
       >
-        <RecipeScreenHeader subtitle="AI picks from your kitchen" />
-        <RecipeTabs tab={tab} onChange={setTab} />
+        {header}
         <ErrorState onRetry={() => inventory.refetch()} />
       </View>
     );
@@ -152,13 +170,11 @@ export default function RecipesScreen() {
           styles.stateContainer,
           {
             backgroundColor: colors.bg,
-            paddingTop: insets.top,
             paddingBottom: tabBarHeight,
           },
         ]}
       >
-        <RecipeScreenHeader subtitle="Find something that feels right" />
-        <RecipeTabs tab={tab} onChange={setTab} />
+        {header}
         <RecipePreferenceFlow
           initialPreferences={preferences}
           onComplete={generate}
@@ -175,13 +191,11 @@ export default function RecipesScreen() {
           styles.stateContainer,
           {
             backgroundColor: colors.bg,
-            paddingTop: insets.top,
             paddingBottom: tabBarHeight,
           },
         ]}
       >
-        <RecipeScreenHeader subtitle="AI picks from your kitchen" />
-        <RecipeTabs tab={tab} onChange={setTab} />
+        {header}
         <RecipeGenerationLoader />
       </View>
     );
@@ -192,11 +206,10 @@ export default function RecipesScreen() {
       <View
         style={[
           styles.stateContainer,
-          { backgroundColor: colors.bg, paddingTop: insets.top },
+          { backgroundColor: colors.bg },
         ]}
       >
-        <RecipeScreenHeader subtitle="Start with what you have" />
-        <RecipeTabs tab={tab} onChange={setTab} />
+        {header}
         <EmptyState
           icon={
             <View
@@ -226,13 +239,10 @@ export default function RecipesScreen() {
       <View
         style={[
           styles.stateContainer,
-          { backgroundColor: colors.bg, paddingTop: insets.top },
+          { backgroundColor: colors.bg },
         ]}
       >
-        <RecipeScreenHeader
-          subtitle={recipeContextLabel(items.length, preferences)}
-        />
-        <RecipeTabs tab={tab} onChange={setTab} />
+        {header}
         <ErrorState
           title="We couldn't generate recipes"
           message="The AI kitchen is unavailable right now. Your answers are still here to try again."
@@ -246,15 +256,14 @@ export default function RecipesScreen() {
     return (
       <>
       <RecipeFeed
-        header={<><RecipeScreenHeader /><RecipeTabs tab={tab} onChange={setTab} /></>}
+        header={header}
         recipes={feed.recipes}
-        itemCount={items.length}
+        itemCount={ingredientCount}
         preferences={preferences}
         isPrefetching={feed.isPrefetching}
         prefetchError={feed.prefetchError}
         isExhausted={feed.isExhausted}
         ending={feed.ending}
-        topInset={insets.top}
         bottomInset={tabBarHeight + 28}
         onAsk={() => setFlowOpen(true)}
         onDismiss={feed.dismiss}
@@ -282,15 +291,11 @@ export default function RecipesScreen() {
     >
       <ScrollView
         style={{ flex: 1, backgroundColor: colors.bg }}
-        contentContainerStyle={{
-          paddingTop: insets.top + 12,
-          paddingBottom: tabBarHeight + 28,
-        }}
+        contentContainerStyle={{ paddingBottom: tabBarHeight + 28 }}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
       >
-        <RecipeScreenHeader subtitle="AI picks from your kitchen" />
-        <RecipeTabs tab={tab} onChange={setTab} />
+        {header}
 
         <View style={[styles.promptCard, { borderColor: colors.border }]}>
           <View style={styles.kitchenLabel}>
@@ -301,7 +306,7 @@ export default function RecipesScreen() {
                 { color: colors.accent, fontFamily: fonts.bodyStrong },
               ]}
             >
-              {items.length} {items.length === 1 ? "ingredient" : "ingredients"}{" "}
+              {ingredientCount} {ingredientCount === 1 ? "ingredient" : "ingredients"}{" "}
               to start with
             </Text>
           </View>
