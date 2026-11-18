@@ -50,6 +50,7 @@ The backend has these routers, registered in `backend/app/main.py`:
 | `POST /api/recipes/suggestions` | Runs the pipeline once and returns a batch |
 | `POST /api/recipes/sessions` | Starts a recipe feed session |
 | `POST /api/recipes/sessions/{session_id}/pages` | Returns the next page of a feed session |
+| `POST /api/cook/plan` | Plans the done-cooking checklist against current stock |
 | `POST /api/cook/confirm` | Deducts the ingredients used in a cook |
 
 ## The backend checks the Supabase JWT on every request
@@ -140,33 +141,39 @@ sequenceDiagram
 	App->>API: POST /api/recipes/sessions (household_id, answers)
 	API->>DB: Read food_stock and food_facts as the user
 	API->>G: Full pipeline, 5 recipes, retrieve 30 docs
-	G-->>API: Valid recipes
-	API->>DB: create_recipe_feed_session
-	API-->>App: session_id, first page
+	G-->>API: Kept recipes, photos of the first 3
+	API->>DB: create_recipe_feed_session (every kept recipe)
+	API-->>App: session_id, the 3 photographed cards
 
-	loop While fewer than the target number of unseen cards
+	loop While 3 or fewer unseen cards remain
 		App->>API: POST /sessions/{id}/pages (cursor)
 		API->>DB: Read stored candidates from cursor
-		alt Not enough stored, and runs remain
+		alt Nothing stored at the cursor, and runs remain
 			API->>DB: claim_recipe_feed_refill (45 s lease)
 			API->>G: Generate and check only, reuse retrieved docs
 			API->>DB: finalize_recipe_feed_refill
+			API-->>App: The batch's first 3 cards, with photos
+		else Stored candidates
+			API->>API: Make the photo of each card that has none
+			API-->>App: Stored cards, with photos
 		end
-		API-->>App: Next page
 	end
 ```
 
-The design has three parts:
+The design has four parts:
 
 - **The first batch does the expensive work once.** `POST /api/recipes/sessions` runs the full pipeline and retrieves 30 grounding recipes, enough for all six generation runs a session may make. The session stores the analysis and the retrieved recipes, so later refills skip embedding and vector search and run only generation and the quality check.
 - **A lease makes each refill run once.** Two page requests can reach the end of the stored recipes at the same moment. `claim_recipe_feed_refill` grants one of them a 45-second lease. The other waits for that refill and returns the same recipes, so a cursor always maps to the same recipe IDs. If the owner fails, it releases the lease. If it crashes, the lease expires. Only the backend can call these functions, using the Supabase secret key.
-- **The app prefetches by how fast you scroll.** `mobile/hooks/useRecipeFeed.ts` keeps between 10 and 20 unseen cards ready. It measures how fast the user moves through cards and how long a refill takes, then asks for more before the buffer runs out. If the user still reaches the end, a skeleton card holds the place until the next batch arrives.
+- **The first cards come back before the batch is done.** Each recipe's photo starts as soon as its review keeps it, and a batch answers once its first three kept recipes have photos. Recipes still being written then are dropped. The other kept recipes are stored without photos, and the page request that returns them makes their photos first. No work runs after a response, because the planned AWS Lambda deployment freezes the instance once it answers, so the rest of a batch always finishes inside a later request the app makes.
+- **The app pays only for cards the user moves toward.** `mobile/hooks/useRecipeFeed.ts` asks for the next page when three or fewer unseen cards remain. Until the user first scrolls, steers or dismisses, the card on screen counts as unseen, so a first batch of four or five cards never pays for another batch before anyone moves. On a five-card batch the first swipe starts the next one. Once the user scrolls, the hook measures how fast they move through cards and how long a page takes, and keeps up to 20 unseen cards ready to match. If the user still reaches the end, a skeleton card holds the place until the next page arrives.
 
 A session stops after six generation runs. The app then offers to add items or change the answers, rather than generating forever.
 
 ## Cook confirmation deducts inventory in one transaction
 
-When a user finishes cooking, they confirm how much of each food they used, in the food's stock base (grams, millilitres or a count). The request also carries one line per recipe ingredient matched to a food: the recipe's amount and unit, the converted amount, and the mode (`draw` when it converted, `small` for a seasoning-sized amount that is never drawn, `ask` when the user was asked). `POST /api/cook/confirm` passes both lists to the `cook_recipe_v2` Postgres function, which draws each amount from the food's batches (lots) and records the lines in one transaction.
+When a user finishes cooking, the app sends the recipe's ingredients to `POST /api/cook/plan`. The backend reads the household's foods with unexpired stock as the user, converts each ingredient into its food's stock base, and sums the ingredients that use one food. Each food comes back with its available stock, the amount to pre-fill, any whole-unit rounding note, and each ingredient's mode and converted amount. Ingredients that name no food (kitchen basics) or a food with no stock left come back as untracked. The endpoint changes nothing, so the app calls it again to reload stock.
+
+On the checklist they confirm how much of each food they used, in the food's stock base (grams, millilitres or a count). The request also carries one line per recipe ingredient matched to a food: the recipe's amount and unit, the converted amount, and the mode (`draw` when it converted, `small` for a seasoning-sized amount that is never drawn, `ask` when the user was asked). `POST /api/cook/confirm` passes both lists to the `cook_recipe_v2` Postgres function, which draws each amount from the food's batches (lots) and records the lines in one transaction.
 
 ```mermaid
 sequenceDiagram
@@ -178,11 +185,12 @@ sequenceDiagram
 	API->>DB: rpc/cook_recipe_v2 with the user's JWT
 	DB->>DB: Return the saved result if operation_id was already used
 	DB->>DB: Map each id to its live food, lock the foods in sorted order
+	DB->>DB: Refuse with STOCK_CHANGED if a food has less than expected
 	DB->>DB: Draw from each food's lots in draw order
 	DB->>DB: Split each food's draws across its lines
 	DB->>DB: Insert cook_events row with the lines
 	DB-->>API: Draws per lot, committed amounts, lines
-	API-->>App: 200, or 409 if rejected
+	API-->>App: 200, 409 STOCK_CHANGED, or 409 if rejected
 ```
 
 The function guarantees these properties:
@@ -190,12 +198,14 @@ The function guarantees these properties:
 - **Draw order.** Each amount comes from the food's unexpired lots: opened lots first, then the soonest expiry (undated lots last), then the oldest. One lot is finished before the next starts. A drawn lot is marked opened, and a lot drawn to zero is marked depleted with reason `used`. Expired lots are skipped until someone reviews them.
 - **All or nothing.** One bad line rejects the whole request. Amounts must be positive and finite, whole-unit foods (cans, eggs) take whole amounts only, each food may appear in one line only, and every ID must be a food or lot of the caller's household.
 - **Old recipes still cook.** A recipe's `inventory_item_id` holds a food id. Recipes saved before foods existed hold a lot id there, and the function draws from that lot's food. Merged foods are followed to the food they were merged into.
-- **Safe to retry.** The app creates an `operation_id` when the cook starts and stores it with the active cook. A lock on household plus operation id serializes repeats, so a repeated confirmation returns the first result and deducts nothing twice. A repeat with a different payload is rejected.
-- **Safe under concurrency.** Every function that changes a food's stock takes a per-food advisory lock, in sorted food id order, before it touches any lot. Two phones cooking the same foods wait for each other instead of deadlocking, and a batch added during a cook lands wholly before or after it. When stock runs short, the deduction stops at zero. The event then records both what the user said they used (`confirmed_amount`) and what was actually drawn (`committed_amount`, and `draws` per lot).
+- **Safe to retry.** The app creates an `operation_id` when the cook starts and stores it with the active cook. A lock on household plus operation id serializes repeats, so a repeated confirmation returns the first result and deducts nothing twice. A repeat with a different payload deducts nothing and fails with `COOK_ALREADY_CONFIRMED`, which tells an app whose first response was lost that the cook went through.
+- **Safe under concurrency.** Every function that changes a food's stock takes a per-food advisory lock, in sorted food id order, before it touches any lot. Two phones cooking the same foods wait for each other instead of deadlocking, and a batch added during a cook lands wholly before or after it.
+- **Stock that changed refuses the cook.** Each deduction carries `expected_amount`, the part of the confirmed amount the checklist expected stock to cover. With the food locks held and before any draw, the function sums each food's unexpired stock. If any food has less than its expected amount, because another member cooked or tossed it a moment earlier, the whole cook is refused with `STOCK_CHANGED` and nothing is deducted. The endpoint returns 409 with code `STOCK_CHANGED`, and the app reloads stock and marks the lines that changed.
+- **Using more than the kitchen has is recorded.** A confirmed amount above the expected amount that stock can't cover stops at zero. The event then records both what the user said they used (`confirmed_amount`) and what was actually drawn (`committed_amount`, and `draws` per lot).
 - **Lines for Cook Again.** Each line in `cook_events.lines` keeps the recipe's amount and unit next to the live food, its stock base, the batches it drew from and its shortfall. A food used by several lines splits its draws across them in recipe order: each line takes its converted amount, and the last takes the rest, such as a can rounded up. Cook Again can then re-plan the recipe's own units against current stock instead of comparing bare numbers in different units. Every deduction needs a line that draws from it, and every drawing line needs a deduction.
-- **No hard deletes.** A lot that reaches zero gets `depleted_at`. The function never deletes a row.
+- **No hard deletes.** A lot that reaches zero gets `depleted_at`. The function never deletes a row, so a food a cook used up by mistake can come back: the `recently_used_up` view lists foods with no stock left whose last batch was used up in the past 14 days, and `restore_used_up_lot` returns that batch to stock with the amount the user says is left. The inventory shows these foods in a collapsed "Recently used up" section.
 
-The function runs as `SECURITY DEFINER`, because members can't change lot quantities directly. It checks household membership first and reads only foods and lots of that household. The cook screens that call the endpoint are in progress in [#27](https://github.com/brandon-sanchez/FreshPlate/issues/27) and [#30](https://github.com/brandon-sanchez/FreshPlate/issues/30).
+The function runs as `SECURITY DEFINER`, because members can't change lot quantities directly. It checks household membership first and reads only foods and lots of that household. The app's done-cooking checklist (`mobile/components/cook-checklist.tsx`) calls both cook endpoints: it plans the recipe, lets the user adjust each amount or add a food the recipe didn't list, and confirms in one tap. On `STOCK_CHANGED` it plans again, marks each line whose food now has less than the line expected ("Only 2 eggs left now"), and keeps the cook active. After a confirm, the cook screen shows "Nice plate" with "Save this recipe" and "Done". Done, or saving, goes to Inventory, where the lower stock shows. A recipe that is already saved goes there by itself after a moment.
 
 ## Image generation has a spending cap before it has images
 
@@ -204,7 +214,7 @@ The backend serves recipe photos and ingredient thumbnails from `POST /api/image
 - Each image is generated at most once. A recipe photo is keyed by a hash of the dish title and the set of ingredient names, both normalized for case, spacing and punctuation. Amounts, ingredient order and steps don't change the key, so the feed and saved copies share a photo, and so do households that get the same dish. Adding or swapping an ingredient, or renaming the dish, gives a new photo. The photo prompt is built from the same title and ingredient names, with no amounts or steps, so every recipe that shares a photo would have asked for the same picture. An ingredient thumbnail is keyed by its food profile, or by its normalized name when it has none, so every household's tomato shares one.
 - Before any provider call, `claim_image_asset` reserves an upper-bound cost against a global monthly cap ($10 by default, recipes and ingredients combined) and a per-user monthly cap. The backend then settles the claim with the stored image or releases it. A release refunds the reservation only when the provider returned an error response, which it does not bill.
 - A failed image is attempted again only by a later request, after a cooldown, and only up to a fixed number of possibly billed attempts. Requests never retry the provider themselves.
-- The feed generates photos inside the recipe pipeline. After the quality check, a photo step requests every valid recipe's photo at once. The batch is stored and returned only when those requests end, so each feed card carries its photo, or its placeholder result, in the feed response. The recipe steps stop 15 seconds before the request deadline to leave the photos time, and each photo must finish before the request does. A failed, over-budget or late photo never fails the batch. A photo that missed the deadline comes back as `unavailable` with reason `late`, and the app asks for it again when its card next shows, at most once a minute.
+- The feed generates photos inside the recipe pipeline. A recipe's photo starts as soon as the meal review keeps it, for the first three recipes of a batch, and the request returns those three cards once their photos end. A page request makes the photo of any stored card it returns that has none. So each feed card carries its photo, or its placeholder result, in the feed response. The recipe steps stop 15 seconds before the request deadline to leave the photos time, and each photo must finish before the request does. A failed, over-budget or late photo never fails the batch. A photo that missed the deadline comes back as `unavailable` with reason `late`, and the app asks for it again when its card next shows, at most once a minute.
 - Only recipes from the caller's feed, which the backend writes, can start a generation. Saved recipes, which members write directly, get the matching feed photo or a placeholder.
 - Images are WebP files in the private `generated-images` Storage bucket. Responses carry a signed URL and a stable `image_key`. When there is no image, the response says `pending` or `unavailable` with a reason, so the screen shows its placeholder.
 - `OpenAIImageProvider` in `backend/app/ai/images/openai.py` makes one image request and checks that the result is a PNG no larger than 4096 pixels on a side.

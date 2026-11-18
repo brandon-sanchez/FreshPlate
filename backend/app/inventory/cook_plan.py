@@ -19,12 +19,14 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
+from typing import Literal
 from uuid import UUID
 
 from app.inventory.units import (
     Approximate,
     AskAtCook,
     AskReason,
+    Conversion,
     Exact,
     FoodFacts,
     MeasuredUnit,
@@ -100,6 +102,29 @@ class LineAsk:
     reason: AskReason
 
 
+CookLineMode = Literal["draw", "small", "ask"]
+"""How a recipe line reaches stock: drawn, too small to draw, or asked about."""
+
+
+@dataclass(frozen=True)
+class LinePlan:
+    """How one recipe line converted, as a cook event records it.
+
+    Attributes:
+        line: The line's index in the lines passed to ``plan_cook``.
+        mode: ``draw`` when the line converted to a stock amount, ``small``
+            when it is part of the food's seasoning total, or ``ask`` when
+            the cook flow asks how much was used.
+        stock_amount: For ``draw``, the line's amount in the food's stock
+            base at the base's precision, before any whole-unit rounding.
+            None otherwise.
+    """
+
+    line: int
+    mode: CookLineMode
+    stock_amount: Decimal | None
+
+
 @dataclass(frozen=True)
 class SmallTotal:
     """A food's seasoning-sized lines, summed. It is never drawn from stock.
@@ -136,6 +161,7 @@ class FoodPlan:
         food_id: The food.
         stock_base: The unit ``draw`` and ``shortfall`` are in.
         lines: Indexes of the lines that use this food, in recipe order.
+        line_plans: How each of those lines converted, in the same order.
         draw: The amount to take from stock, rounded once. It is 0 when
             nothing is drawn.
         estimated: True when a profile estimate went into ``draw``, so the
@@ -150,6 +176,7 @@ class FoodPlan:
     food_id: UUID
     stock_base: StockBase
     lines: tuple[int, ...]
+    line_plans: tuple[LinePlan, ...]
     draw: Decimal
     estimated: bool
     small: SmallTotal | None
@@ -215,11 +242,16 @@ def _plan_food(
         if smalls and small_amount <= _SMALL_LIMIT
         else None
     )
-    settled = [
-        (index, conversion.otherwise if isinstance(conversion, Small) else conversion)
+    resolved = [
+        (
+            index,
+            conversion.otherwise
+            if isinstance(conversion, Small) and small is None
+            else conversion,
+        )
         for index, conversion in converted
-        if small is None or not isinstance(conversion, Small)
     ]
+    settled = [(i, c) for i, c in resolved if not isinstance(c, Small)]
     measured = [c for _, c in settled if isinstance(c, (Exact, Approximate))]
     need = sum((conversion.amount for conversion in measured), Decimal(0))
     draw, rounding = _round(need, facts)
@@ -227,6 +259,10 @@ def _plan_food(
         food_id=food_id,
         stock_base=facts.stock_base,
         lines=tuple(indices),
+        line_plans=tuple(
+            _line_plan(index, conversion, facts.stock_base)
+            for index, conversion in resolved
+        ),
         draw=draw,
         estimated=any(isinstance(c, Approximate) for c in measured),
         small=small,
@@ -237,6 +273,16 @@ def _plan_food(
         ),
         rounding=rounding,
         shortfall=max(Decimal(0), draw - stock.available),
+    )
+
+
+def _line_plan(index: int, conversion: Conversion, base: StockBase) -> LinePlan:
+    if isinstance(conversion, Small):
+        return LinePlan(index, "small", None)
+    if isinstance(conversion, AskAtCook):
+        return LinePlan(index, "ask", None)
+    return LinePlan(
+        index, "draw", conversion.amount.quantize(_PRECISION[base], ROUND_HALF_UP)
     )
 
 

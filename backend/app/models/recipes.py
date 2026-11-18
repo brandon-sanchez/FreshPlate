@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 from uuid import UUID
 
 from pydantic import (
@@ -19,6 +19,7 @@ from pydantic import (
 from app.ai.agents.dish import RequestedDish
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING, MAX_BATCH_CEILING
 from app.ai.agents.models import Recipe
+from app.inventory.cook_plan import CookLineMode
 from app.models.images import ImageResult
 
 
@@ -123,9 +124,10 @@ class RecipeFeedCard(RecipeSuggestion):
     """A feed recipe as served, with its photo.
 
     Attributes:
-        image: The recipe's photo, or its placeholder result. None only on a
-            page served from a stored pool without a stored photo. The app
-            then requests the photo from `POST /api/images/recipes/{id}`.
+        image: The recipe's photo, or its placeholder result. None only when
+            a read that generates no photos serves a stored card that has
+            none. The app then requests the photo from
+            `POST /api/images/recipes/{id}`.
             The signed URL is never stored with the recipe.
     """
 
@@ -153,6 +155,25 @@ class RecipeFeedResponse(BaseModel):
     data: RecipeFeedData
 
 
+class RecipeFeedRestoreData(RecipeFeedData):
+    """A live feed session's whole stored pool, for an app that restarted.
+
+    ``recipes`` holds every stored card from position 0 in feed order, and
+    ``next_cursor`` is where the next page starts.
+
+    Attributes:
+        preferences: The answers the session was started with.
+    """
+
+    preferences: dict[str, Any]
+
+
+class RecipeFeedRestoreResponse(BaseModel):
+    """Envelope for the latest feed session; ``data`` is None when none is live."""
+
+    data: RecipeFeedRestoreData | None
+
+
 def _require_finite(value: float) -> float:
     if not math.isfinite(value):
         raise ValueError("Amount must be finite")
@@ -172,10 +193,32 @@ class CookDeduction(BaseModel):
             the food it was merged into.
         confirmed_amount: How much was used, in the food's stock base (grams,
             millilitres or a count). Must be finite and positive.
+        expected_amount: How much of ``confirmed_amount`` the checklist
+            expected the food's unexpired stock to cover, from 0 to
+            ``confirmed_amount``. The cook is refused with ``STOCK_CHANGED``
+            when the food has less than this by the time it is confirmed.
+
+    Raises:
+        pydantic.ValidationError: On construction, when ``expected_amount``
+            is above ``confirmed_amount``.
     """
 
+    model_config = ConfigDict(extra="forbid")
     inventory_item_id: UUID
     confirmed_amount: _FiniteFloat = Field(gt=0)
+    expected_amount: _FiniteFloat = Field(ge=0)
+
+    @model_validator(mode="after")
+    def check_expected(self) -> CookDeduction:
+        if self.expected_amount > self.confirmed_amount:
+            raise ValueError("expected_amount cannot be above confirmed_amount")
+        return self
+
+
+COOK_LINE_INGREDIENT_CHARS = 200
+"""Longest ingredient name a cook line accepts, as cook_recipe_v2 checks it."""
+COOK_LINE_UNIT_CHARS = 64
+"""Longest recipe unit a cook line accepts, as cook_recipe_v2 checks it."""
 
 
 class CookIngredientLine(BaseModel):
@@ -204,11 +247,11 @@ class CookIngredientLine(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    ingredient: str = Field(min_length=1, max_length=200)
+    ingredient: str = Field(min_length=1, max_length=COOK_LINE_INGREDIENT_CHARS)
     inventory_item_id: UUID
     recipe_amount: _FiniteFloat = Field(ge=0)
-    recipe_unit: str = Field(min_length=1, max_length=64)
-    mode: Literal["draw", "small", "ask"]
+    recipe_unit: str = Field(min_length=1, max_length=COOK_LINE_UNIT_CHARS)
+    mode: CookLineMode
     stock_amount: _FiniteFloat | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
@@ -233,7 +276,8 @@ class CookConfirmationRequest(BaseModel):
         recipe_snapshot: The recipe as cooked. Its ``recipe_id`` must match.
         deductions: One entry per food used. Two entries that reach the same
             food, such as a food and one of its lots, are rejected.
-        lines: One entry per matched recipe ingredient, in recipe order. Each
+        lines: One entry per recipe ingredient matched to a food the cook
+            used, in recipe order. Empty when nothing was used. Each
             deduction needs at least one ``draw`` or answered ``ask`` line on
             its food, and its draws are split across those lines.
     """
@@ -244,7 +288,7 @@ class CookConfirmationRequest(BaseModel):
     recipe_id: UUID
     recipe_snapshot: dict[str, Any]
     deductions: list[CookDeduction]
-    lines: list[CookIngredientLine] = Field(min_length=1)
+    lines: list[CookIngredientLine]
 
     @field_validator("recipe_snapshot")
     @classmethod

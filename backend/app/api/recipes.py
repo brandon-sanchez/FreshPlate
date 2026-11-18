@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from itertools import takewhile
 from typing import Any, NamedTuple
 from uuid import UUID, uuid4
 
@@ -13,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
 
 from app.ai.agents.dish import requested_dish
+from app.ai.agents.diversity import title_key
 from app.ai.agents.graph import build_recipe_generation_graph, build_recipe_graph
 from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.models import Recipe
@@ -20,7 +22,7 @@ from app.ai.agents.nodes import (
     GENERATION_DOCS_CEILING,
     RecipeRetrieverPort,
 )
-from app.ai.agents.photos import RecipePhotoSource
+from app.ai.agents.photos import RecipePhotoSource, photograph
 from app.ai.agents.state import RecipeState, RecipeSteering
 from app.ai.eval.scorers import ingredient_coverage_percent
 from app.ai.llm.errors import AI_UNAVAILABLE, ProviderError
@@ -42,6 +44,8 @@ from app.models.recipes import (
     RecipeFeedData,
     RecipeFeedPageRequest,
     RecipeFeedResponse,
+    RecipeFeedRestoreData,
+    RecipeFeedRestoreResponse,
     RecipeFeedSessionRequest,
     RecipeSuggestion,
     RecipeSuggestionRequest,
@@ -185,10 +189,12 @@ async def post_recipe_feed_session(
     """Create a feed session and persist its first bounded candidate pool.
 
     Reads the household's foods and kitchen basics as the caller, and stores
-    the basics on the session for later refills. Each card carries its photo:
-    the pipeline generates the batch's photos, charged to the caller, before
-    the session is stored and returned. A missing photo never fails the
-    request; its card carries a placeholder result. Responds 503
+    the basics on the session for later refills. The response holds only
+    the batch's first ``BATCH_PHOTO_LIMIT`` recipes, each with its photo,
+    which the pipeline generates and charges to the caller as soon as the
+    recipe passes its review. The rest of the batch is stored without photos
+    for the next page request. A missing photo never fails the request; its
+    card carries a placeholder result. Responds 503
     ``RECIPE_FEED_UNAVAILABLE`` when they can't be read or the session can't
     be stored, and 503 ``AI_UNAVAILABLE`` when generation fails or the
     deadline runs out.
@@ -250,8 +256,9 @@ async def post_recipe_feed_session(
             deadline,
             lambda: store.create_session(session, recipes=recipes),
         )
+        photos = result.get("recipe_photos", {})
         cards = await _feed_cards(
-            recipes, result.get("recipe_photos", {}), images, _user_id, deadline
+            _photographed(recipes, photos, images), photos, images, _user_id, deadline
         )
     except asyncio.CancelledError:
         raise
@@ -280,6 +287,55 @@ async def post_recipe_feed_session(
     )
 
 
+@router.get("/sessions/latest", response_model=RecipeFeedRestoreResponse)
+async def get_latest_recipe_feed_session(
+    _user_id: CurrentUserId,
+    store: RecipeFeedStore = Depends(get_recipe_feed_store),
+    images: ImageService = Depends(get_image_service),
+) -> RecipeFeedRestoreResponse:
+    """Return the caller's newest unexpired feed session with its stored cards.
+
+    Lets an app that restarted show the feed it already paid for. Only reads:
+    it never generates recipes or photos and never refills the pool. The page
+    ends before the first stored card with no photo yet, so the next page
+    request makes that card's photo the way a fresh feed would. Responds with
+    ``data`` set to None when the caller has no live session, and 503
+    ``RECIPE_FEED_UNAVAILABLE`` when the session can't be read.
+    """
+    deadline = PipelineDeadline.from_now(settings.recipe_feed_restore_budget_seconds)
+    try:
+        session = await _within_recipe_deadline(
+            deadline, lambda: store.get_latest_session(_user_id)
+        )
+        if session is None:
+            return RecipeFeedRestoreResponse(data=None)
+        recipes = await _within_recipe_deadline(
+            deadline,
+            lambda: store.list_candidates(
+                _user_id,
+                session.id,
+                start_position=0,
+                limit=session.candidate_count,
+            ),
+        )
+        cards = await _feed_cards(recipes, {}, images, _user_id, deadline)
+    except asyncio.CancelledError:
+        raise
+    except (RecipeFeedStoreError, TimeoutError) as exc:
+        logger.warning("Recipe feed restore failed: %s", exc)
+        raise _feed_unavailable() from exc
+
+    unphotographed = next(
+        (index for index, card in enumerate(cards) if card.image is None), len(cards)
+    )
+    page = _feed_data(session, cards[:unphotographed], cursor=0)
+    return RecipeFeedRestoreResponse(
+        data=RecipeFeedRestoreData(
+            **page.model_dump(), preferences=session.preferences
+        )
+    )
+
+
 @router.post(
     "/sessions/{session_id}/pages",
     response_model=RecipeFeedResponse,
@@ -294,10 +350,17 @@ async def post_recipe_feed_page(
 ) -> RecipeFeedResponse:
     """Return a stable cursor page, refilling the pool only at its tail.
 
-    A refill generates its batch's photos before the batch is stored, as the
-    first session does. Cards read from the stored pool carry their stored
-    photo, or no image when there is none; this request never generates
-    photos for them.
+    A page returns the stored candidates from the cursor and generates the
+    photo of any that has none, charged to the caller, before returning it,
+    so every card arrives with its photo. Only a cursor at the end of the
+    stored pool refills it: the request generates a batch, as the first
+    session does, and returns the leading cards that have photos. When
+    another request generated that batch, those are the cards whose photos
+    it stored, so both requests return the same page.
+    Responds 404 ``RECIPE_FEED_NOT_FOUND`` for another user's or an expired
+    session, 422 ``RECIPE_FEED_INVALID_CURSOR`` for a cursor past the pool,
+    503 ``AI_UNAVAILABLE`` when a refill fails, and 503
+    ``RECIPE_FEED_UNAVAILABLE`` when the store can't be reached.
     """
     cursor = _parse_feed_cursor(payload.cursor)
     photos: Mapping[str, ImageResult] = {}
@@ -321,7 +384,9 @@ async def post_recipe_feed_page(
                 limit=payload.limit,
             ),
         )
-        if len(recipes) < payload.limit and session.has_more:
+        photo_source = RequesterRecipePhotos(images, _user_id)
+        refilled = not recipes and session.has_more
+        if refilled:
             steering = await _within_recipe_deadline(
                 deadline,
                 lambda: resolve_steering(store, _user_id, session, payload.steering),
@@ -331,7 +396,7 @@ async def post_recipe_feed_page(
                 _user_id,
                 store,
                 provider,
-                RequesterRecipePhotos(images, _user_id),
+                photo_source,
                 deadline,
                 steering,
             )
@@ -345,6 +410,23 @@ async def post_recipe_feed_page(
                         limit=payload.limit,
                     ),
                 )
+        photos = {
+            **await _stored_photos(
+                _without_photos(recipes, photos, images), images, _user_id, deadline
+            ),
+            **photos,
+        }
+        if refilled:
+            recipes = _photographed(recipes, photos, images)
+        else:
+            photos = {
+                **photos,
+                **await photograph(
+                    photo_source,
+                    _without_photos(recipes, photos, images),
+                    deadline=deadline,
+                ),
+            }
         cards = await _feed_cards(recipes, photos, images, _user_id, deadline)
     except asyncio.CancelledError:
         raise
@@ -385,8 +467,8 @@ async def _refill_recipe_feed_session(
 ) -> _RefillOutcome:
     """Generate one tail batch using the session's cached retrieval context.
 
-    A batch another request generated comes back with no photos, and its
-    cards are served with their stored photos. That batch was generated
+    A batch another request generated comes back with no photos, and the
+    page reads the photos that request stored. That batch was generated
     without this request's ``steering``.
     """
     original_count = session.candidate_count
@@ -480,11 +562,11 @@ async def _generate_claimed_recipe_refill(
         exclude_titles=session.exclude_titles,
         batch_ceiling=RECIPE_FEED_REFILL_BATCH_CEILING,
     )
-    existing_titles = {_normalize_title(title) for title in session.exclude_titles}
+    existing_titles = {title_key(title) for title in session.exclude_titles}
     recipes = [
         recipe
         for recipe in generated
-        if _normalize_title(recipe.title) not in existing_titles
+        if title_key(recipe.title) not in existing_titles
     ]
     next_exclusions = _unique_titles(
         [*session.exclude_titles, *(recipe.title for recipe in recipes)]
@@ -635,6 +717,40 @@ async def _stored_photo(
     return result if result.status == "ready" else None
 
 
+def _without_photos(
+    recipes: Sequence[RecipeSuggestion],
+    photos: Mapping[str, ImageResult],
+    images: ImageService,
+) -> list[RecipeSuggestion]:
+    return [recipe for recipe in recipes if images.recipe_key(recipe) not in photos]
+
+
+async def _stored_photos(
+    recipes: Sequence[RecipeSuggestion],
+    images: ImageService,
+    user_id: str,
+    deadline: PipelineDeadline,
+) -> dict[str, ImageResult]:
+    """Return the ready stored photos of `recipes` by photo key, generating none."""
+    found = await asyncio.gather(
+        *(_stored_photo(recipe, images, user_id, deadline) for recipe in recipes)
+    )
+    return {photo.image_key: photo for photo in found if photo is not None}
+
+
+def _photographed(
+    recipes: Sequence[RecipeSuggestion],
+    photos: Mapping[str, ImageResult],
+    images: ImageService,
+) -> list[RecipeSuggestion]:
+    """Return the leading recipes that have a photo in `photos`.
+
+    A batch photographs the recipes it lists first, so this is the part of
+    a fresh batch a response can show at once.
+    """
+    return list(takewhile(lambda recipe: images.recipe_key(recipe) in photos, recipes))
+
+
 def _feed_response(
     session: RecipeFeedSession,
     recipes: Sequence[RecipeFeedCard],
@@ -642,18 +758,28 @@ def _feed_response(
     cursor: int,
     empty_reason: str | None = None,
 ) -> RecipeFeedResponse:
+    return RecipeFeedResponse(
+        data=_feed_data(session, recipes, cursor=cursor, empty_reason=empty_reason)
+    )
+
+
+def _feed_data(
+    session: RecipeFeedSession,
+    recipes: Sequence[RecipeFeedCard],
+    *,
+    cursor: int,
+    empty_reason: str | None = None,
+) -> RecipeFeedData:
     next_position = cursor + len(recipes)
     has_more = next_position < session.candidate_count or session.has_more
-    return RecipeFeedResponse(
-        data=RecipeFeedData(
-            session_id=session.id,
-            recipes=list(recipes),
-            next_cursor=str(next_position) if has_more else None,
-            has_more=has_more,
-            ready_count=session.candidate_count,
-            empty_reason=empty_reason,
-            requested_dish=requested_dish(session.preferences),
-        )
+    return RecipeFeedData(
+        session_id=session.id,
+        recipes=list(recipes),
+        next_cursor=str(next_position) if has_more else None,
+        has_more=has_more,
+        ready_count=session.candidate_count,
+        empty_reason=empty_reason,
+        requested_dish=requested_dish(session.preferences),
     )
 
 
@@ -693,12 +819,12 @@ def _build_suggestions(
 
     basics: KitchenBasics = result["kitchen_basics"]
     excluded_titles = {
-        _normalize_title(title) for title in exclude_titles if title.strip()
+        title_key(title) for title in exclude_titles if title.strip()
     }
     suggestions: list[RecipeSuggestion] = []
     for raw_recipe in raw_recipes:
         recipe = Recipe.model_validate(raw_recipe)
-        if _normalize_title(recipe.title) in excluded_titles:
+        if title_key(recipe.title) in excluded_titles:
             continue
         suggestions.append(
             RecipeSuggestion(
@@ -744,15 +870,11 @@ def _is_sequence_of_mappings_or_models(value: Any) -> bool:
     return all(isinstance(item, Mapping) for item in value)
 
 
-def _normalize_title(value: str) -> str:
-    return " ".join(value.casefold().split())
-
-
 def _unique_titles(titles: Sequence[str]) -> list[str]:
     seen: set[str] = set()
     unique: list[str] = []
     for title in titles:
-        normalized = _normalize_title(title)
+        normalized = title_key(title)
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)

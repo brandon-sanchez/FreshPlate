@@ -15,6 +15,7 @@ import type {
 
 const mockCreateSession = jest.fn();
 const mockFetchPage = jest.fn();
+const mockFetchLatest = jest.fn();
 
 const mockLoadImage = jest.fn();
 
@@ -27,6 +28,7 @@ jest.mock("@/lib/recipe-feed-api", () => ({
   RECIPE_FEED_REQUEST_TIMEOUT_MS: 50_000,
   createRecipeFeedSession: (...args: unknown[]) => mockCreateSession(...args),
   fetchRecipeFeedPage: (...args: unknown[]) => mockFetchPage(...args),
+  fetchLatestRecipeFeed: (...args: unknown[]) => mockFetchLatest(...args),
 }));
 
 jest.mock("@/lib/supabase", () => ({ supabase: {} }));
@@ -105,6 +107,8 @@ describe("useRecipeFeed", () => {
   beforeEach(() => {
     mockCreateSession.mockReset();
     mockFetchPage.mockReset();
+    mockFetchLatest.mockReset();
+    mockFetchLatest.mockResolvedValue({ data: null });
     mockLoadImage.mockReset();
     mockLoadImage.mockResolvedValue({ release: jest.fn() });
   });
@@ -129,12 +133,84 @@ describe("useRecipeFeed", () => {
     act(() => result.current.start(request));
     await waitFor(() => expect(result.current.recipes).toHaveLength(5));
     act(() => result.current.maybePrefetch(2));
+    await waitFor(() => expect(mockFetchPage).toHaveBeenCalledTimes(1));
     finish?.(page(batch(5), "10", true));
-    await waitFor(() => expect(mockFetchPage).toHaveBeenCalledTimes(2));
-    finish?.(page(batch(10), "15", true));
-    await waitFor(() => expect(result.current.recipes).toHaveLength(15));
-    expect(mockFetchPage).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(result.current.recipes).toHaveLength(10));
+    expect(mockFetchPage).toHaveBeenCalledTimes(1);
     unmount();
+  });
+
+  describe("reserve", () => {
+    const cards = (start: number, count: number) =>
+      Array.from({ length: count }, (_, index) =>
+        recipe(`recipe-${start + index}`, `Dish ${start + index}`),
+      );
+
+    async function startWith(head: RecipeSuggestion[], readyCount = head.length) {
+      mockCreateSession.mockResolvedValueOnce(
+        page(head, `${head.length}`, true, readyCount),
+      );
+      mockFetchPage.mockImplementation(() => new Promise<RecipeFeedResponse>(() => {}));
+      const hook = renderHook(() => useRecipeFeed(), { wrapper });
+      act(() => hook.result.current.start(request));
+      await waitFor(() => expect(hook.result.current.recipes).toHaveLength(head.length));
+      act(() => hook.result.current.maybePrefetch(0));
+      return hook;
+    }
+
+    it("buys no page for a five-card feed nobody has scrolled", async () => {
+      await startWith(cards(1, 5));
+
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+      expect(mockFetchPage).not.toHaveBeenCalled();
+    });
+
+    it("loads the rest of a three-card first page at once", async () => {
+      await startWith(cards(1, 3), 5);
+
+      await waitFor(() => expect(mockFetchPage).toHaveBeenCalledTimes(1));
+      expect(mockFetchPage.mock.calls[0][0].cursor).toBe("3");
+    });
+
+    it("starts the next page when a swipe leaves three unseen cards", async () => {
+      const { result } = await startWith(cards(1, 5));
+      expect(mockFetchPage).not.toHaveBeenCalled();
+
+      act(() => result.current.maybePrefetch(1));
+
+      await waitFor(() => expect(mockFetchPage).toHaveBeenCalledTimes(1));
+      expect(mockFetchPage.mock.calls[0][0].cursor).toBe("5");
+    });
+
+    it("waits for the first swipe before paying for a batch after a short first batch", async () => {
+      mockCreateSession.mockResolvedValueOnce(page(cards(1, 3), "3", true, 4));
+      mockFetchPage
+        .mockResolvedValueOnce(page(cards(4, 1), "4", true, 4))
+        .mockImplementation(() => new Promise<RecipeFeedResponse>(() => {}));
+      const { result } = renderHook(() => useRecipeFeed(), { wrapper });
+      act(() => result.current.start(request));
+      await waitFor(() => expect(result.current.recipes).toHaveLength(4));
+      act(() => result.current.maybePrefetch(0));
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+      expect(mockFetchPage).toHaveBeenCalledTimes(1);
+
+      act(() => result.current.maybePrefetch(1));
+
+      await waitFor(() => expect(mockFetchPage).toHaveBeenCalledTimes(2));
+      expect(mockFetchPage.mock.calls[1][0].cursor).toBe("4");
+    });
+
+    it("starts the next page when discarding leaves three unseen cards", async () => {
+      const { result } = await startWith(cards(1, 5));
+
+      act(() => result.current.dismiss(["recipe-5"]));
+
+      await waitFor(() => expect(mockFetchPage).toHaveBeenCalledTimes(1));
+    });
   });
 
   it("keeps refilling an unseen reserve after a fast scroll without another scroll event", async () => {
@@ -149,6 +225,7 @@ describe("useRecipeFeed", () => {
     const { result } = renderHook(() => useRecipeFeed(), { wrapper });
     act(() => result.current.start(request));
     await waitFor(() => expect(result.current.recipes).toHaveLength(10));
+    act(() => result.current.maybePrefetch(0));
 
     act(() => result.current.maybePrefetch(9));
 
@@ -262,7 +339,7 @@ describe("useRecipeFeed", () => {
     );
     expect(result.current.recipes.length).toBeGreaterThanOrEqual(8);
 
-    act(() => result.current.maybePrefetch(2));
+    act(() => result.current.maybePrefetch(4));
     await waitFor(() => expect(result.current.recipes).toHaveLength(10));
 
     expect(mockFetchPage).toHaveBeenCalledWith(
@@ -275,49 +352,7 @@ describe("useRecipeFeed", () => {
     expect(result.current.isExhausted).toBe(true);
   });
 
-  it("primes the ready pool immediately after a short head arrives", async () => {
-    mockCreateSession.mockResolvedValueOnce(
-      page(
-        [
-          recipe("recipe-1", "Spinach Pasta"),
-          recipe("recipe-2", "Spinach Curry"),
-          recipe("recipe-3", "Green Omelet"),
-          recipe("recipe-4", "Spinach Soup"),
-          recipe("recipe-5", "Spinach Tacos"),
-        ],
-        "5",
-        true,
-        5,
-      ),
-    );
-    mockFetchPage.mockResolvedValueOnce(
-      page(
-        [
-          recipe("recipe-6", "Spinach Rice"),
-          recipe("recipe-7", "Spinach Toast"),
-          recipe("recipe-8", "Spinach Hash"),
-        ],
-        null,
-        false,
-        8,
-      ),
-    );
-
-    const { result } = renderHook(() => useRecipeFeed(), { wrapper });
-
-    act(() => result.current.start(request));
-    await waitFor(() => expect(result.current.recipes).toHaveLength(8));
-
-    expect(mockFetchPage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: "session-1",
-        cursor: "5",
-        signal: expect.any(AbortSignal),
-      }),
-    );
-  });
-
-  it("keeps head cards visible while the immediate refill is in flight", async () => {
+  it("keeps a fast scroll on the loading card until the rest of the batch lands", async () => {
     let resolvePage: ((value: RecipeFeedResponse) => void) | undefined;
     mockCreateSession.mockResolvedValueOnce(
       page(
@@ -325,10 +360,8 @@ describe("useRecipeFeed", () => {
           recipe("recipe-1", "Spinach Pasta"),
           recipe("recipe-2", "Spinach Curry"),
           recipe("recipe-3", "Green Omelet"),
-          recipe("recipe-4", "Spinach Soup"),
-          recipe("recipe-5", "Spinach Tacos"),
         ],
-        "5",
+        "3",
         true,
         5,
       ),
@@ -344,22 +377,25 @@ describe("useRecipeFeed", () => {
 
     act(() => result.current.start(request));
     await waitFor(() => expect(result.current.status).toBe("ready"));
-    expect(result.current.recipes).toHaveLength(5);
+    expect(result.current.recipes).toHaveLength(3);
     expect(result.current.isPrefetching).toBe(true);
+    act(() => result.current.maybePrefetch(2));
+    expect(result.current.recipes).toHaveLength(3);
+    expect(result.current.isPrefetching).toBe(true);
+    expect(mockFetchPage).toHaveBeenCalledTimes(1);
 
     resolvePage?.(
       page(
         [
-          recipe("recipe-6", "Spinach Rice"),
-          recipe("recipe-7", "Spinach Toast"),
-          recipe("recipe-8", "Spinach Hash"),
+          recipe("recipe-4", "Spinach Soup"),
+          recipe("recipe-5", "Spinach Tacos"),
         ],
         null,
         false,
-        8,
+        5,
       ),
     );
-    await waitFor(() => expect(result.current.recipes).toHaveLength(8));
+    await waitFor(() => expect(result.current.recipes).toHaveLength(5));
   });
 
   it("refills immediately when the startup page has no valid recipes", async () => {
@@ -765,6 +801,21 @@ describe("useRecipeFeed", () => {
         ),
       );
       expect(mockFetchPage).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps only cards alike to More like this from stored cards that answer it", async () => {
+      mockCreateSession.mockResolvedValueOnce(page([salmon, ...head], "10", true, 12));
+      mockFetchPage.mockResolvedValueOnce(page([stew, salmonToo], "12", true, 12));
+      const { result } = renderHook(() => useRecipeFeed(), { wrapper });
+      act(() => result.current.start(request));
+      await waitFor(() => expect(result.current.recipes).toHaveLength(10));
+      expect(mockFetchPage).not.toHaveBeenCalled();
+
+      act(() => result.current.steer("more", salmon));
+
+      await waitFor(() => expect(mockFetchPage).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(result.current.recipes).toHaveLength(11));
+      expect(result.current.recipes.at(-1)?.recipe_id).toBe("salmon-too");
     });
 
     it("forgets steering when a new feed starts", async () => {
