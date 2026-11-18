@@ -14,6 +14,9 @@ langgraph==1.2.20
 langsmith==0.14.17
 psycopg[binary]==3.3.8
 
+# Settings for the deployed API, read from AWS Parameter Store at start
+boto3==1.44.5
+
 # Supabase auth token verification
 python-jose[cryptography]==3.5.0
 cachetools==7.2.8
