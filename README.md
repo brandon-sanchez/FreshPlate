@@ -106,7 +106,7 @@ The offline evals need no keys:
 
 ```sh
 cd backend
-venv/bin/python -m scripts.run_evals --mode offline
+venv/bin/python -m scripts.run_evals
 ```
 
 [Run the evals](docs/run-evals.md) covers the live mode, which calls Gemini and records a LangSmith experiment. The [evaluation reference](docs/evals.md) defines each metric and lists the latest scorecards.
