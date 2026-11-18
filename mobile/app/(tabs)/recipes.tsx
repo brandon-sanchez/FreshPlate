@@ -16,6 +16,7 @@ import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useRouter } from "expo-router";
 import { useTheme } from "@/hooks/useTheme";
 import { useInventoryItems } from "@/hooks/useInventoryItems";
+import { countUsableFoods } from "@/lib/foodRows";
 import { useRecipeFeed } from "@/hooks/useRecipeFeed";
 import { useSavedRecipes, type SavedRecipe } from "@/hooks/useSavedRecipes";
 import { useActiveCook, useIsActiveCook } from "@/hooks/useActiveCook";
@@ -56,6 +57,7 @@ export default function RecipesScreen() {
   const [previewRecipe, setPreviewRecipe] = useState<RecipeSuggestion | null>(null);
   const detailCooking = useIsActiveCook(detailRecipe?.recipe_id);
   const items = useMemo(() => inventory.data ?? [], [inventory.data]);
+  const ingredientCount = useMemo(() => countUsableFoods(items), [items]);
   const generate = useCallback(
     (nextPreferences: RecipePreferences) => {
       if (!householdId) return;
@@ -256,7 +258,7 @@ export default function RecipesScreen() {
       <RecipeFeed
         header={header}
         recipes={feed.recipes}
-        itemCount={items.length}
+        itemCount={ingredientCount}
         preferences={preferences}
         isPrefetching={feed.isPrefetching}
         prefetchError={feed.prefetchError}
@@ -304,7 +306,7 @@ export default function RecipesScreen() {
                 { color: colors.accent, fontFamily: fonts.bodyStrong },
               ]}
             >
-              {items.length} {items.length === 1 ? "ingredient" : "ingredients"}{" "}
+              {ingredientCount} {ingredientCount === 1 ? "ingredient" : "ingredients"}{" "}
               to start with
             </Text>
           </View>

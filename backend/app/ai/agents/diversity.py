@@ -19,7 +19,8 @@ from app.ai.agents.state import UsableItem
 # Category names come from the food_categories seed in
 # supabase/migrations/20260329180000_create_inventory_tables.sql.
 MAIN_COMPONENT_CATEGORIES = frozenset({"meat & seafood"})
-_NEVER_LEAD_ANY_DISH = frozenset({"condiments", "beverages"})
+CONDIMENT_AND_DRINK_CATEGORIES = frozenset({"condiments", "beverages"})
+"""Categories whose foods never lead a dish or count toward a meal's main."""
 
 
 class _DirectionStyle(NamedTuple):
@@ -33,7 +34,7 @@ class _DirectionStyle(NamedTuple):
 _STYLES: Mapping[RequestedDish, _DirectionStyle] = {
     "meal": _DirectionStyle(
         lead_first=MAIN_COMPONENT_CATEGORIES,
-        never_lead=_NEVER_LEAD_ANY_DISH | {"snacks"},
+        never_lead=CONDIMENT_AND_DRINK_CATEGORIES | {"snacks"},
         formats=(
             "a skillet, sauté or stir-fry cooked on the stovetop",
             "a pasta, rice, grain or noodle dish",
@@ -45,7 +46,7 @@ _STYLES: Mapping[RequestedDish, _DirectionStyle] = {
     ),
     "snack": _DirectionStyle(
         lead_first=frozenset(),
-        never_lead=_NEVER_LEAD_ANY_DISH,
+        never_lead=CONDIMENT_AND_DRINK_CATEGORIES,
         formats=(
             "a dip or spread with something to scoop it",
             "a no-cook bite or plate, such as fruit with nut butter",
@@ -55,7 +56,7 @@ _STYLES: Mapping[RequestedDish, _DirectionStyle] = {
     ),
     "dessert": _DirectionStyle(
         lead_first=frozenset(),
-        never_lead=_NEVER_LEAD_ANY_DISH | MAIN_COMPONENT_CATEGORIES,
+        never_lead=CONDIMENT_AND_DRINK_CATEGORIES | MAIN_COMPONENT_CATEGORIES,
         formats=(
             "a baked dessert, such as a crumble, cake or cookies",
             "a no-bake dessert, such as a parfait, pudding or mousse",
