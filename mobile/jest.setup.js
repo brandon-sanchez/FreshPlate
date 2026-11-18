@@ -23,11 +23,44 @@ require("react-native/jest/MockNativeMethods").default.measureInWindow.mockImple
   (callback) => callback(0, 0, 0, 0),
 );
 
-// Expo's native views, such as expo-image's Image, call findNodeHandle when
-// they mount, and React Native loads its whole renderer and its public
-// instance module on that first call. On a cold transform cache with every
-// worker busy, those loads can push the first test that renders a photo past
-// Jest's 5-second timeout. Loading them here charges them to file setup,
-// which no test timeout covers.
+// React Native loads most of its modules on first use: each component and
+// API behind a lazy getter on the package, and its renderer on the first
+// findNodeHandle call, which every Expo native view such as expo-image's
+// Image makes when it mounts. Left lazy, that loading, and on a cold
+// transform cache the compiling, happens inside whichever test renders the
+// module first. With every worker busy it can push that test past Jest's
+// 5-second timeout. Loading the modules here charges them to file setup,
+// which no test timeout covers. The list holds what the app imports from
+// react-native; a missing name only makes its first test slower.
+const PRELOADED_REACT_NATIVE_EXPORTS = [
+  "AccessibilityInfo",
+  "ActivityIndicator",
+  "Alert",
+  "Animated",
+  "Easing",
+  "FlatList",
+  "InputAccessoryView",
+  "Keyboard",
+  "KeyboardAvoidingView",
+  "Linking",
+  "Modal",
+  "PanResponder",
+  "PixelRatio",
+  "Platform",
+  "Pressable",
+  "RefreshControl",
+  "ScrollView",
+  "StyleSheet",
+  "Switch",
+  "Text",
+  "TextInput",
+  "View",
+  "useColorScheme",
+  "useWindowDimensions",
+];
+const ReactNative = require("react-native");
+for (const name of PRELOADED_REACT_NATIVE_EXPORTS) {
+  void ReactNative[name];
+}
 require("react-native/Libraries/Renderer/shims/ReactNative");
 require("react-native/Libraries/ReactNative/ReactFabricPublicInstance/ReactFabricPublicInstance");
