@@ -1,11 +1,18 @@
-"""Cook confirmation endpoint, which deducts a finished cook from stock."""
+"""Cook endpoints: plan the done-cooking checklist and deduct a confirmed cook."""
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.core.auth import CurrentUserId
 from app.core.config import settings
+from app.models.cook import CookPlanRequest, CookPlanResponse
 from app.models.recipes import CookConfirmationRequest
+from app.services.cook_checklist import build_checklist
+from app.services.food_lines import (
+    FoodLinesError,
+    FoodLineSource,
+    SupabaseFoodLineSource,
+)
 
 router = APIRouter(prefix="/api/cook", tags=["cook"])
 
@@ -14,6 +21,50 @@ _APP_ERRORS = {
     "STOCK_CHANGED": "Some ingredients changed since the checklist loaded",
     "COOK_ALREADY_CONFIRMED": "This cook was already confirmed",
 }
+
+
+def get_cook_food_source(request: Request) -> FoodLineSource:
+    """Read the caller's household foods with the caller's own token."""
+    _, _, token = request.headers.get("authorization", "").partition(" ")
+    return SupabaseFoodLineSource(
+        token, http_client=request.app.state.supabase_http_client
+    )
+
+
+@router.post("/plan", response_model=CookPlanResponse)
+async def plan_cook_checklist(
+    payload: CookPlanRequest,
+    _user_id: CurrentUserId,
+    foods: FoodLineSource = Depends(get_cook_food_source),
+) -> CookPlanResponse:
+    """Plan the done-cooking checklist for a recipe against current stock.
+
+    Reads the household's foods with unexpired stock as the caller, converts
+    each ingredient into its food's stock base and sums each food's lines.
+    Changes nothing, so the app calls it again to reload stock.
+
+    Args:
+        payload: The household and the cooked recipe's ingredients.
+        _user_id: The authenticated caller. Supabase reads it again from the
+            JWT.
+        foods: Where the household's foods are read from.
+
+    Returns:
+        ``{"data": {"foods": [...], "untracked": [...]}}`` as described by
+        ``CookPlanData``.
+
+    Raises:
+        HTTPException: 401 when the caller is not signed in. 503
+            ``COOK_UNAVAILABLE`` when the household's foods can't be read.
+    """
+    try:
+        lines = await foods.list_food_lines(payload.household_id)
+    except FoodLinesError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "Cook service unavailable", "code": "COOK_UNAVAILABLE"},
+        ) from exc
+    return CookPlanResponse(data=build_checklist(payload.ingredients, lines))
 
 
 @router.post("/confirm")

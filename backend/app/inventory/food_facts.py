@@ -37,7 +37,8 @@ def food_facts_from_row(row: Mapping[str, Any]) -> FoodFacts:
             ``each_label``, ``grams_per_each``, ``ml_per_each``, ``g_per_ml``,
             ``household_units`` (unit word to amount in the stock base),
             ``profile_key``, ``profile_g_per_ml`` and ``profile_unit_grams``
-            (unit word to grams). Numbers may be ints, floats, strings or
+            (unit word to grams), and optionally ``whole_units_only``, which
+            is false when missing. Numbers may be ints, floats, strings or
             ``Decimal``. ``household_units`` is never null, and
             ``profile_unit_grams`` is null only when ``profile_key`` is.
 
@@ -59,6 +60,7 @@ def food_facts_from_row(row: Mapping[str, Any]) -> FoodFacts:
     return FoodFacts(
         stock_base=row["stock_base"],
         each_label=row["each_label"],
+        whole_units_only=bool(row.get("whole_units_only", False)),
         grams_per_each=_decimal(row["grams_per_each"]),
         ml_per_each=_decimal(row["ml_per_each"]),
         g_per_ml=_decimal(row["g_per_ml"]),
@@ -85,6 +87,8 @@ class FoodLine(BaseModel):
         stock_base: ``"g"``, ``"ml"`` or ``"each"``.
         each_label: The counted unit, such as "head". Set exactly when
             ``stock_base`` is ``"each"``.
+        whole_units_only: True for counted foods that can't be split, such
+            as eggs or cans.
         grams_per_each, ml_per_each, g_per_ml: The household's own size and
             density facts, or ``None`` when unknown.
         household_units: Unit word to its amount in the stock base.
@@ -108,6 +112,7 @@ class FoodLine(BaseModel):
     lot_count: NonNegativeInt = 1
     stock_base: StockBase
     each_label: str | None = None
+    whole_units_only: bool = False
     grams_per_each: PositiveFloat | None = None
     ml_per_each: PositiveFloat | None = None
     g_per_ml: PositiveFloat | None = None
