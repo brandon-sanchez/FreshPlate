@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.limits import DEFAULT_BATCH_CEILING
 from app.ai.llm.errors import ProviderError
+from app.ai.llm.providers import FakeProvider
 from app.ai.rag.vector_store import RetrievedRecipe
 from app.api.images import get_image_service
 from app.api.recipes import (
@@ -1357,9 +1358,7 @@ def test_latest_session_returns_its_stored_cards_without_generating(
     provider = PromptRecordingProvider(
         [
             *batch_responses(_recipe("Recipe 1"), _recipe("Recipe 2")),
-            _assessment(2),
             *batch_responses(_recipe("Recipe 3")),
-            _assessment(1),
         ]
     )
     image_provider = FakeImageProvider()
@@ -1405,7 +1404,7 @@ def test_latest_session_never_refills_a_short_pool(
     signing_key: SigningKey, patch_jwks
 ) -> None:
     patch_jwks([signing_key])
-    provider = FakeProvider([*batch_responses(_recipe("Recipe 1")), _assessment(1)])
+    provider = MealFakeProvider([*batch_responses(_recipe("Recipe 1"))])
     store = InMemoryRecipeFeedStore()
     app = create_app()
     _install_dependencies(app, provider, StubRetriever(), store)
@@ -1431,12 +1430,10 @@ def test_latest_session_is_the_most_recent_one(
     signing_key: SigningKey, patch_jwks
 ) -> None:
     patch_jwks([signing_key])
-    provider = FakeProvider(
+    provider = MealFakeProvider(
         [
             *batch_responses(_recipe("Older")),
-            _assessment(1),
             *batch_responses(_recipe("Newer")),
-            _assessment(1),
         ]
     )
     app = create_app()
@@ -1472,9 +1469,7 @@ def test_latest_session_hides_another_users_session(
     signing_key: SigningKey, patch_jwks
 ) -> None:
     patch_jwks([signing_key])
-    provider = FakeProvider(
-        [*batch_responses(_recipe("Private recipe")), _assessment(1)]
-    )
+    provider = MealFakeProvider([*batch_responses(_recipe("Private recipe"))])
     app = create_app()
     _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
 
