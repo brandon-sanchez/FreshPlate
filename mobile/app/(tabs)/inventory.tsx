@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { RefreshControl, View } from "react-native";
+import { RefreshControl, ScrollView, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
@@ -32,6 +32,7 @@ import {
   TopBar,
 } from "@/components/InventoryListHeader";
 import { useSeenKeys } from "@/hooks/useSeenKeys";
+import RecentlyUsedUp from "@/components/RecentlyUsedUp";
 import LoadingState from "@/components/LoadingState";
 import EmptyState from "@/components/EmptyState";
 import ErrorState from "@/components/ErrorState";
@@ -66,6 +67,15 @@ type ListSection = {
 };
 
 const NO_ROWS: readonly FoodRow[] = [];
+
+// The Recently used up amount field sits at the end of the content and its
+// numeric keypad has no return key, so the list scrolls it above the keyboard
+// and lets a tap reach the Restore button while the keyboard is up.
+const KEYBOARD_SCROLL_PROPS = {
+  automaticallyAdjustKeyboardInsets: true,
+  keyboardShouldPersistTaps: "handled",
+  keyboardDismissMode: "interactive",
+} as const;
 
 export default function InventoryScreen() {
   const { colors, fonts } = useTheme();
@@ -216,6 +226,10 @@ export default function InventoryScreen() {
     ),
     [toggleSection, groupBy, openReview, motion],
   );
+  const highlightRestored = useCallback(
+    (lotId: string) => router.setParams({ added: lotId }),
+    [router],
+  );
 
   const listHeader = useMemo(
     () => (
@@ -232,13 +246,17 @@ export default function InventoryScreen() {
   const noMatches = sections.every((section) => section.data.length === 0);
   const canClear = activeFilterCount > 0;
   const listFooter = useMemo(
-    () =>
-      noMatches ? (
-        <NoMatches
-          onClear={canClear ? () => changeFilters(() => EMPTY_FILTERS) : undefined}
-        />
-      ) : null,
-    [noMatches, canClear, changeFilters],
+    () => (
+      <>
+        {noMatches ? (
+          <NoMatches
+            onClear={canClear ? () => changeFilters(() => EMPTY_FILTERS) : undefined}
+          />
+        ) : null}
+        <RecentlyUsedUp search={query} onRestored={highlightRestored} />
+      </>
+    ),
+    [noMatches, canClear, changeFilters, query, highlightRestored],
   );
   const refreshing = inventory.isFetching && !inventory.isPending;
   const { refetch } = inventory;
@@ -295,21 +313,29 @@ export default function InventoryScreen() {
       <View
         style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}
       >
-        <TopBar
-          title="Inventory"
-          subtitle="Nothing here yet"
-          colors={colors}
-          fonts={fonts}
-        />
-        <EmptyState
-          icon={
-            <FontAwesome name="archive" size={36} color={colors.textSubtle} />
-          }
-          title="Your fridge is empty"
-          message="Track what's in your fridge and pantry so you waste less and cook more."
-          ctaLabel="Add your first item"
-          onCtaPress={() => router.push("/(tabs)/add-item")}
-        />
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1, paddingBottom: tabBarHeight + 24 }}
+          {...KEYBOARD_SCROLL_PROPS}
+        >
+          <TopBar
+            title="Inventory"
+            subtitle="Nothing here yet"
+            colors={colors}
+            fonts={fonts}
+          />
+          <EmptyState
+            icon={
+              <FontAwesome name="archive" size={36} color={colors.textSubtle} />
+            }
+            title="Your fridge is empty"
+            message="Track what's in your fridge and pantry so you waste less and cook more."
+            ctaLabel="Add your first item"
+            onCtaPress={() => router.push("/(tabs)/add-item")}
+          />
+          <View style={{ paddingHorizontal: 16 }}>
+            <RecentlyUsedUp search="" onRestored={highlightRestored} />
+          </View>
+        </ScrollView>
       </View>
     );
   }
@@ -333,9 +359,7 @@ export default function InventoryScreen() {
           initialNumToRender={INITIAL_CELLS}
           windowSize={WINDOW_SCREENS}
           maxToRenderPerBatch={ROWS_PER_BATCH}
-          keyboardDismissMode="on-drag"
-          keyboardShouldPersistTaps="handled"
-          automaticallyAdjustKeyboardInsets
+          {...KEYBOARD_SCROLL_PROPS}
           contentContainerStyle={contentStyle}
           refreshControl={refreshControl}
           ListHeaderComponent={listHeader}
