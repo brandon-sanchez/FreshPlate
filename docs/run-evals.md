@@ -10,28 +10,20 @@ The offline evals need no API keys. Use them to check the scoring code after you
 2. From `backend/`, run the offline mode:
 
 	```sh
-	venv/bin/python -m scripts.run_evals --mode offline
+	venv/bin/python -m scripts.run_evals
 	```
 
-The runner prints a JSON scorecard. On `main`, it reports 22 cases, 20 succeeded, and 2 failed. The two failures are intentional.
+The runner prints a scorecard. A healthy offline run returns a recipe for all 22 cases and scores 100 on every metric. Add `--json` to print it as JSON.
 
 ## Run the live evals
 
-The live evals call Gemini, read the production Supabase vector store, and upload an experiment to LangSmith. Each run makes real, billed Gemini calls for all 22 cases.
+The live evals call Gemini and read the production Supabase vector store. Each run makes real, billed Gemini calls for all 22 cases.
 
-1. In `backend/.env`, set `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and `LANGSMITH_API_KEY`.
-2. From `backend/`, export the file into your shell. The LangSmith client reads its key from the process environment, not from `.env`.
-
-	```sh
-	set -a && source .env && set +a
-	```
-
-3. Run the live mode with an experiment name:
+1. In `backend/.env`, set `GEMINI_API_KEY`, `SUPABASE_URL`, and `SUPABASE_PUBLISHABLE_KEY`.
+2. From `backend/`, run the live mode:
 
 	```sh
-	venv/bin/python -m scripts.run_evals --mode live --experiment freshplate-mvp-eval
+	venv/bin/python -m scripts.run_evals --live
 	```
 
-The runner prints the scorecard and creates a LangSmith experiment named after `--experiment` with a random suffix. The first run also creates a LangSmith dataset named `<experiment>-dataset`. Later runs with the same name reuse that dataset.
-
-If most cases fail with `Gemini pipeline deadline exhausted`, generation is using up the pipeline budget. The [evaluation reference](evals.md#live-scorecard-2026-11-02) explains this failure.
+The runner prints the scorecard, including the Gemini calls and tokens the run used.
