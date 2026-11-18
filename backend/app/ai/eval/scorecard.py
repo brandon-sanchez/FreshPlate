@@ -12,16 +12,21 @@ from app.ai.eval.usage import ModelUsage
 
 
 class CaseRow(BaseModel):
-    """One case's line in the scorecard.
+    """One case's scores, averaged over its recipes.
+
+    The scorecard prints one row per case, and LangSmith gets the same
+    numbers as the case's feedback. A mean is None when no recipe was
+    scored for it.
 
     Attributes:
         name: The case's name.
         recipes: How many recipes the pipeline returned.
-        preference_alignment: Mean alignment of the case's judged recipes,
-            or None when none was judged.
+        coverage, completeness, mapping_validity: Mean code scores.
+        preference_alignment: Mean alignment of the case's judged recipes.
         unmet_preferences: Every preference key a recipe missed, once each.
-        quantity_violations: How many violations the judge listed in all.
-        seconds: Pipeline wall time.
+        quantity_violations: Every violation the judge listed, in order.
+        judge_failures: Recipes the judge couldn't grade.
+        seconds: Pipeline wall time, to a tenth of a second.
         error: Why the pipeline returned nothing, or None.
     """
 
@@ -29,9 +34,13 @@ class CaseRow(BaseModel):
 
     name: str
     recipes: int
+    coverage: float | None
+    completeness: float | None
+    mapping_validity: float | None
     preference_alignment: float | None
     unmet_preferences: list[str]
-    quantity_violations: int
+    quantity_violations: list[str]
+    judge_failures: int
     seconds: float
     error: str | None
 
@@ -45,6 +54,9 @@ class Scorecard(BaseModel):
 
     Attributes:
         mode: "offline" or "live".
+        experiment: The LangSmith experiment's name, or None when the run
+            wasn't uploaded.
+        url: The LangSmith experiment's link, or None.
         cases: How many cases ran.
         cases_with_recipes: Cases that returned at least one recipe.
         cases_failed: Cases whose pipeline failed, such as on its deadline.
@@ -66,6 +78,8 @@ class Scorecard(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     mode: str
+    experiment: str | None
+    url: str | None
     cases: int
     cases_with_recipes: int
     cases_failed: int
@@ -88,6 +102,8 @@ class Scorecard(BaseModel):
         *,
         mode: str,
         usage: Sequence[ModelUsage] = (),
+        experiment: str | None = None,
+        url: str | None = None,
     ) -> Scorecard:
         """Return the scorecard for ``results``, which must not be empty."""
         scores = [score for result in results for score in result.scores]
@@ -95,6 +111,8 @@ class Scorecard(BaseModel):
         seconds = [result.output.seconds for result in results]
         return cls(
             mode=mode,
+            experiment=experiment,
+            url=url,
             cases=len(results),
             cases_with_recipes=sum(bool(result.scores) for result in results),
             cases_failed=sum(result.output.error is not None for result in results),
@@ -114,13 +132,18 @@ class Scorecard(BaseModel):
             median_seconds=round(statistics.median(seconds), 1),
             max_seconds=round(max(seconds), 1),
             usage=list(usage),
-            case_rows=[_case_row(result) for result in results],
+            case_rows=[case_row(result) for result in results],
         )
 
     def render(self) -> str:
         """Return the scorecard as plain text for a terminal."""
         lines = [
             f"FreshPlate recipe eval ({self.mode})",
+            f"Experiment: {self.experiment or 'not uploaded'}",
+        ]
+        if self.url:
+            lines.append(f"Link: {self.url}")
+        lines += [
             "",
             f"Cases with recipes      {self.cases_with_recipes}/{self.cases}",
             f"Cases failed            {self.cases_failed}",
@@ -149,19 +172,28 @@ class Scorecard(BaseModel):
         return "\n".join(lines)
 
 
-def _case_row(result: CaseResult) -> CaseRow:
-    graded = [score for score in result.scores if score.judge_error is None]
-    unmet = dict.fromkeys(key for score in graded for key in score.unmet_preferences)
+def case_row(result: CaseResult) -> CaseRow:
+    """Return one case's scores, averaged over its recipes."""
+    scores = result.scores
+    graded = [score for score in scores if score.judge_error is None]
     return CaseRow(
         name=result.name,
-        recipes=len(result.scores),
+        recipes=len(scores),
+        coverage=_mean(score.coverage for score in scores),
+        completeness=_mean(score.completeness for score in scores),
+        mapping_validity=_mean(score.mapping_validity for score in scores),
         preference_alignment=_mean(
             score.preference_alignment
             for score in graded
             if score.preference_alignment is not None
         ),
-        unmet_preferences=list(unmet),
-        quantity_violations=sum(len(score.quantity_violations) for score in graded),
+        unmet_preferences=list(
+            dict.fromkeys(key for score in graded for key in score.unmet_preferences)
+        ),
+        quantity_violations=[
+            violation for score in graded for violation in score.quantity_violations
+        ],
+        judge_failures=len(scores) - len(graded),
         seconds=round(result.output.seconds, 1),
         error=result.output.error,
     )
@@ -176,7 +208,7 @@ def _render_row(row: CaseRow) -> str:
     )
     return (
         f"{row.name:<18}{row.recipes:>8}{alignment:>7}"
-        f"{row.quantity_violations:>5}{row.seconds:>7.1f}  {notes}"
+        f"{len(row.quantity_violations):>5}{row.seconds:>7.1f}  {notes}"
     ).rstrip()
 
 

@@ -31,6 +31,7 @@ def test_documented_offline_command_scores_the_whole_dataset_for_free():
     assert scorecard["mode"] == "offline"
     assert scorecard["cases"] == len(load_cases())
     assert scorecard["cases_with_recipes"] == scorecard["cases"]
+    assert scorecard["experiment"] is None
     assert scorecard["usage"] == []
 
 
