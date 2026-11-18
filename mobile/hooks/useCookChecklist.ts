@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useFoodStock } from "@/hooks/useFoodStock";
+import { useFoodSubUnits } from "@/hooks/useFoodSubUnits";
 import { ApiError } from "@/lib/api";
 import { confirmCook, fetchCookPlan } from "@/lib/cook-api";
 import {
@@ -10,20 +12,10 @@ import {
   type AddableFood,
   type ChecklistLine,
 } from "@/lib/cook-checklist";
-import { supabase } from "@/lib/supabase";
 import Toast from "@/lib/toast";
 import { useActiveCookStore } from "@/stores/activeCook";
-import type { StockBase, UntrackedIngredient } from "@/types/cook";
+import type { UntrackedIngredient } from "@/types/cook";
 import type { RecipeSuggestion } from "@/types/recipes";
-
-type FoodStockRow = {
-  id: string;
-  name: string;
-  stock_base: StockBase;
-  each_label: string | null;
-  whole_units_only: boolean;
-  available: number;
-};
 
 const STOCK_CHANGED = "STOCK_CHANGED";
 // The operation already recorded a cook, so an earlier attempt whose
@@ -36,9 +28,9 @@ const COOK_ALREADY_CONFIRMED = "COOK_ALREADY_CONFIRMED";
  *
  * Plans the recipe with `POST /api/cook/plan` under the query key
  * `['cook-plan', householdId, operationId]`, and reads the household's foods
- * with unexpired stock from the `food_stock` view under
- * `['inventory', householdId, 'stock']` for "Add item". Keeps the person's
- * amounts locally. `confirm` sends them to `POST /api/cook/confirm`. On
+ * with unexpired stock through {@link useFoodStock} for "Add item" and their
+ * smaller units through {@link useFoodSubUnits}. Keeps the person's amounts
+ * locally. `confirm` sends them to `POST /api/cook/confirm`. On
  * success, or when the cook was already confirmed, it invalidates
  * `['inventory']`, passes the cooked recipe to `onConfirmed` and clears the
  * active cook. On `STOCK_CHANGED` it refetches both queries, marks the lines
@@ -66,20 +58,21 @@ export function useCookChecklist({
         ingredients: cook!.recipe.ingredients,
       }),
   });
-  const stock = useQuery({
-    queryKey: ["inventory", householdId, "stock"],
-    enabled: cook !== null,
-    queryFn: () => readFoodStock(householdId!),
-  });
+  const stock = useFoodStock();
+  const subUnits = useFoodSubUnits();
   const [edited, setEdited] = useState<ChecklistLine[] | null>(null);
   const [stockChanged, setStockChanged] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
   const planned = plan.data ? linesFromPlan(plan.data) : [];
-  const lines = edited ?? planned;
+  const withSubUnit = <T extends AddableFood>(food: T): T => ({
+    ...food,
+    subUnit: subUnits[food.foodId] ?? null,
+  });
+  const lines = (edited ?? planned).map(withSubUnit);
   const untracked: UntrackedIngredient[] = plan.data?.untracked ?? [];
   const update = (change: (current: ChecklistLine[]) => ChecklistLine[]) =>
-    setEdited((current) => change(current ?? planned));
+    setEdited((current) => change((current ?? planned).map(withSubUnit)));
 
   const setAmount = (foodId: string, amount: number) =>
     update((current) =>
@@ -148,7 +141,7 @@ export function useCookChecklist({
     status: plan.isPending ? "loading" : plan.isError ? "error" : "ready",
     lines,
     untracked,
-    addable: stock.data ?? [],
+    addable: (stock.data ?? []).map(withSubUnit),
     stockChanged,
     confirming,
     retry: () => void plan.refetch(),
@@ -157,22 +150,4 @@ export function useCookChecklist({
     removeFood,
     confirm,
   } as const;
-}
-
-async function readFoodStock(householdId: string): Promise<AddableFood[]> {
-  const { data, error } = await supabase
-    .from("food_stock")
-    .select("id, name, stock_base, each_label, whole_units_only, available")
-    .eq("household_id", householdId)
-    .gt("available", 0)
-    .order("name");
-  if (error) throw error;
-  return ((data ?? []) as FoodStockRow[]).map((row) => ({
-    foodId: row.id,
-    name: row.name,
-    stockBase: row.stock_base,
-    unit: row.each_label ?? row.stock_base,
-    available: row.available,
-    wholeUnitsOnly: row.whole_units_only,
-  }));
 }

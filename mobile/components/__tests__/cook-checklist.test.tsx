@@ -98,6 +98,14 @@ function renderChecklist(plans: CookPlan[], confirm: () => unknown) {
   );
 }
 
+async function waitForConfirmToSettle() {
+  await waitFor(() =>
+    expect(screen.getByTestId("cook-confirm").props.accessibilityState).toMatchObject({
+      disabled: false,
+    }),
+  );
+}
+
 beforeEach(async () => {
   jest.clearAllMocks();
   await AsyncStorage.clear();
@@ -136,6 +144,7 @@ it("marks the lines that changed when another cook took the stock first", async 
     throw new ApiError(409, "Some ingredients changed", "STOCK_CHANGED");
   });
   await screen.findByText("Eggs");
+  await waitForConfirmToSettle();
 
   await act(async () => {
     fireEvent.press(screen.getByTestId("cook-confirm"));
@@ -144,4 +153,28 @@ it("marks the lines that changed when another cook took the stock first", async 
   await waitFor(() => expect(screen.getByText("Only 2 eggs left now")).toBeTruthy());
   expect(screen.getByRole("alert")).toBeTruthy();
   expect(useActiveCookStore.getState().activeCook).not.toBeNull();
+});
+
+it("ignores a confirm tapped while the checklist is still settling", async () => {
+  const confirm = jest.fn(() => ({}));
+  renderChecklist([planWith(6)], confirm);
+  await screen.findByText("Eggs");
+
+  fireEvent.press(screen.getByTestId("cook-confirm"));
+  expect(confirm).not.toHaveBeenCalled();
+
+  await waitForConfirmToSettle();
+  await act(async () => {
+    fireEvent.press(screen.getByTestId("cook-confirm"));
+  });
+  expect(confirm).toHaveBeenCalledTimes(1);
+});
+
+it("warns on the line when the amount used is more than the stock", async () => {
+  renderChecklist([planWith(2)], () => ({}));
+
+  expect(await screen.findByText("More than the 2 eggs you have")).toBeTruthy();
+
+  fireEvent.press(screen.getByLabelText("Use less Eggs"));
+  expect(screen.queryByText("More than the 2 eggs you have")).toBeNull();
 });

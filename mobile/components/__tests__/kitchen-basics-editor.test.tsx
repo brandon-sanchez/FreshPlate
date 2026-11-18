@@ -7,7 +7,12 @@ const mockBasics = {
   current: { data: [] as { id: string; name: string }[] | undefined, isError: false },
 };
 
+const mockStock = { current: [] as { name: string }[] };
+
 jest.mock("@expo/vector-icons/Feather", () => () => null);
+jest.mock("@/hooks/useFoodStock", () => ({
+  useFoodStock: () => ({ data: mockStock.current }),
+}));
 jest.mock("@/hooks/useKitchenBasics", () => ({
   MAX_KITCHEN_BASICS: 3,
   MAX_KITCHEN_BASIC_NAME_LENGTH: 40,
@@ -26,6 +31,31 @@ describe("KitchenBasicsEditor", () => {
     mockAdd.mockReset();
     mockRemove.mockReset();
     mockBasics.current = { data: [SALT, OIL], isError: false };
+    mockStock.current = [];
+  });
+
+  it("says cooking deducts a basic the kitchen also stocks as a food", () => {
+    mockStock.current = [{ name: "olive  oil" }, { name: "Rice" }];
+    const screen = render(<KitchenBasicsEditor />);
+
+    expect(
+      screen.getByText("Olive oil is in your kitchen, so cooking deducts it like any food."),
+    ).toBeTruthy();
+  });
+
+  it("names every stocked basic in one note", () => {
+    mockStock.current = [{ name: "Salt" }, { name: "Olive oil" }];
+    const screen = render(<KitchenBasicsEditor />);
+
+    expect(
+      screen.getByText("Salt and Olive oil are in your kitchen, so cooking deducts them like any food."),
+    ).toBeTruthy();
+  });
+
+  it("adds no note when no basic is stocked", () => {
+    const screen = render(<KitchenBasicsEditor />);
+
+    expect(screen.queryByText(/in your kitchen/)).toBeNull();
   });
 
   it("lists each basic as a removable pill", () => {

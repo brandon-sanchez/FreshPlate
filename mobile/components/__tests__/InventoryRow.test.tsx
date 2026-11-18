@@ -96,8 +96,8 @@ it("keeps the leftover tag and fractional amounts on a single batch", () => {
   ]);
   const screen = render(<InventoryRow row={row} photoEnabled />);
 
-  expect(screen.getByText("0.5 cup · Freezer · Leftover")).toBeTruthy();
-  expect(screen.getByLabelText("Soup, 0.5 cup, no expiry date")).toBeTruthy();
+  expect(screen.getByText("0.5 cups · Freezer · Leftover")).toBeTruthy();
+  expect(screen.getByLabelText("Soup, 0.5 cups, no expiry date")).toBeTruthy();
 });
 
 it("stacks batches into one total with a batch count and the next expiry", () => {
@@ -105,10 +105,10 @@ it("stacks batches into one total with a batch count and the next expiry", () =>
   const onPress = jest.fn();
   const screen = render(<InventoryRow row={row} photoEnabled onPress={onPress} />);
 
-  expect(screen.getByText("2000 ml · 2 batches · Fridge")).toBeTruthy();
+  expect(screen.getByText("2 l · 2 batches · Fridge")).toBeTruthy();
   expect(screen.getByText("2 days")).toBeTruthy();
 
-  fireEvent.press(screen.getByLabelText("Milk, 2000 ml, 2 batches, expires in 2 days"));
+  fireEvent.press(screen.getByLabelText("Milk, 2 l, 2 batches, expires in 2 days"));
   expect(onPress).toHaveBeenCalledWith(row);
 });
 
@@ -119,14 +119,14 @@ it("reads a total as about when any batch's amount is an estimate", () => {
   ]);
   const screen = render(<InventoryRow row={row} photoEnabled />);
 
-  expect(screen.getByText("about 1500 ml · 2 batches · Fridge")).toBeTruthy();
+  expect(screen.getByText("about 1.5 l · 2 batches · Fridge")).toBeTruthy();
 });
 
 it("counts an expired batch hidden behind a fresh one, leaving it out of the total", () => {
   const [row] = stackLots([milk("old", "2026-11-05"), milk("new", "2026-11-12")]);
   const screen = render(<InventoryRow row={row} photoEnabled />);
 
-  expect(screen.getByText("1000 ml · 2 batches · Fridge · 1 expired")).toBeTruthy();
+  expect(screen.getByText("1 l · 2 batches · Fridge · 1 expired")).toBeTruthy();
   expect(screen.getByText("4 days")).toBeTruthy();
 });
 
@@ -134,7 +134,7 @@ it("labels a row expired once every batch has expired", () => {
   const [row] = stackLots([milk("a", "2026-11-05"), milk("b", "2026-11-07")]);
   const screen = render(<InventoryRow row={row} photoEnabled />);
 
-  expect(screen.getByText("2000 ml · 2 batches · Fridge")).toBeTruthy();
+  expect(screen.getByText("2 l · 2 batches · Fridge")).toBeTruthy();
   expect(screen.getByText("Expired")).toBeTruthy();
 });
 

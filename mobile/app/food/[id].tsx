@@ -13,6 +13,7 @@ import { type InventoryItem, useInventoryItems } from "@/hooks/useInventoryItems
 import { useLeaveWhenEmptied } from "@/hooks/useLeaveWhenEmptied";
 import { useCombineLots } from "@/hooks/useCombineLots";
 import { inDrawOrder, stackLots } from "@/lib/foodRows";
+import { useFoodSubUnits } from "@/hooks/useFoodSubUnits";
 import { formatAmount } from "@/lib/amount";
 
 /**
@@ -29,6 +30,7 @@ export default function FoodDetailScreen() {
   const router = useRouter();
   const { colors, fonts } = useTheme();
   const inventory = useInventoryItems();
+  const subUnit = useFoodSubUnits()[id] ?? null;
 
   const lotsOfFood = useMemo(
     () => (inventory.data ?? []).filter((lot) => lot.food_id === id),
@@ -100,7 +102,10 @@ export default function FoodDetailScreen() {
   const iconName = (row.category?.icon ?? "circle-o") as React.ComponentProps<
     typeof FontAwesome
   >["name"];
-  const subline = [row.category?.name ?? "Uncategorized", formatAmount(row.total, row.unit, row.isEstimate)];
+  const subline = [
+    row.category?.name ?? "Uncategorized",
+    formatAmount(row.total, row.unit, row.isEstimate, subUnit),
+  ];
   if (row.lots.length > 1) subline.push(`${row.lots.length} batches`);
 
   return (
@@ -190,11 +195,16 @@ export default function FoodDetailScreen() {
               key={batch.lot.id}
               batch={batch}
               selected={selection.has(batch.lot.id)}
+              subUnit={subUnit}
               onPress={() => setSelection(toggled(selection, batch.lot.id))}
             />
           ) : (
             <LotOutcomeSwipe key={batch.lot.id} lotIds={[batch.lot.id]} name={row.name}>
-              <BatchCard batch={batch} onPress={() => router.push(`/item/${batch.lot.id}`)} />
+              <BatchCard
+                batch={batch}
+                subUnit={subUnit}
+                onPress={() => router.push(`/item/${batch.lot.id}`)}
+              />
             </LotOutcomeSwipe>
           ),
         )}

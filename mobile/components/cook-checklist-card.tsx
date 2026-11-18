@@ -2,8 +2,9 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import FoodPhoto from "@/components/food-photo";
 import { useTheme } from "@/hooks/useTheme";
+import { formatAmount } from "@/lib/amount";
 import {
-  formatStock,
+  shortfallNote,
   stepAmount,
   type ChecklistLine,
 } from "@/lib/cook-checklist";
@@ -20,7 +21,8 @@ type CookChecklistCardProps = {
 
 /**
  * One food on the done-cooking checklist: "You have X → after: Y", any note
- * about the pre-filled amount, and a stepper for the amount used.
+ * about the pre-filled amount, and a stepper for the amount used. An amount
+ * above the stock turns red with an inline warning.
  */
 export default function CookChecklistCard({
   line,
@@ -30,6 +32,8 @@ export default function CookChecklistCard({
   const { colors, fonts } = useTheme();
   const after = Math.max(0, line.available - line.amount);
   const notes = checklistNotes(line);
+  const short = shortfallNote(line) !== null;
+  const amountText = formatAmount(line.amount, line.unit, false, line.subUnit);
 
   return (
     <View
@@ -47,8 +51,8 @@ export default function CookChecklistCard({
           <Text
             style={[styles.stock, { color: colors.textMuted, fontFamily: fonts.body }]}
           >
-            You have {formatStock(line.available, line.unit, false)} → after:{" "}
-            {formatStock(after, line.unit, line.estimated)}
+            You have {formatAmount(line.available, line.unit, false, line.subUnit)} → after:{" "}
+            {formatAmount(after, line.unit, line.estimated, line.subUnit)}
           </Text>
         </View>
         <View style={styles.stepper}>
@@ -59,10 +63,13 @@ export default function CookChecklistCard({
             onPress={() => onChangeAmount(stepAmount(line, -1))}
           />
           <Text
-            accessibilityLabel={`${formatStock(line.amount, line.unit, false)} used`}
-            style={[styles.amount, { color: colors.text, fontFamily: fonts.bodyStrong }]}
+            accessibilityLabel={`${amountText} used`}
+            style={[
+              styles.amount,
+              { color: short ? colors.crit : colors.text, fontFamily: fonts.bodyStrong },
+            ]}
           >
-            {formatStock(line.amount, line.unit, false)}
+            {amountText}
           </Text>
           <StepButton
             icon="plus"
@@ -77,8 +84,8 @@ export default function CookChecklistCard({
           style={[
             styles.note,
             {
-              color: note.changed ? colors.crit : colors.textMuted,
-              fontFamily: note.changed ? fonts.bodyStrong : fonts.body,
+              color: note.warn ? colors.crit : colors.textMuted,
+              fontFamily: note.warn ? fonts.bodyStrong : fonts.body,
             },
           ]}
         >
@@ -133,12 +140,14 @@ function StepButton({
   );
 }
 
-type Note = { text: string; changed: boolean };
+type Note = { text: string; warn: boolean };
 
 function checklistNotes(line: ChecklistLine): Note[] {
   const notes: Note[] = [];
-  if (line.changed) notes.push({ text: line.changed, changed: true });
-  if (line.roundingNote) notes.push({ text: line.roundingNote, changed: false });
+  const shortfall = shortfallNote(line);
+  if (line.changed) notes.push({ text: line.changed, warn: true });
+  else if (shortfall) notes.push({ text: shortfall, warn: true });
+  if (line.roundingNote) notes.push({ text: line.roundingNote, warn: false });
   for (const asked of line.planLines.filter((planLine) => planLine.mode === "ask")) {
     const said =
       asked.recipe_amount > 0
@@ -146,14 +155,14 @@ function checklistNotes(line: ChecklistLine): Note[] {
         : asked.recipe_unit;
     notes.push({
       text: `Recipe says ${said} of ${asked.ingredient}. Set how much you used.`,
-      changed: false,
+      warn: false,
     });
   }
   const seasoningOnly =
     line.planLines.length > 0 &&
     line.planLines.every((planLine) => planLine.mode === "small");
   if (seasoningOnly && line.amount === 0) {
-    notes.push({ text: "Just a little, so nothing is deducted", changed: false });
+    notes.push({ text: "Just a little, so nothing is deducted", warn: false });
   }
   return notes;
 }

@@ -1,4 +1,4 @@
-import { MEASURED_UNITS } from "@/lib/stockUnit";
+import { MEASURED_UNITS, singular } from "@/lib/stockUnit";
 import type {
   RecipeIngredient,
   RecipeStep,
@@ -71,6 +71,23 @@ export function formatIngredientAmount(ingredient: RecipeIngredient): string {
   const plural =
     ingredient.use_amount > 1 && !ABBREVIATED_UNITS.has(unit) && amount !== "1";
   return `${amount} ${plural ? pluralize(unit) : unit}`;
+}
+
+/**
+ * Returns an ingredient's name as it reads after its amount. When the amount
+ * is a bare "1" of a food counted whole, the name's last word is made
+ * singular, so "1 Lemons" reads "1 Lemon". Any other amount keeps the name
+ * as the recipe wrote it.
+ */
+export function formatIngredientName(ingredient: RecipeIngredient): string {
+  if (formatIngredientAmount(ingredient) !== "1") return ingredient.name;
+  const start = ingredient.name.lastIndexOf(" ") + 1;
+  const last = ingredient.name.slice(start);
+  const one = singular(last.toLowerCase());
+  const kept = last.toLowerCase().startsWith(one)
+    ? last.slice(0, one.length)
+    : last[0] + one.slice(1);
+  return ingredient.name.slice(0, start) + kept;
 }
 
 /**

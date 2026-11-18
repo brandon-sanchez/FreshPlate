@@ -1,4 +1,8 @@
-import { formatIngredientAmount, readRecipeSteps } from "@/lib/recipe-format";
+import {
+  formatIngredientAmount,
+  formatIngredientName,
+  readRecipeSteps,
+} from "@/lib/recipe-format";
 import type { RecipeIngredient } from "@/types/recipes";
 
 function ingredient(
@@ -37,6 +41,19 @@ describe("formatIngredientAmount", () => {
         ingredient("Garlic", 0.25, "head", { display_amount: "3 cloves" }),
       ),
     ).toBe("3 cloves");
+  });
+});
+
+describe("formatIngredientName", () => {
+  it.each([
+    ["Lemons", 1, "lemon", {}, "Lemon"],
+    ["Chicken thighs", 1, "thigh", { display_amount: "1" }, "Chicken thigh"],
+    ["Berries", 1, "each", {}, "Berry"],
+    ["Lemons", 2, "lemon", {}, "Lemons"],
+    ["Olive oil", 1, "tbsp", {}, "Olive oil"],
+    ["Eggs", 1, "egg", { display_amount: "1 large" }, "Eggs"],
+  ])("names %s at %s %s %j as %s", (name, amount, unit, extra, expected) => {
+    expect(formatIngredientName(ingredient(name, amount, unit, extra))).toBe(expected);
   });
 });
 
