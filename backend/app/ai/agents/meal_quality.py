@@ -1,22 +1,26 @@
-"""Semantic meal review for deterministically grounded recipes."""
+"""Review one generated recipe: inventory checks, then the judge."""
 
 from __future__ import annotations
 
 import json
+import logging
+import time
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.ai.agents.dish import RequestedDish, requested_dish
 from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.models import Recipe
 from app.ai.agents.nodes import check_quality
-from app.ai.agents.state import QualityResult
+from app.ai.agents.state import RecipeReview
 from app.ai.llm.errors import ProviderError
 from app.ai.llm.protocol import LLMProvider
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.prompts.loader import PromptTemplate, load_prompt
+
+logger = logging.getLogger("freshplate.ai.recipes")
 
 MealVerdict = Literal[
     "eligible", "wrong_dish", "insufficient", "incoherent", "unsupported_ingredient"
@@ -24,7 +28,7 @@ MealVerdict = Literal[
 
 
 class MealCheck(BaseModel):
-    """One recipe's checklist answers.
+    """The judge's checklist answers for one recipe.
 
     Structured output is written in key order, so the reasoning fields come
     before the yes/no answers they justify. Code, not the model, turns the
@@ -32,7 +36,6 @@ class MealCheck(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    candidate_index: StrictInt
     main_component: str = Field(
         description="The food that makes this dish the requested dish, with its "
         "amount per serving."
@@ -67,11 +70,6 @@ class MealCheck(BaseModel):
     )
 
 
-class MealChecklist(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    checks: list[MealCheck]
-
-
 def meal_verdict(
     check: MealCheck, dish: RequestedDish, basics: KitchenBasics
 ) -> tuple[MealVerdict, str]:
@@ -94,22 +92,22 @@ def meal_verdict(
     return "eligible", check.main_component
 
 
-async def assess_meals(
-    recipes: list[Recipe],
+async def assess_meal(
+    recipe: Recipe,
     state: Mapping[str, Any],
     provider: LLMProvider,
     *,
     prompt: PromptTemplate | None = None,
     deadline: PipelineDeadline,
-) -> tuple[list[Recipe], str | None, dict[str, Any]]:
-    """Keep the recipes a Gemini judge finds to be the dish the cook asked for.
+) -> tuple[MealVerdict, str]:
+    """Ask the Gemini judge whether ``recipe`` is the dish the cook asked for.
 
-    Makes one provider call for the whole batch. The judge is told which
+    Makes one provider call for this recipe alone. The judge is told which
     dish the session asks for, from ``requested_dish``, and sees only the
-    kitchen items each recipe uses, plus the kitchen basics.
+    kitchen items the recipe uses, plus the kitchen basics.
 
     Args:
-        recipes: Recipes that already passed the inventory checks.
+        recipe: A recipe that already passed the inventory checks.
         state: The recipe state; ``usable_items``, ``kitchen_basics`` and
             ``preferences`` are read.
         provider: The model client the judge runs on.
@@ -117,13 +115,12 @@ async def assess_meals(
         deadline: The pipeline deadline the call must finish inside.
 
     Returns:
-        The eligible recipes in their original order, the rejection reasons
-        joined one per line (None when every recipe passes), and the judge
-        prompt's name and version for trace metadata.
+        The verdict and its reason: the main component when eligible, or
+        retry feedback when not.
 
     Raises:
         ProviderError: When the call fails, the deadline runs out, or the
-            checklist does not answer every recipe exactly once.
+            answer doesn't fit the checklist.
     """
     template = prompt or load_prompt("assess_meals")
     inventory_by_id = {item["id"]: item for item in state.get("usable_items", [])}
@@ -131,14 +128,8 @@ async def assess_meals(
     dish = requested_dish(preferences)
     basics: KitchenBasics = state["kitchen_basics"]
     payload = {
-        "candidates": [
-            {
-                "candidate_index": index,
-                "recipe": recipe.model_dump(mode="json"),
-                "kitchen_items": _kitchen_items(recipe, inventory_by_id),
-            }
-            for index, recipe in enumerate(recipes)
-        ],
+        "recipe": recipe.model_dump(mode="json"),
+        "kitchen_items": _kitchen_items(recipe, inventory_by_id),
         "kitchen_basics": list(basics.names),
         "preferences": preferences,
         "requested_dish": dish,
@@ -148,36 +139,79 @@ async def assess_meals(
     try:
         response = await provider.generate(
             json.dumps(payload, sort_keys=True, default=str),
-            response_model=MealChecklist,
+            response_model=MealCheck,
             system_instruction=template.system,
             deadline=deadline,
             thinking=template.thinking,
         )
         if deadline.expired:
             raise ProviderError("Meal assessment deadline exhausted")
-        checklist = MealChecklist.model_validate(response)
-        expected = set(range(len(recipes)))
-        indices = [check.candidate_index for check in checklist.checks]
-        if set(indices) != expected or len(indices) != len(set(indices)):
-            raise ValueError("Meal checklist must contain one entry per candidate")
+        check = MealCheck.model_validate(response)
     except ProviderError:
         raise
     except Exception as exc:
         raise ProviderError("Meal assessment unavailable", cause=exc) from exc
+    return meal_verdict(check, dish, basics)
 
-    eligible: list[Recipe] = []
-    failures: list[str] = []
-    checks_by_index = {check.candidate_index: check for check in checklist.checks}
-    for index, recipe in enumerate(recipes):
-        verdict, reason = meal_verdict(checks_by_index[index], dish, basics)
-        if verdict == "eligible":
-            eligible.append(recipe)
-        else:
-            failures.append(f"Recipe '{recipe.title}': {verdict}: {reason}")
-    return eligible, "\n".join(failures) if failures else None, {
-        "assessment_prompt_name": template.name,
-        "assessment_prompt_version": template.version,
+
+async def review_recipe(
+    recipe: Recipe,
+    state: Mapping[str, Any],
+    provider: LLMProvider,
+    *,
+    prompt: PromptTemplate | None = None,
+    deadline: PipelineDeadline,
+) -> RecipeReview:
+    """Check one generated recipe in code, then ask the judge only if it passes.
+
+    The inventory checks of ``check_quality`` run first. A recipe they
+    reject gets its feedback with no model call. Logs the verdict and the
+    judge's time for each recipe the judge sees.
+
+    Args:
+        recipe: One recipe as a generation call returned it.
+        state: The recipe state ``check_quality`` and ``assess_meal`` read.
+        provider: The model client the judge runs on.
+        prompt: The judge prompt, or None to load ``assess_meals``.
+        deadline: The pipeline deadline the judge call must finish inside.
+
+    Returns:
+        The tidied recipe when it passes, or why it was rejected, as
+        ``Recipe '<title>': <reason>``.
+
+    Raises:
+        ProviderError: When the judge call fails, so the recipe is never
+            released unreviewed.
+    """
+    grounded = check_quality({**state, "generated_recipes": [recipe]})
+    if not grounded["valid_recipes"]:
+        return RecipeReview(None, grounded["quality_feedback"])
+    tidy = grounded["valid_recipes"][0]
+    started = time.monotonic()
+    verdict, reason = await assess_meal(
+        tidy, state, provider, prompt=prompt, deadline=deadline
+    )
+    _log_review(tidy, verdict, judge_seconds=time.monotonic() - started)
+    if verdict == "eligible":
+        return RecipeReview(tidy, None)
+    return RecipeReview(None, f"Recipe '{tidy.title}': {verdict}: {reason}")
+
+
+def _log_review(recipe: Recipe, verdict: MealVerdict, *, judge_seconds: float) -> None:
+    """Log one review, so judge time and rejections by check can be tuned.
+
+    The judge call's tokens are in the provider's own call record.
+    """
+    review = {
+        "verdict": verdict,
+        "judge_seconds": round(judge_seconds, 2),
+        "title": recipe.title,
     }
+    logger.info(
+        "Recipe review %s",
+        " ".join(f"{key}={value}" for key, value in review.items()),
+        extra={"recipe_review": review},
+    )
 
 
 def _kitchen_items(
@@ -206,25 +240,3 @@ def _kitchen_items(
             )
             entry["recipe_names"].append(ingredient.name)
     return list(items.values())
-
-
-async def review_recipes(
-    state: Mapping[str, Any],
-    provider: LLMProvider,
-    *,
-    deadline: PipelineDeadline,
-) -> QualityResult:
-    """Reject inventory failures before assessing the remaining meals."""
-    result = check_quality(state)
-    if not result["valid_recipes"]:
-        return result
-    eligible, feedback, metadata = await assess_meals(
-        result["valid_recipes"], state, provider, deadline=deadline
-    )
-    return {
-        "valid_recipes": eligible,
-        "quality_feedback": "\n".join(
-            value for value in (result["quality_feedback"], feedback) if value
-        ) or None,
-        "metadata": {**state.get("metadata", {}), **metadata},
-    }

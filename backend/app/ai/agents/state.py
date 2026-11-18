@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date
-from typing import Any, NotRequired
+from typing import Any, NamedTuple, NotRequired
 
 # Pydantic validates feed refills' stored usable items against these, and on
 # Python 3.11 it accepts only typing_extensions TypedDicts.
@@ -55,10 +55,31 @@ class RetrievalResult(TypedDict):
 
 
 class GenerationResult(TypedDict):
-    """State update returned by ``generate_recipes``."""
+    """State update returned by ``generate_recipes``.
+
+    ``generated_recipes`` holds every recipe the calls wrote, rejected ones
+    included. With a reviewer, ``valid_recipes`` holds the ones it kept,
+    ``quality_feedback`` the reasons for the slots that ended rejected, and
+    ``retry_count`` how many rewrites the slots made in all.
+    """
 
     generated_recipes: list[Recipe]
     retry_count: int
+    valid_recipes: NotRequired[list[Recipe]]
+    quality_feedback: NotRequired[str | None]
+
+
+class RecipeReview(NamedTuple):
+    """One generated recipe's review.
+
+    Attributes:
+        recipe: The recipe to keep, tidied, or None when it was rejected.
+        feedback: Why it was rejected, written for the retry prompt, or None
+            when it was kept.
+    """
+
+    recipe: Recipe | None
+    feedback: str | None
 
 
 class QualityResult(TypedDict):
@@ -103,7 +124,8 @@ class RecipeState(TypedDict, total=False):
     ``recipe_photos`` maps each valid recipe's photo cache key
     (``ImageService.recipe_key``) to its photo. Only graphs built with a
     photo source set it. ``steering`` is absent when the cook hasn't picked
-    "More like this" or "Less like this" on any recipe.
+    "More like this" or "Less like this" on any recipe. ``retry_count``
+    counts the rewrites the write step made across all its slots.
     """
 
     inventory: list[Mapping[str, Any]]
