@@ -11,15 +11,16 @@ import {
 export const RECIPE_FEED_PAGE_SIZE = 5;
 /**
  * How long the app waits for a feed response. It is above the backend's
- * 48 s session and 43 s page budgets, which include generating each batch's
- * photos, so the app receives the server's own answer instead of aborting
- * first.
+ * session and page budgets, which include generating each batch's photos,
+ * by enough to cover a backend cold start. The app then receives the
+ * server's own answer instead of aborting first.
+ * `backend/tests/test_request_budgets.py` checks the gap.
  */
 export const RECIPE_FEED_REQUEST_TIMEOUT_MS = 50_000;
 /**
  * How long the app waits to read a feed back after a restart. It is above
- * the backend's 8 s restore budget, and short because the Recipes tab shows
- * a loading state until the read settles.
+ * the backend's restore budget plus a backend cold start, and short because
+ * the Recipes tab shows a loading state until the read settles.
  */
 export const RECIPE_FEED_RESTORE_TIMEOUT_MS = 10_000;
 

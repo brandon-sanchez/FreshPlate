@@ -118,20 +118,21 @@ class Settings(BaseSettings):
 
     ai_pipeline_budget_seconds: float = Field(default=25.0, gt=0, lt=30.0)
     # Feed budgets include the batch's photos: the recipe steps stop
-    # PHOTO_RESERVE_SECONDS early to leave them time. Each must stay
-    # under the app's 50 s request timeout (RECIPE_FEED_REQUEST_TIMEOUT_MS in
-    # mobile/lib/recipe-feed-api.ts), so the app sees the server's answer.
-    # The recipe steps need about 16 s to generate, then at least 10 s
-    # (GEMINI_MIN_DEADLINE_SECONDS) still on their deadline to start the
-    # quality check.
-    recipe_feed_initial_budget_seconds: float = Field(default=48.0, gt=0, lt=50.0)
+    # PHOTO_RESERVE_SECONDS early to leave them time. Each must stay under
+    # the app's 50 s request timeout (RECIPE_FEED_REQUEST_TIMEOUT_MS in
+    # mobile/lib/recipe-feed-api.ts) with room for a Lambda cold start, which
+    # runs before the budget starts, so the app sees the server's answer.
+    # tests/test_request_budgets.py checks that room. The recipe steps need
+    # about 16 s to generate, then at least 10 s (GEMINI_MIN_DEADLINE_SECONDS)
+    # still on their deadline to start the quality check.
+    recipe_feed_initial_budget_seconds: float = Field(default=41.0, gt=0, lt=50.0)
     # A refill must also finalize before its claim expires, 45 s after
     # claim_recipe_feed_refill grants it.
-    recipe_feed_page_budget_seconds: float = Field(default=43.0, gt=0, lt=45.0)
+    recipe_feed_page_budget_seconds: float = Field(default=41.0, gt=0, lt=45.0)
     recipe_feed_store_timeout_seconds: float = Field(default=2.0, gt=0, lt=5.0)
     # Reading a session back generates nothing, so the app falls back to its
     # empty feed quickly instead of waiting out a generation budget.
-    recipe_feed_restore_budget_seconds: float = Field(default=8.0, gt=0, lt=45.0)
+    recipe_feed_restore_budget_seconds: float = Field(default=3.0, gt=0, lt=45.0)
 
     # Server
     host: str = "0.0.0.0"
