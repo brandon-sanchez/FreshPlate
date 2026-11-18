@@ -16,6 +16,18 @@ updates:
         patterns: ["*"]
         update-types: [major]
 
+  - package-ecosystem: pip
+    directory: /infra
+    schedule:
+      interval: weekly
+    groups:
+      infra:
+        patterns: ["*"]
+        update-types: [minor, patch]
+      infra-major:
+        patterns: ["*"]
+        update-types: [major]
+
   - package-ecosystem: npm
     directory: /mobile
     schedule:
