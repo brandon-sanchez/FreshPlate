@@ -51,3 +51,6 @@ AGENTS.md
 
 # Verification run evidence and process state (see .claude/skills/verify)
 .verify/
+
+# AWS CDK synth output
+cdk.out/

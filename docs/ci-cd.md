@@ -1,8 +1,8 @@
 # How CI checks every change
 
-GitHub Actions runs the `CI` workflow (`.github/workflows/ci.yml`) on every pull request and on every commit that reaches `main`. A PR is ready to merge when all three of its jobs pass. This page explains what each job checks, when the workflow runs, and how dependency updates arrive. Deployment is planned as a separate workflow in [#36](https://github.com/brandon-sanchez/FreshPlate/issues/36) and is not covered here.
+GitHub Actions runs the `CI` workflow (`.github/workflows/ci.yml`) on every pull request and on every commit that reaches `main`. A PR is ready to merge when all four of its jobs pass. This page explains what each job checks, when the workflow runs, and how dependency updates arrive. Deployment is planned as a separate workflow in [#36](https://github.com/brandon-sanchez/FreshPlate/issues/36) and is not covered here.
 
-## Three jobs check the backend, the app, and the image
+## Four jobs check the backend, the app, the image, and the infrastructure
 
 The jobs run in parallel, each on its own GitHub-hosted machine.
 
@@ -11,6 +11,7 @@ The jobs run in parallel, each on its own GitHub-hosted machine.
 | `Backend` | `ruff check .` and `pytest` in `backend/`, on Python 3.11 | A Ruff error or a failing test |
 | `Mobile` | `npm run lint`, `npx tsc --noEmit`, and Jest in `mobile/`, on Node 22 | Any ESLint error or warning, a type error, or a failing test |
 | `Docker build` | Builds `backend/Dockerfile` for arm64, pushes nothing, and calls `/health` on a container started from it | An image that does not build or serve `/health` |
+| `Infrastructure` | `ruff check .` and `pytest` in `infra/`, including a synth with the cdk-nag AWS Solutions checks | A Ruff error, a failing stack test, or a cdk-nag finding nobody acknowledged |
 
 `npm run lint` runs ESLint with `eslint-config-expo` over all of `mobile/`. It allows zero warnings, so a stale hook dependency fails the build the same way a syntax error does.
 
@@ -35,7 +36,7 @@ Runs on `main` are never cancelled. Each one gets its own concurrency group, key
 
 ## Dependabot sends weekly grouped updates
 
-Dependabot (`.github/dependabot.yml`) checks Python (`backend/`), npm (`mobile/`), and GitHub Actions once a week. Each ecosystem gets at most two grouped PRs a week: one with all its minor and patch updates, and one with all its major updates. Majors are the updates that need code changes, so they stay apart, and a broken major never blocks the safe ones.
+Dependabot (`.github/dependabot.yml`) checks Python (`backend/` and `infra/`), npm (`mobile/`), and GitHub Actions once a week. Each ecosystem gets at most two grouped PRs a week: one with all its minor and patch updates, and one with all its major updates. Majors are the updates that need code changes, so they stay apart, and a broken major never blocks the safe ones.
 
 Some npm packages must match the Expo SDK version exactly: `expo`, `expo-*`, `react`, `react-native`, `jest`, `eslint`, `typescript`, and a few more listed in the config. Dependabot never updates them, because even a patch release outside the SDK's set can break the app. To update them, run `npx expo install --fix` in `mobile/`, or upgrade the SDK. The last section shows how.
 
@@ -63,7 +64,13 @@ To catch failures before CI does, run the same commands from the repository root
 	(cd mobile && npm run lint && npx tsc --noEmit && npm test)
 	```
 
-3. Build the image:
+3. Check the infrastructure:
+
+	```bash
+	(cd infra && ruff check . && pytest)
+	```
+
+4. Build the image:
 
 	```bash
 	docker build backend
