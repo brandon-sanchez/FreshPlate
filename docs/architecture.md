@@ -123,7 +123,7 @@ The pipeline shares one `PipelineDeadline` across all nodes. `POST /api/recipes/
 
 A judge call that fails drops only its recipe. The batch fails when any call failed and no recipe was kept, because the failed call might have written a keeper. An empty batch therefore always means every call answered, so an outage never looks like a kitchen that can't make a meal.
 
-The deadline keeps a slow model call from holding a request open past the app's timeout. It also causes the main failure in the live eval. When generation runs long, too little time is left for the judge. The [evaluation reference](evals.md) has the numbers.
+The deadline keeps a slow model call from holding a request open past the app's timeout.
 
 Open [PR #73](https://github.com/brandon-sanchez/FreshPlate/pull/73) changes this pipeline. It sets Gemini's thinking level to minimal and replaces the meal judge with a checklist judge whose verdict code decides.
 
@@ -233,6 +233,5 @@ Supabase, Gemini, OpenAI image generation, Open Food Facts, and LangSmith stay a
 
 ## Where to go next
 
-- [Evaluation reference](evals.md) describes the eval dataset, metrics, and latest scorecards.
-- [Run the evals](run-evals.md) shows how to run them.
+- [Recipe evals](evals.md) explains what the eval measures, defines the rubric, and shows how to run it and read the scorecard.
 - [CI/CD](ci-cd.md) explains what runs on each push.
