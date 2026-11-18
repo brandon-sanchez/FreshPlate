@@ -20,7 +20,7 @@ _STOCK_COLUMNS = (
 # migration stops a household at 30 basics.
 _BASICS_READ_LIMIT = 30
 _FACT_COLUMNS = (
-    "id,stock_base,each_label,grams_per_each,ml_per_each,g_per_ml,"
+    "id,stock_base,each_label,whole_units_only,grams_per_each,ml_per_each,g_per_ml,"
     "household_units,profile_key,profile_g_per_ml,profile_unit_grams"
 )
 

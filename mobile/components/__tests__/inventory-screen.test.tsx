@@ -2,7 +2,8 @@ import React from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { SectionList } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { swipeOpen } from "@/test-utils/swipe";
 
 const mockLots = { current: [] as unknown[] };
 const mockRpc = jest.fn();
@@ -43,6 +44,7 @@ jest.mock("@/lib/image-api", () => ({
 }));
 
 import InventoryScreen from "@/app/(tabs)/inventory";
+import PinnedSectionList from "@/components/PinnedSectionList";
 
 function inDays(n: number): string {
   const d = new Date();
@@ -89,7 +91,21 @@ function renderScreen() {
   );
 }
 
-beforeEach(() => {
+async function chooseTab(name: string) {
+  fireEvent.press(screen.getByRole("tab", { name }));
+  for (let frame = 0; frame < 20; frame++) {
+    await act(() => new Promise((resolve) => setTimeout(resolve, 16)));
+  }
+}
+
+async function dragOpen(name: string, lotIds: string) {
+  const row = screen.getAllByTestId("swipe-row").find((r) => within(r).queryByText(name))!;
+  await swipeOpen(`lot-swipe:${lotIds}`);
+  return row;
+}
+
+beforeEach(async () => {
+  await AsyncStorage.clear();
   mockFetchFoodImage.mockClear();
   mockPush.mockClear();
   mockRpc.mockReset();
@@ -106,6 +122,7 @@ it("shows one row per food with its batches stacked, counting foods in the subti
   renderScreen();
 
   expect(await screen.findByText("2 items · 1 expired")).toBeTruthy();
+  await chooseTab("Urgency");
   expect(screen.getAllByText("Milk")).toHaveLength(1);
   expect(screen.getByText("2000 ml · 2 batches · Fridge, Freezer")).toBeTruthy();
   expect(screen.getByText("6 egg · Fridge")).toBeTruthy();
@@ -114,10 +131,22 @@ it("shows one row per food with its batches stacked, counting foods in the subti
   expect(mockPush).toHaveBeenCalledWith("/food/food-milk");
 });
 
+it("builds a row's swipe actions only once the row is dragged", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+  expect(screen.queryByLabelText("Toss")).toBeNull();
+
+  const eggsRow = await dragOpen("Eggs", "eggs-1");
+
+  expect(within(eggsRow).getByLabelText("Toss")).toBeTruthy();
+  expect(screen.getAllByLabelText("Toss")).toHaveLength(1);
+});
+
 it("records every batch a row stacks when its swipe action is tapped", async () => {
   renderScreen();
   await screen.findByText("2 items · 1 expired");
-  const milkRow = screen.getAllByTestId("swipe-row").find((row) => within(row).queryByText("Milk"));
+  await chooseTab("Category");
+  const milkRow = await dragOpen("Milk", "milk-fridge,milk-freezer");
 
   fireEvent.press(within(milkRow!).getByLabelText("Toss"));
 
@@ -135,7 +164,7 @@ it("records a row once when its actions are tapped again before the first record
   mockRpc.mockReturnValue(new Promise((resolve) => (finish = resolve)));
   renderScreen();
   await screen.findByText("2 items · 1 expired");
-  const milkRow = screen.getAllByTestId("swipe-row").find((row) => within(row).queryByText("Milk"));
+  const milkRow = await dragOpen("Milk", "milk-fridge");
 
   fireEvent.press(within(milkRow!).getByLabelText("Used up"));
   fireEvent.press(within(milkRow!).getByLabelText("Used up"));
@@ -149,7 +178,8 @@ it("takes taps again after a record fails", async () => {
   mockRpc.mockResolvedValueOnce({ error: { message: "Failed to fetch" } });
   renderScreen();
   await screen.findByText("2 items · 1 expired");
-  const milkRow = screen.getAllByTestId("swipe-row").find((row) => within(row).queryByText("Milk"));
+  await chooseTab("Category");
+  const milkRow = await dragOpen("Milk", "milk-fridge,milk-freezer");
 
   fireEvent.press(within(milkRow!).getByLabelText("Used up"));
   await waitFor(() => expect(mockRpc).toHaveBeenCalledTimes(1));
@@ -175,11 +205,9 @@ it("narrows rows by search", async () => {
   expect(screen.getByText("Eggs")).toBeTruthy();
 });
 
-it("splits a food across places in the Location view", async () => {
+it("splits a food across places in the Location view it opens on", async () => {
   renderScreen();
   await screen.findByText("2 items · 1 expired");
-
-  fireEvent.press(screen.getByText("Location"));
 
   expect(screen.getAllByText("Milk")).toHaveLength(2);
   expect(screen.getByText("1000 ml · Fridge")).toBeTruthy();
@@ -207,7 +235,7 @@ it("opens Review expired from the subtitle in any view, even when the expired ba
   renderScreen();
   await screen.findByText("1 item · 1 expired");
 
-  fireEvent.press(screen.getByText("Location"));
+  await chooseTab("Category");
   fireEvent.press(screen.getByLabelText("1 expired. Review expired batches"));
 
   expect(mockPush).toHaveBeenCalledWith("/review-expired");
@@ -216,6 +244,7 @@ it("opens Review expired from the subtitle in any view, even when the expired ba
 it("opens Review expired from the Expired section header", async () => {
   renderScreen();
   await screen.findByText("2 items · 1 expired");
+  await chooseTab("Urgency");
 
   fireEvent.press(screen.getByText("Review"));
 
@@ -229,7 +258,7 @@ it("swipes away only the unexpired batches of a row, leaving the expired one for
   ];
   renderScreen();
   await screen.findByText("1 item · 1 expired");
-  const milkRow = screen.getAllByTestId("swipe-row").find((row) => within(row).queryByText("Milk"));
+  const milkRow = await dragOpen("Milk", "milk-new");
 
   fireEvent.press(within(milkRow!).getByLabelText("Used up"));
 
@@ -254,6 +283,7 @@ it("opens the collapsed Fresh section to show a just-added batch", async () => {
   const butter = { id: "food-butter", name: "Butter", stock_base: "g", each_label: null };
   mockLots.current = [...mockLots.current, lotRow("butter-1", butter, 30, "fridge", 250)];
   mockParams.current = { added: "butter-1" };
+  await AsyncStorage.setItem("freshplate.inventory-view", JSON.stringify({ groupBy: "Urgency" }));
   renderScreen();
 
   expect(await screen.findByText("Butter")).toBeTruthy();
@@ -264,8 +294,118 @@ it("keeps Fresh collapsed when nothing was just added", async () => {
   mockLots.current = [...mockLots.current, lotRow("butter-1", butter, 30, "fridge", 250)];
   renderScreen();
   await screen.findByText("3 items · 1 expired");
+  await chooseTab("Urgency");
 
   expect(screen.queryByText("Butter")).toBeNull();
+});
+
+const rowNames = () => screen.getAllByText(/^(Eggs|Milk)$/).map((node) => node.props.children);
+
+it("opens on Location, with the tabs in Location, Category, Urgency order", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+
+  expect(screen.getAllByRole("tab").map((tab) => tab.props.accessibilityLabel)).toEqual([
+    "Location",
+    "Category",
+    "Urgency",
+  ]);
+  expect(screen.getByRole("tab", { name: "Location", selected: true })).toBeTruthy();
+});
+
+async function openMenu() {
+  fireEvent.press(screen.getByRole("button", { name: "Sort and filter" }));
+  await screen.findByRole("button", { name: "Done" });
+}
+
+it("sorts the rows inside each section from the menu, flipping the direction on a second tap", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+  expect(rowNames()).toEqual(["Eggs", "Milk", "Milk"]);
+  expect(screen.getByText("Expiry date, soonest first · all 2 items")).toBeTruthy();
+
+  await openMenu();
+  expect(screen.getByRole("radio", { name: "Expiry date", checked: true })).toBeTruthy();
+  fireEvent.press(screen.getByRole("radio", { name: "Name" }));
+  fireEvent.press(screen.getByRole("radio", { name: "Name" }));
+
+  expect(rowNames()).toEqual(["Milk", "Eggs", "Milk"]);
+  expect(screen.getByRole("radio", { name: "Name", checked: true })).toBeTruthy();
+  expect(screen.getByText("Name, Z to A · all 2 items")).toBeTruthy();
+  expect(screen.getAllByText(/^(Fridge|Freezer)$/).map((node) => node.props.children)).toEqual([
+    "Fridge",
+    "Freezer",
+  ]);
+});
+
+it("reopens with the grouping and sort chosen last time", async () => {
+  const first = renderScreen();
+  await screen.findByText("2 items · 1 expired");
+  await chooseTab("Category");
+  await openMenu();
+  fireEvent.press(screen.getByRole("radio", { name: "Amount" }));
+  await waitFor(async () => expect(await AsyncStorage.getItem("freshplate.inventory-view")).toContain("amount-desc"));
+  first.unmount();
+
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+
+  expect(screen.getByRole("tab", { name: "Category", selected: true })).toBeTruthy();
+  expect(screen.getByText("Amount, most first · all 2 items")).toBeTruthy();
+});
+
+it("filters by place from the menu as each option is checked, and clears from the summary line", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+
+  await openMenu();
+  expect(screen.queryByRole("checkbox", { name: "Freezer" })).toBeNull();
+  fireEvent.press(screen.getByRole("button", { name: "Location" }));
+  fireEvent.press(screen.getByRole("checkbox", { name: "Freezer" }));
+
+  expect(rowNames()).toEqual(["Milk"]);
+  expect(screen.getByText("1000 ml · Freezer")).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "Freezer", checked: true })).toBeTruthy();
+  expect(screen.getByText("Expiry date, soonest first · Freezer")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Sort and filter" }).props.accessibilityValue).toEqual({
+    text: "1 filter on",
+  });
+
+  fireEvent.press(screen.getByRole("button", { name: "Done" }));
+  expect(screen.queryByRole("checkbox", { name: "Freezer" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Sort and filter", expanded: false })).toBeTruthy();
+  fireEvent.press(screen.getByRole("button", { name: "Clear filters" }));
+
+  expect(rowNames()).toEqual(["Eggs", "Milk", "Milk"]);
+  expect(screen.getByText("Expiry date, soonest first · all 2 items")).toBeTruthy();
+});
+
+it("says nothing matches when a switch leaves no rows, offering to clear the filters", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+
+  await openMenu();
+  fireEvent.press(screen.getByRole("switch", { name: "Leftovers only" }));
+
+  expect(screen.getByRole("switch", { name: "Leftovers only", checked: true })).toBeTruthy();
+  expect(screen.queryByText("Milk")).toBeNull();
+  expect(screen.getByText("No matches.")).toBeTruthy();
+
+  fireEvent.press(screen.getByRole("button", { name: "Done" }));
+  expect(screen.queryByRole("switch")).toBeNull();
+  fireEvent.press(screen.getByText("Clear filters"));
+  expect(rowNames()).toEqual(["Eggs", "Milk", "Milk"]);
+});
+
+it("closes the menu when tapped outside, keeping the current sort", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+
+  await openMenu();
+  fireEvent(screen.getByLabelText("Close sort and filter", { includeHiddenElements: true }), "pressIn");
+
+  expect(screen.queryByRole("radio")).toBeNull();
+  expect(rowNames()).toEqual(["Eggs", "Milk", "Milk"]);
 });
 
 it("asks for a row's photo only once the row has been on screen", async () => {
@@ -273,7 +413,7 @@ it("asks for a row's photo only once the row has been on screen", async () => {
   await screen.findByText("2 items · 1 expired");
   expect(mockFetchFoodImage).not.toHaveBeenCalled();
 
-  const list = screen.UNSAFE_getByType(SectionList);
+  const list = screen.UNSAFE_getByType(PinnedSectionList);
   const milkRow = list.props.sections
     .flatMap((section: { data: { foodId: string }[] }) => section.data)
     .find((row: { foodId: string }) => row.foodId === "food-milk");
@@ -286,4 +426,40 @@ it("asks for a row's photo only once the row has been on screen", async () => {
 
   await waitFor(() => expect(mockFetchFoodImage).toHaveBeenCalledTimes(1));
   expect(mockFetchFoodImage.mock.calls[0][0]).toBe("food-milk");
+});
+
+it("mounts only the first rows of a long inventory", async () => {
+  mockLots.current = Array.from({ length: 60 }, (_, i) =>
+    lotRow(`lot-${i}`, { ...milk, id: `food-${i}`, name: `Food ${i}` }, 5, "fridge", 100),
+  );
+  renderScreen();
+  await screen.findByText("60 items · 0 expired");
+
+  const shown = screen.getAllByText(/^Food \d+$/).length;
+  expect(shown).toBeGreaterThan(0);
+  expect(shown).toBeLessThan(60);
+});
+
+it("moves the tab at once and regroups the rows once the old ones fade out", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+
+  fireEvent.press(screen.getByRole("tab", { name: "Urgency" }));
+
+  expect(screen.getByRole("tab", { name: "Urgency", selected: true })).toBeTruthy();
+  expect(screen.queryByText("This week")).toBeNull();
+  expect(await screen.findByText("This week")).toBeTruthy();
+});
+
+it("never says nothing matches while the rows regroup", async () => {
+  renderScreen();
+  await screen.findByText("2 items · 1 expired");
+
+  fireEvent.press(screen.getByRole("tab", { name: "Category" }));
+  for (let frame = 0; frame < 20; frame++) {
+    await act(() => new Promise((resolve) => setTimeout(resolve, 16)));
+    expect(screen.queryByText(/No matches/)).toBeNull();
+  }
+
+  expect(screen.getByText("Dairy")).toBeTruthy();
 });

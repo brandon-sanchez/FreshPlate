@@ -1,12 +1,71 @@
-"""Cook confirmation endpoint, which deducts a finished cook from stock."""
+"""Cook endpoints: plan the done-cooking checklist and deduct a confirmed cook."""
+
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.core.auth import CurrentUserId
 from app.core.config import settings
+from app.models.cook import CookPlanRequest, CookPlanResponse
 from app.models.recipes import CookConfirmationRequest
+from app.services.cook_checklist import build_checklist
+from app.services.food_lines import (
+    FoodLinesError,
+    FoodLineSource,
+    SupabaseFoodLineSource,
+)
 
 router = APIRouter(prefix="/api/cook", tags=["cook"])
+
+# cook_recipe_v2 messages the app acts on, by the error they become.
+_APP_ERRORS = {
+    "STOCK_CHANGED": "Some ingredients changed since the checklist loaded",
+    "COOK_ALREADY_CONFIRMED": "This cook was already confirmed",
+}
+
+
+def get_cook_food_source(request: Request) -> FoodLineSource:
+    """Read the caller's household foods with the caller's own token."""
+    _, _, token = request.headers.get("authorization", "").partition(" ")
+    return SupabaseFoodLineSource(
+        token, http_client=request.app.state.supabase_http_client
+    )
+
+
+@router.post("/plan", response_model=CookPlanResponse)
+async def plan_cook_checklist(
+    payload: CookPlanRequest,
+    _user_id: CurrentUserId,
+    foods: FoodLineSource = Depends(get_cook_food_source),
+) -> CookPlanResponse:
+    """Plan the done-cooking checklist for a recipe against current stock.
+
+    Reads the household's foods with unexpired stock as the caller, converts
+    each ingredient into its food's stock base and sums each food's lines.
+    Changes nothing, so the app calls it again to reload stock.
+
+    Args:
+        payload: The household and the cooked recipe's ingredients.
+        _user_id: The authenticated caller. Supabase reads it again from the
+            JWT.
+        foods: Where the household's foods are read from.
+
+    Returns:
+        ``{"data": {"foods": [...], "untracked": [...]}}`` as described by
+        ``CookPlanData``.
+
+    Raises:
+        HTTPException: 401 when the caller is not signed in. 503
+            ``COOK_UNAVAILABLE`` when the household's foods can't be read.
+    """
+    try:
+        lines = await foods.list_food_lines(payload.household_id)
+    except FoodLinesError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "Cook service unavailable", "code": "COOK_UNAVAILABLE"},
+        ) from exc
+    return CookPlanResponse(data=build_checklist(payload.ingredients, lines))
+
 
 @router.post("/confirm")
 async def confirm_cook(
@@ -36,11 +95,16 @@ async def confirm_cook(
 
     Raises:
         HTTPException: 401 or 403 when Supabase rejects the caller. 409
-            ``COOK_REJECTED`` when Postgres refuses the cook, for example for
-            an unknown food, a fractional amount on a whole-units food, lines
-            that don't match the deductions, or an operation id reused with a
-            different payload. A request that races a food merge is also
-            refused, and the app may retry it. 502
+            ``STOCK_CHANGED`` when a food has less unexpired stock than its
+            deduction's ``expected_amount``. Nothing is deducted, and the app
+            reloads stock and asks the person to check those lines. 409
+            ``COOK_ALREADY_CONFIRMED`` when the operation id already recorded
+            a cook with a different payload, such as a retry after a lost
+            response. Nothing more is deducted. 409 ``COOK_REJECTED`` when
+            Postgres refuses the cook for another reason, for example for an
+            unknown food, a fractional amount on a whole-units food, or lines
+            that don't match the deductions. A request that
+            races a food merge is also refused, and the app may retry it. 502
             ``COOK_REJECTED`` for any other Supabase error. 503
             ``COOK_UNAVAILABLE`` when Supabase is not configured or can't be
             reached.
@@ -77,6 +141,12 @@ async def confirm_cook(
             status_code=503,
             detail={"error": "Cook service unavailable", "code": "COOK_UNAVAILABLE"},
         ) from exc
+    message = _postgres_message(response) if response.status_code == 400 else None
+    if message in _APP_ERRORS:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": _APP_ERRORS[message], "code": message},
+        )
     if response.is_error:
         raise HTTPException(
             status_code=(
@@ -89,3 +159,11 @@ async def confirm_cook(
             detail={"error": "Cook confirmation failed", "code": "COOK_REJECTED"},
         )
     return {"data": response.json()}
+
+
+def _postgres_message(response: httpx.Response) -> str | None:
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    return body.get("message") if isinstance(body, dict) else None

@@ -5,7 +5,7 @@ Saved recipes is the household's shared cookbook. Any member can save a recipe c
 ## Sub-features
 
 - `saved-add` saves a card from the feed ("Save <title> to household cookbook").
-- `saved-list` lists saved recipes under "Saved" ("Your household cookbook").
+- `saved-list` lists saved recipes under "Saved", each row labeled "Household cookbook".
 - `saved-open` opens a saved recipe's preview ("Open <title>").
 - `saved-remove` removes it ("Remove <title> from saved recipes").
 - `saved-empty` shows "Nothing saved yet".

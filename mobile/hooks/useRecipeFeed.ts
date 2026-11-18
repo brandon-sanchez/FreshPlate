@@ -9,10 +9,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
 import {
   createRecipeFeedSession,
+  fetchLatestRecipeFeed,
   fetchRecipeFeedPage,
   RECIPE_FEED_PAGE_SIZE,
   RECIPE_FEED_REQUEST_TIMEOUT_MS,
 } from "@/lib/recipe-feed-api";
+import {
+  loadRecipeFeedMemory,
+  saveRecipeFeedMemory,
+} from "@/lib/recipe-feed-memory";
 import { preloadRecipePhotos } from "@/lib/recipe-photo-preload";
 import {
   keepSteeredCards,
@@ -24,6 +29,7 @@ import type { ImageResult } from "@/types/images";
 import type {
   RecipeFeedResponse,
   RecipeFeedSessionRequest,
+  RecipePreferences,
   RecipeSuggestion,
 } from "@/types/recipes";
 import type { RecipeFeedEnding } from "@/lib/recipes";
@@ -31,6 +37,10 @@ import type { RecipeFeedEnding } from "@/lib/recipes";
 export const RECIPE_FEED_READY_POOL_TARGET = 10;
 export const RECIPE_FEED_PREFETCH_BATCH_CEILING = RECIPE_FEED_PAGE_SIZE;
 export const RECIPE_FEED_MAX_RUNS = 6;
+// A restored feed asks for one unseen card ahead instead of a full reserve,
+// so it loads a page only once every restored card has been seen. A full
+// reserve would buy a generation as soon as the app opens.
+const RESTORED_FEED_BUFFER_TARGET = 1;
 export { RECIPE_FEED_REQUEST_TIMEOUT_MS };
 
 export type RecipeFeedStatus = "idle" | "loading" | "ready" | "error";
@@ -45,25 +55,87 @@ type RecipeFeedPage = {
 /**
  * Seeds each card's photo under `['recipe-image', recipe_id]`, the key
  * `useRecipeImage` reads, so a card shows its photo without another request.
- * Resolves once the photos are downloaded or the preload cap passes, so a
- * page's cards never join the feed with a photo still downloading.
  * The photo is left off the returned recipes, because saved recipes and cook
  * events store the recipe as a snapshot and a signed URL must not go with it.
+ *
+ * Without `shownFirstId`, it resolves once every photo is downloaded or the
+ * preload cap passes, so a page's cards never join the feed with a photo
+ * still downloading. With it, it resolves once that card's photo is in, and
+ * the other photos keep downloading.
  */
 async function unpackPhotos(
   queryClient: QueryClient,
   response: RecipeFeedResponse,
+  shownFirstId?: string,
 ): Promise<RecipeFeedPage> {
-  const images: ImageResult[] = [];
+  const awaited: ImageResult[] = [];
+  const background: ImageResult[] = [];
   const recipes = response.data.recipes.map(({ image, ...recipe }) => {
     if (image) {
       queryClient.setQueryData(["recipe-image", recipe.recipe_id], image);
-      images.push(image);
+      const awaitsThis = !shownFirstId || recipe.recipe_id === shownFirstId;
+      (awaitsThis ? awaited : background).push(image);
     }
     return recipe;
   });
-  await preloadRecipePhotos(images);
+  // Downloads start in call order, so the awaited photos go first.
+  const shown = preloadRecipePhotos(awaited);
+  void preloadRecipePhotos(background);
+  await shown;
   return { data: { ...response.data, recipes } };
+}
+
+type RestoredFeed = {
+  page: RecipeFeedPage;
+  dismissedIds: string[];
+  signals: SteerSignal[];
+  preferences: RecipePreferences;
+};
+
+/**
+ * Reads the caller's live session and the device's memory of it. Returns
+ * `null` when there is no live session or every card in it was dismissed,
+ * since the cook would see an empty feed.
+ *
+ * The page keeps the dismissed cards, without photos: `ending` tells a
+ * dismissed feed from an empty one by them, and a "Less like this" pick is
+ * usually a dismissed card.
+ */
+async function readLatestFeed(
+  queryClient: QueryClient,
+  signal: AbortSignal,
+): Promise<RestoredFeed | null> {
+  const response = await fetchLatestRecipeFeed(signal);
+  if (!response.data) return null;
+  const { preferences, ...data } = response.data;
+  const memory = await loadRecipeFeedMemory(data.session_id);
+  const dismissed = new Set(memory.dismissedIds);
+  if (data.recipes.every((card) => dismissed.has(card.recipe_id))) return null;
+  const pool = new Map(data.recipes.map((card) => [card.recipe_id, card]));
+  const signals = memory.signals.flatMap(({ direction, recipeId }) => {
+    const card = pool.get(recipeId);
+    if (!card) return [];
+    const { image: _image, ...recipe } = card;
+    return [{ direction, recipe }];
+  });
+  const top = data.recipes.find((card) => !dismissed.has(card.recipe_id));
+  const page = await unpackPhotos(
+    queryClient,
+    {
+      data: {
+        ...data,
+        recipes: data.recipes.map((card) =>
+          dismissed.has(card.recipe_id) ? { ...card, image: null } : card,
+        ),
+      },
+    },
+    top?.recipe_id,
+  );
+  return { page, dismissedIds: memory.dismissedIds, signals, preferences };
+}
+
+function recipeFeedKey(sessionId: string | null): [string, string | null] {
+  return ["recipe-feed", sessionId];
 }
 
 type StartMutationInput = {
@@ -100,6 +172,12 @@ function uniqueRecipes(recipes: RecipeSuggestion[]): RecipeSuggestion[] {
   });
 }
 
+/** Options for {@link useRecipeFeed}. */
+export type UseRecipeFeedOptions = {
+  /** Receives the answers a session read back on mount started with. */
+  onSessionRestored?: (preferences: RecipePreferences) => void;
+};
+
 /**
  * Runs one recipe feed session: creates it, pages through its cards and
  * keeps an unseen reserve loaded ahead of the user.
@@ -107,9 +185,9 @@ function uniqueRecipes(recipes: RecipeSuggestion[]): RecipeSuggestion[] {
  * Calls `POST /api/recipes/sessions` and
  * `POST /api/recipes/sessions/{id}/pages`, caching pages under
  * `['recipe-feed', sessionId]`. Each card's photo is seeded under
- * `['recipe-image', recipe_id]` and its bytes are downloaded before the
- * page's cards are returned, so cards show photos without a request of their
- * own. Starting a new session cancels and removes the previous one.
+ * `['recipe-image', recipe_id]` and its bytes are downloaded before a
+ * generated page's cards are returned, so cards show photos without a request
+ * of their own. Starting a new session cancels and removes the previous one.
  *
  * `steer` records a "More like this" or "Less like this" press for the rest
  * of the session. Every later page request carries the picks, so batches are
@@ -121,8 +199,21 @@ function uniqueRecipes(recipes: RecipeSuggestion[]): RecipeSuggestion[] {
  * on the same recipe while that page is on its way changes nothing. The
  * caller removes the swept cards on screen with `dismiss`, and `restore` puts
  * dismissed cards back in their places in the feed, as an undo does.
+ *
+ * On mount it calls `GET /api/recipes/sessions/latest` and, when a session is
+ * still live, shows its stored cards again instead of the empty state.
+ * `isRestoring` is true until that read and the top card's photo settle; the
+ * other photos keep downloading behind the restored feed. Dismissals and
+ * steer picks are kept in AsyncStorage through {@link saveRecipeFeedMemory},
+ * so restored cards stay dismissed and later pages stay steered. A restored
+ * feed loads another page only after the cook has seen every restored card,
+ * or scrolls, steers or dismisses, so reopening the app pays for no recipe
+ * generation while restored cards are left. Starting a session before the
+ * read settles discards the restored one.
  */
-export function useRecipeFeed() {
+export function useRecipeFeed({
+  onSessionRestored,
+}: UseRecipeFeedOptions = {}) {
   const queryClient = useQueryClient();
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [status, setStatus] = useState<RecipeFeedStatus>("idle");
@@ -149,6 +240,25 @@ export function useRecipeFeed() {
   const poolSizeRef = useRef(0);
   const poolSignalsRef = useRef<readonly SteerSignal[]>([]);
   const [steerVersion, setSteerVersion] = useState(0);
+  const [isRestoring, setIsRestoring] = useState(true);
+  const onSessionRestoredRef = useRef(onSessionRestored);
+
+  useEffect(() => {
+    onSessionRestoredRef.current = onSessionRestored;
+  }, [onSessionRestored]);
+
+  const remember = useCallback(() => {
+    const current = sessionIdRef.current;
+    if (!current) return;
+    void saveRecipeFeedMemory({
+      sessionId: current,
+      dismissedIds: [...dismissedIdsRef.current],
+      signals: signalsRef.current.map(({ direction, recipe }) => ({
+        direction,
+        recipeId: recipe.recipe_id,
+      })),
+    });
+  }, []);
 
   const createMutation = useMutation<RecipeFeedPage, Error, StartMutationInput>({
     mutationFn: async ({ request, signal }) =>
@@ -163,7 +273,7 @@ export function useRecipeFeed() {
     [string, string | null],
     string
   >({
-    queryKey: ["recipe-feed", sessionId],
+    queryKey: recipeFeedKey(sessionId),
     enabled: sessionId !== null,
     initialPageParam: "0",
     queryFn: async ({ pageParam, signal }) => {
@@ -183,9 +293,17 @@ export function useRecipeFeed() {
         signalsRef.current,
         fromPool ? poolSignalsRef.current : requested,
       );
+      const kept = new Set(recipes.map((recipe) => recipe.recipe_id));
+      const heldBack = response.data.recipes.filter(
+        (card) => !kept.has(card.recipe_id),
+      );
       if (sessionIdRef.current === sessionId) {
         if (!fromPool) poolSignalsRef.current = requested;
         poolSizeRef.current = response.data.ready_count;
+        if (heldBack.length > 0) {
+          for (const card of heldBack) dismissedIdsRef.current.add(card.recipe_id);
+          remember();
+        }
       }
       const page = await unpackPhotos(queryClient, {
         data: { ...response.data, recipes },
@@ -212,6 +330,45 @@ export function useRecipeFeed() {
     return () => abortActiveStart();
   }, [abortActiveStart]);
 
+  const showFirstPage = useCallback(
+    (page: RecipeFeedPage) => {
+      const id = page.data.session_id;
+      sessionIdRef.current = id;
+      poolSizeRef.current = page.data.ready_count;
+      remember();
+      queryClient.setQueryData(recipeFeedKey(id), {
+        pages: [page],
+        pageParams: ["0"],
+      });
+      setSessionId(id);
+      setIsBootstrapping(page.data.recipes.length === 0 && page.data.has_more);
+      setStatus("ready");
+    },
+    [queryClient, remember],
+  );
+
+  useEffect(() => {
+    const generation = generationRef.current;
+    const controller = new AbortController();
+    void readLatestFeed(queryClient, controller.signal)
+      .then((restored) => {
+        if (!restored || generationRef.current !== generation) return;
+        dismissedIdsRef.current = new Set(restored.dismissedIds);
+        signalsRef.current = restored.signals;
+        bufferTargetRef.current = RESTORED_FEED_BUFFER_TARGET;
+        setDismissedVersion((value) => value + 1);
+        showFirstPage(restored.page);
+        onSessionRestoredRef.current?.(restored.preferences);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          console.warn("Failed to restore the recipe feed:", error);
+        }
+      })
+      .finally(() => setIsRestoring(false));
+    return () => controller.abort();
+  }, [queryClient, showFirstPage]);
+
   const start = useCallback(
     (request: RecipeFeedSessionRequest) => {
       abortActiveStart();
@@ -220,10 +377,10 @@ export function useRecipeFeed() {
       const previousSessionId = sessionIdRef.current;
       if (previousSessionId) {
         void queryClient.cancelQueries({
-          queryKey: ["recipe-feed", previousSessionId],
+          queryKey: recipeFeedKey(previousSessionId),
         });
         queryClient.removeQueries({
-          queryKey: ["recipe-feed", previousSessionId],
+          queryKey: recipeFeedKey(previousSessionId),
         });
       }
 
@@ -248,23 +405,12 @@ export function useRecipeFeed() {
       setStatus("loading");
       setError(null);
       setIsBootstrapping(false);
+      setIsRestoring(false);
 
       void createMutation
         .mutateAsync({ request, signal: controller.signal })
         .then((firstPage) => {
-          if (generationRef.current !== generation) return;
-          const nextSessionId = firstPage.data.session_id;
-          sessionIdRef.current = nextSessionId;
-          poolSizeRef.current = firstPage.data.ready_count;
-          queryClient.setQueryData(["recipe-feed", nextSessionId], {
-            pages: [firstPage],
-            pageParams: ["0"],
-          });
-          setSessionId(nextSessionId);
-          setIsBootstrapping(
-            firstPage.data.recipes.length === 0 && firstPage.data.has_more,
-          );
-          setStatus("ready");
+          if (generationRef.current === generation) showFirstPage(firstPage);
         })
         .catch((value: unknown) => {
           if (generationRef.current !== generation) return;
@@ -277,7 +423,7 @@ export function useRecipeFeed() {
           }
         });
     },
-    [abortActiveStart, createMutation, queryClient],
+    [abortActiveStart, createMutation, queryClient, showFirstPage],
   );
 
   const allRecipes = useMemo(
@@ -390,27 +536,38 @@ export function useRecipeFeed() {
         ),
         { direction, recipe },
       ];
+      bufferTargetRef.current = Math.max(
+        bufferTargetRef.current,
+        RECIPE_FEED_READY_POOL_TARGET,
+      );
+      remember();
       if (direction === "more") {
         steeredPageWantedRef.current = true;
         setSteerVersion((value) => value + 1);
       }
     },
-    [],
+    [remember],
   );
 
   const dismiss = useCallback((recipeIds: readonly string[]) => {
     const fresh = recipeIds.filter((id) => !dismissedIdsRef.current.has(id));
     if (fresh.length === 0) return;
     for (const id of fresh) dismissedIdsRef.current.add(id);
+    bufferTargetRef.current = Math.max(
+      bufferTargetRef.current,
+      RECIPE_FEED_READY_POOL_TARGET,
+    );
+    remember();
     setDismissedVersion((value) => value + 1);
-  }, []);
+  }, [remember]);
 
   const restore = useCallback((recipeIds: readonly string[]) => {
     const back = recipeIds.filter((id) => dismissedIdsRef.current.has(id));
     if (back.length === 0) return;
     for (const id of back) dismissedIdsRef.current.delete(id);
+    remember();
     setDismissedVersion((value) => value + 1);
-  }, []);
+  }, [remember]);
 
   const retry = useCallback(() => {
     if (requestRef.current) start(requestRef.current);
@@ -424,6 +581,7 @@ export function useRecipeFeed() {
     recipes,
     status,
     error,
+    isRestoring,
     prefetchError,
     isBootstrapping,
     isPrefetching,

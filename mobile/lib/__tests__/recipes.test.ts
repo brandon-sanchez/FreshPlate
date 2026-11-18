@@ -6,8 +6,9 @@ import {
 } from "@/lib/recipes";
 
 describe("recipe request helpers", () => {
-  it("uses the inventory-only context copy when no answers were given", () => {
-    expect(recipeContextLabel(12, {})).toBe("From your 12 items");
+  it("counts the usable ingredients when no answers were given", () => {
+    expect(recipeContextLabel(12, {})).toBe("From your 12 ingredients");
+    expect(recipeContextLabel(1, {})).toBe("From your 1 ingredient");
   });
 
   it("summarizes answered session preferences without persisting anything", () => {

@@ -50,6 +50,7 @@ The backend has these routers, registered in `backend/app/main.py`:
 | `POST /api/recipes/suggestions` | Runs the pipeline once and returns a batch |
 | `POST /api/recipes/sessions` | Starts a recipe feed session |
 | `POST /api/recipes/sessions/{session_id}/pages` | Returns the next page of a feed session |
+| `POST /api/cook/plan` | Plans the done-cooking checklist against current stock |
 | `POST /api/cook/confirm` | Deducts the ingredients used in a cook |
 
 ## The backend checks the Supabase JWT on every request
@@ -170,7 +171,9 @@ A session stops after six generation runs. The app then offers to add items or c
 
 ## Cook confirmation deducts inventory in one transaction
 
-When a user finishes cooking, they confirm how much of each food they used, in the food's stock base (grams, millilitres or a count). The request also carries one line per recipe ingredient matched to a food: the recipe's amount and unit, the converted amount, and the mode (`draw` when it converted, `small` for a seasoning-sized amount that is never drawn, `ask` when the user was asked). `POST /api/cook/confirm` passes both lists to the `cook_recipe_v2` Postgres function, which draws each amount from the food's batches (lots) and records the lines in one transaction.
+When a user finishes cooking, the app sends the recipe's ingredients to `POST /api/cook/plan`. The backend reads the household's foods with unexpired stock as the user, converts each ingredient into its food's stock base, and sums the ingredients that use one food. Each food comes back with its available stock, the amount to pre-fill, any whole-unit rounding note, and each ingredient's mode and converted amount. Ingredients that name no food (kitchen basics) or a food with no stock left come back as untracked. The endpoint changes nothing, so the app calls it again to reload stock.
+
+On the checklist they confirm how much of each food they used, in the food's stock base (grams, millilitres or a count). The request also carries one line per recipe ingredient matched to a food: the recipe's amount and unit, the converted amount, and the mode (`draw` when it converted, `small` for a seasoning-sized amount that is never drawn, `ask` when the user was asked). `POST /api/cook/confirm` passes both lists to the `cook_recipe_v2` Postgres function, which draws each amount from the food's batches (lots) and records the lines in one transaction.
 
 ```mermaid
 sequenceDiagram
@@ -182,11 +185,12 @@ sequenceDiagram
 	API->>DB: rpc/cook_recipe_v2 with the user's JWT
 	DB->>DB: Return the saved result if operation_id was already used
 	DB->>DB: Map each id to its live food, lock the foods in sorted order
+	DB->>DB: Refuse with STOCK_CHANGED if a food has less than expected
 	DB->>DB: Draw from each food's lots in draw order
 	DB->>DB: Split each food's draws across its lines
 	DB->>DB: Insert cook_events row with the lines
 	DB-->>API: Draws per lot, committed amounts, lines
-	API-->>App: 200, or 409 if rejected
+	API-->>App: 200, 409 STOCK_CHANGED, or 409 if rejected
 ```
 
 The function guarantees these properties:
@@ -194,12 +198,14 @@ The function guarantees these properties:
 - **Draw order.** Each amount comes from the food's unexpired lots: opened lots first, then the soonest expiry (undated lots last), then the oldest. One lot is finished before the next starts. A drawn lot is marked opened, and a lot drawn to zero is marked depleted with reason `used`. Expired lots are skipped until someone reviews them.
 - **All or nothing.** One bad line rejects the whole request. Amounts must be positive and finite, whole-unit foods (cans, eggs) take whole amounts only, each food may appear in one line only, and every ID must be a food or lot of the caller's household.
 - **Old recipes still cook.** A recipe's `inventory_item_id` holds a food id. Recipes saved before foods existed hold a lot id there, and the function draws from that lot's food. Merged foods are followed to the food they were merged into.
-- **Safe to retry.** The app creates an `operation_id` when the cook starts and stores it with the active cook. A lock on household plus operation id serializes repeats, so a repeated confirmation returns the first result and deducts nothing twice. A repeat with a different payload is rejected.
-- **Safe under concurrency.** Every function that changes a food's stock takes a per-food advisory lock, in sorted food id order, before it touches any lot. Two phones cooking the same foods wait for each other instead of deadlocking, and a batch added during a cook lands wholly before or after it. When stock runs short, the deduction stops at zero. The event then records both what the user said they used (`confirmed_amount`) and what was actually drawn (`committed_amount`, and `draws` per lot).
+- **Safe to retry.** The app creates an `operation_id` when the cook starts and stores it with the active cook. A lock on household plus operation id serializes repeats, so a repeated confirmation returns the first result and deducts nothing twice. A repeat with a different payload deducts nothing and fails with `COOK_ALREADY_CONFIRMED`, which tells an app whose first response was lost that the cook went through.
+- **Safe under concurrency.** Every function that changes a food's stock takes a per-food advisory lock, in sorted food id order, before it touches any lot. Two phones cooking the same foods wait for each other instead of deadlocking, and a batch added during a cook lands wholly before or after it.
+- **Stock that changed refuses the cook.** Each deduction carries `expected_amount`, the part of the confirmed amount the checklist expected stock to cover. With the food locks held and before any draw, the function sums each food's unexpired stock. If any food has less than its expected amount, because another member cooked or tossed it a moment earlier, the whole cook is refused with `STOCK_CHANGED` and nothing is deducted. The endpoint returns 409 with code `STOCK_CHANGED`, and the app reloads stock and marks the lines that changed.
+- **Using more than the kitchen has is recorded.** A confirmed amount above the expected amount that stock can't cover stops at zero. The event then records both what the user said they used (`confirmed_amount`) and what was actually drawn (`committed_amount`, and `draws` per lot).
 - **Lines for Cook Again.** Each line in `cook_events.lines` keeps the recipe's amount and unit next to the live food, its stock base, the batches it drew from and its shortfall. A food used by several lines splits its draws across them in recipe order: each line takes its converted amount, and the last takes the rest, such as a can rounded up. Cook Again can then re-plan the recipe's own units against current stock instead of comparing bare numbers in different units. Every deduction needs a line that draws from it, and every drawing line needs a deduction.
-- **No hard deletes.** A lot that reaches zero gets `depleted_at`. The function never deletes a row.
+- **No hard deletes.** A lot that reaches zero gets `depleted_at`. The function never deletes a row, so a food a cook used up by mistake can come back: the `recently_used_up` view lists foods with no stock left whose last batch was used up in the past 14 days, and `restore_used_up_lot` returns that batch to stock with the amount the user says is left. The inventory shows these foods in a collapsed "Recently used up" section.
 
-The function runs as `SECURITY DEFINER`, because members can't change lot quantities directly. It checks household membership first and reads only foods and lots of that household. The cook screens that call the endpoint are in progress in [#27](https://github.com/brandon-sanchez/FreshPlate/issues/27) and [#30](https://github.com/brandon-sanchez/FreshPlate/issues/30).
+The function runs as `SECURITY DEFINER`, because members can't change lot quantities directly. It checks household membership first and reads only foods and lots of that household. The app's done-cooking checklist (`mobile/components/cook-checklist.tsx`) calls both cook endpoints: it plans the recipe, lets the user adjust each amount or add a food the recipe didn't list, and confirms in one tap. On `STOCK_CHANGED` it plans again, marks each line whose food now has less than the line expected ("Only 2 eggs left now"), and keeps the cook active. After a confirm, the cook screen shows "Nice plate" with "Save this recipe" and "Done". Done, or saving, goes to Inventory, where the lower stock shows. A recipe that is already saved goes there by itself after a moment.
 
 ## Image generation has a spending cap before it has images
 
