@@ -13,6 +13,7 @@ from app.api.health import router as health_router
 from app.api.images import router as images_router
 from app.api.me import router as me_router
 from app.api.recipes import router as recipes_router
+from app.core import tracing
 from app.core.config import settings
 from app.services.image_service import ImagePolicy, ImageService
 from app.services.image_store import SupabaseImageStore
@@ -48,6 +49,8 @@ def create_app() -> FastAPI:
 
     configure_logging()
     configure_exception_handlers(app)
+    if settings.langsmith_tracing:
+        app.add_middleware(tracing.TraceFlushMiddleware, flush=tracing.flush_traces)
 
     app.include_router(health_router)
     app.include_router(me_router)
