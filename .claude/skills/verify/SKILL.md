@@ -75,7 +75,7 @@ Proof standards:
 
 - Drive the real user path: tap the buttons a user taps. Never call Supabase or the API directly to *cause* the change, and never use test-only setters.
 - Capture before, the action, and after. A final screen alone isn't proof.
-- Confirm side effects with `db.py`, filtered by `household_id`. For example, an added item shows in `inventory_items`, a saved recipe in `saved_recipes`, a cook in `cook_events`. `db.py` is GET-only but uses the backend secret key, which bypasses row-level security, so always filter.
+- Confirm side effects with `db.py`, filtered by `household_id`. For example, an added item shows in `lots` with its food in `foods`, a saved recipe in `saved_recipes`, a cook in `cook_events`. `db.py` is GET-only but uses the backend secret key, which bypasses row-level security, so always filter.
 - For API features, quote the matching `api.log` request lines (method, path, status).
 - Save `db.py` output into the run directory (`> "$(readlink .verify/current)/<name>.json"`) so the proof survives the session.
 
