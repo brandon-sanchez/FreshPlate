@@ -78,14 +78,6 @@ def seed(db: DB, household_id: str, user: str = USER):
     )
 
 
-def move_inventory(db: DB, household_id: str) -> None:
-    result = run_script(
-        "app.scripts.run_inventory_backfill", "--household", household_id,
-        env={"BACKFILL_DATABASE_URL": db.dsn},
-    )
-    assert result.returncode == 0, result.stderr
-
-
 def reset(db: DB, household_id: str, payload, *, user: str = USER, role: str = "service_role"):
     payload = "NULL" if payload is None else f"{q(json.dumps(payload))}::jsonb"
     return db.run(
@@ -184,23 +176,6 @@ def test_reset_after_reset_and_app_changes_restores_the_same_kitchen(database):
     assert result.returncode == 0, result.stderr
     assert kitchen(database, home) == first
     assert cook_count(database, home) == "0"
-
-
-def test_reset_after_the_inventory_move_replaces_the_moved_lots(database):
-    fresh = demo_household(database)
-    assert seed(database, fresh).returncode == 0
-    home = demo_household(database)
-    inventory_item(database, home, "Milk", 1, "gallon")
-    inventory_item(database, home, "verify-old-item", 2, "each")
-    move_inventory(database, home)
-    assert database.run(f"SELECT count(*) FROM lots WHERE household_id = {q(home)}") == "2"
-
-    result = seed(database, home)
-    move_inventory(database, home)
-
-    assert result.returncode == 0, result.stderr
-    assert kitchen(database, home) == kitchen(database, fresh)
-    assert database.run(f"SELECT count(*) FROM inventory_items WHERE household_id = {q(home)}") == "0"
 
 
 def test_reset_leaves_other_households_untouched(database):

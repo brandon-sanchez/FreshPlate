@@ -14,10 +14,9 @@ type SizedLot = Pick<InventoryItem, "quantity" | "initial_quantity" | "whole_uni
 
 /**
  * How a batch's remaining amount is set. `levels`: by "how full" or an exact
- * amount. `unknownSize`: the batch was backfilled from `inventory_items` and
- * has no full size, so only an exact amount. `count`: the food is counted in
- * whole units, where a share of one can would be fractional, so only a whole
- * exact count.
+ * amount. `unknownSize`: the batch has no recorded full size, so only an exact
+ * amount. `count`: the food is counted in whole units, where a share of one can
+ * would be fractional, so only a whole exact count.
  */
 export type RemainingMode = "levels" | "unknownSize" | "count";
 
