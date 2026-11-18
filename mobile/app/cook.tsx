@@ -1,16 +1,25 @@
-import { useEffect } from "react";
-import { useRouter } from "expo-router";
+import { useEffect, useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import Toast from "@/lib/toast";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import CookChecklist from "@/components/cook-checklist";
 import { RecipeView, cookFooterTop } from "@/components/recipe-detail";
 import { ToastHost } from "@/components/toastConfig";
 import { useActiveCook } from "@/hooks/useActiveCook";
 import { useSavedRecipes } from "@/hooks/useSavedRecipes";
 import type { RecipeSuggestion } from "@/types/recipes";
 
-/** The active cook's recipe, reachable from the "Cooking" banner after any restart. */
+/**
+ * The active cook's recipe, reachable from the "Cooking" banner after any
+ * restart, and its done-cooking checklist. The `stage=checklist` param opens
+ * the checklist first. The screen closes once the cook ends.
+ */
 export default function CookScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ stage?: string }>();
+  const [stage, setStage] = useState<"recipe" | "checklist">(
+    params.stage === "checklist" ? "checklist" : "recipe",
+  );
   const insets = useSafeAreaInsets();
   const cook = useActiveCook();
   const saved = useSavedRecipes();
@@ -38,17 +47,21 @@ export default function CookScreen() {
   // app-level toast host, so the screen mounts its own.
   return (
     <>
-      <RecipeView
-        recipe={recipe}
-        isSaved={saved.savedIds.has(recipe.recipe_id)}
-        isSavePending={saved.isToggling}
-        onToggleSave={toggleSave}
-        onClose={() => router.back()}
-        cooking
-        cookPending={cook.pending}
-        onCook={() => undefined}
-        onDoneCooking={() => void cook.finish()}
-      />
+      {stage === "checklist" ? (
+        <CookChecklist onBack={() => setStage("recipe")} />
+      ) : (
+        <RecipeView
+          recipe={recipe}
+          isSaved={saved.savedIds.has(recipe.recipe_id)}
+          isSavePending={saved.isToggling}
+          onToggleSave={toggleSave}
+          onClose={() => router.back()}
+          cooking
+          cookPending={cook.pending}
+          onCook={() => undefined}
+          onDoneCooking={() => setStage("checklist")}
+        />
+      )}
       <ToastHost bottomInset={cookFooterTop(insets.bottom)} />
     </>
   );

@@ -63,13 +63,19 @@ type RecipeViewProps = {
 
 type RecipeDetailProps = Omit<RecipeViewProps, "recipe"> & {
   recipe: RecipeSuggestion | null;
+  /** Called on iOS once the modal has finished sliding away. */
+  onDismiss?: () => void;
 };
 
 /**
  * Shows {@link RecipeView} in a full-screen modal with its own toast host.
  * The modal is visible while `recipe` is not `null`.
  */
-export default function RecipeDetail({ recipe, ...props }: RecipeDetailProps) {
+export default function RecipeDetail({
+  recipe,
+  onDismiss,
+  ...props
+}: RecipeDetailProps) {
   const insets = useSafeAreaInsets();
   const reducedMotion = useReducedMotion();
   return (
@@ -77,6 +83,7 @@ export default function RecipeDetail({ recipe, ...props }: RecipeDetailProps) {
       visible={recipe !== null}
       animationType={reducedMotion ? "none" : "slide"}
       onRequestClose={props.onClose}
+      onDismiss={onDismiss}
     >
       {recipe && (
         <>
