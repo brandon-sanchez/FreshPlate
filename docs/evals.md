@@ -31,9 +31,7 @@ Yes-or-no answers vary less between runs than a number a model picks on a 100-po
 
 ## Results of the live run
 
-The live eval ran on 2026-11-18 (UTC) on `gemini-3.6-flash`, with prompts `generate_recipes` v9, `assess_meals` v5, and `judge_recipe` v1. The run is LangSmith experiment `freshplate-live-2923c36c`, in a private LangSmith project.
-
-<!-- PUBLIC LANGSMITH LINK: put the shared link to experiment freshplate-live-2923c36c here, as "[View the experiment in LangSmith](URL)", and link the chickpea curry and potato hash traces from the sections below. -->
+The live eval ran on 2026-11-18 (UTC) on `gemini-3.6-flash`, with prompts `generate_recipes` v9, `assess_meals` v5, and `judge_recipe` v1. It ran all 22 cases through the first-feed-page pipeline, scored each returned recipe with the code scorers and the judge, and logged the run as LangSmith experiment `freshplate-live-2923c36c`. The runner printed this scorecard:
 
 ```text
 FreshPlate recipe eval (live)
