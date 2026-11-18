@@ -114,6 +114,12 @@ export default function InventoryScreen() {
   const list = useRef<PinnedSectionListHandle>(null);
   // The new grouping starts at its top, under the pinned controls.
   const scrollToPinned = useCallback(() => list.current?.scrollToPinned(), []);
+  const revealUsedUpFooter = useCallback(() => list.current?.scrollToEnd(), []);
+  const emptyScroll = useRef<ScrollView>(null);
+  const scrollEmptyToEnd = useCallback(
+    () => emptyScroll.current?.scrollToEnd({ animated: true }),
+    [],
+  );
   const { rowCap, regroup } = useRegroup({
     hide,
     show,
@@ -253,10 +259,14 @@ export default function InventoryScreen() {
             onClear={canClear ? () => changeFilters(() => EMPTY_FILTERS) : undefined}
           />
         ) : null}
-        <RecentlyUsedUp search={query} onRestored={highlightRestored} />
+        <RecentlyUsedUp
+          search={query}
+          onRestored={highlightRestored}
+          onExpand={revealUsedUpFooter}
+        />
       </>
     ),
-    [noMatches, canClear, changeFilters, query, highlightRestored],
+    [noMatches, canClear, changeFilters, query, highlightRestored, revealUsedUpFooter],
   );
   const refreshing = inventory.isFetching && !inventory.isPending;
   const { refetch } = inventory;
@@ -314,6 +324,7 @@ export default function InventoryScreen() {
         style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}
       >
         <ScrollView
+          ref={emptyScroll}
           contentContainerStyle={{ flexGrow: 1, paddingBottom: tabBarHeight + 24 }}
           {...KEYBOARD_SCROLL_PROPS}
         >
@@ -332,9 +343,11 @@ export default function InventoryScreen() {
             ctaLabel="Add your first item"
             onCtaPress={() => router.push("/(tabs)/add-item")}
           />
-          <View style={{ paddingHorizontal: 16 }}>
-            <RecentlyUsedUp search="" onRestored={highlightRestored} />
-          </View>
+          <RecentlyUsedUp
+            search=""
+            onRestored={highlightRestored}
+            onExpand={scrollEmptyToEnd}
+          />
         </ScrollView>
       </View>
     );

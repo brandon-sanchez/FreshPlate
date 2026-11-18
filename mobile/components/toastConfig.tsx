@@ -247,8 +247,8 @@ type ToastHostProps = {
 
 /**
  * Draws the toast that {@link Toast} shows, sliding it in from the right to
- * the bottom right corner. A rightward swipe dismisses it, and it rides above
- * the keyboard while one is open.
+ * the bottom centre. A rightward swipe dismisses it, and it rides above the
+ * keyboard while one is open.
  *
  * Mount one under the root navigator. A `Modal` covers the root, so a screen
  * that shows toasts inside one mounts its own host there too.
@@ -258,7 +258,8 @@ export function ToastHost({ bottomInset }: ToastHostProps) {
   const keyboardHeight = useKeyboardHeight();
   const { width: windowWidth } = useWindowDimensions();
   const width = Math.min(windowWidth - EDGE_MARGIN * 2, MAX_TOAST_WIDTH);
-  const offscreen = width + EDGE_MARGIN;
+  const left = (windowWidth - width) / 2;
+  const offscreen = windowWidth - left;
 
   const toastId = toast?.id;
   const { translateX, opacity } = useToastSlide(toastId, visible, offscreen);
@@ -297,7 +298,7 @@ export function ToastHost({ bottomInset }: ToastHostProps) {
       {...swipe.panHandlers}
       style={{
         position: "absolute",
-        right: EDGE_MARGIN,
+        left,
         bottom: Math.max(keyboardHeight, bottomInset) + STACK_GAP,
         width,
         opacity,
