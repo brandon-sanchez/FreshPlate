@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.ai.llm.errors import ProviderError
+from app.ai.llm.retry import PipelineDeadline
 from app.api.recipes import (
     RECIPE_FEED_INITIAL_HEAD_BATCH_CEILING,
     RECIPE_FEED_REFILL_BATCH_CEILING,
@@ -131,6 +132,37 @@ class UnusedStore:
 
     async def update_session(self, user_id, session_id, **kwargs):
         raise AssertionError("store should not be reached")
+
+
+class _StoppedLoopClock:
+    """Clock that moves only when the test advances it.
+
+    It replaces the running event loop's clock and the clock of every
+    ``PipelineDeadline.from_now`` deadline, so timers and deadlines expire
+    together and only when the test says so, however slowly a loaded
+    machine runs the loop. Code that waits on a timer before the test
+    advances the clock never wakes up, so the test hangs instead of failing.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, monkeypatch) -> None:
+        self._now = loop.time()
+        monkeypatch.setattr(loop, "time", self.time)
+        start_deadline = PipelineDeadline.from_now
+        monkeypatch.setattr(
+            PipelineDeadline,
+            "from_now",
+            staticmethod(
+                lambda budget_seconds=None: start_deadline(
+                    budget_seconds, clock=self.time
+                )
+            ),
+        )
+
+    def time(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
 
 
 def _client(provider: Any) -> TestClient:
@@ -258,6 +290,7 @@ async def test_refill_deadline_observes_provider_failure_during_cancellation(
         client=SimpleNamespace(aio=SimpleNamespace(models=models)),
     )
     loop = asyncio.get_running_loop()
+    clock = _StoppedLoopClock(loop, monkeypatch)
     unobserved = []
     previous = loop.get_exception_handler()
     loop.set_exception_handler(lambda loop, context: unobserved.append(context))
@@ -281,12 +314,13 @@ async def test_refill_deadline_observes_provider_failure_during_cancellation(
                     json={"cursor": "1"},
                 )
             )
+            await models.all_started.wait()
             if cancel_request:
-                await models.all_started.wait()
                 request.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await request
             else:
+                clock.advance(2 * generation_budget)
                 response = await request
                 assert response.status_code == 503
                 assert response.json()["code"] == "AI_UNAVAILABLE"
