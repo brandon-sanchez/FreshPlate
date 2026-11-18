@@ -10,11 +10,11 @@ The jobs run in parallel, each on its own GitHub-hosted machine.
 | --- | --- | --- |
 | `Backend` | `ruff check .` and `pytest` in `backend/`, on Python 3.11 | A Ruff error or a failing test |
 | `Mobile` | `npm run lint`, `npx tsc --noEmit`, and Jest in `mobile/`, on Node 22 | Any ESLint error or warning, a type error, or a failing test |
-| `Docker build` | Builds `backend/Dockerfile` and pushes nothing | An image that does not build |
+| `Docker build` | Builds `backend/Dockerfile` for arm64, pushes nothing, and calls `/health` on a container started from it | An image that does not build or serve `/health` |
 
 `npm run lint` runs ESLint with `eslint-config-expo` over all of `mobile/`. It allows zero warnings, so a stale hook dependency fails the build the same way a syntax error does.
 
-The `Docker build` job exists because the production image can break while every test passes. A missing system package or a bad `COPY` path is invisible to `pytest`. The job builds the same Dockerfile that production uses, so the PR fails instead of the release. It caches image layers in GitHub Actions, so an unchanged dependency layer is not rebuilt.
+The `Docker build` job exists because the production image can break while every test passes. A missing system package or a bad `COPY` path is invisible to `pytest`. The job builds the same Dockerfile that production uses, on the same arm64 architecture as the Lambda function, so the PR fails instead of the release. It caches image layers in GitHub Actions, so an unchanged dependency layer is not rebuilt.
 
 ## Each commit runs CI once
 
