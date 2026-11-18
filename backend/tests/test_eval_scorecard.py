@@ -53,16 +53,20 @@ def test_each_case_row_names_what_went_wrong():
 
     assert rows["pasta"].preference_alignment == 75
     assert rows["pasta"].unmet_preferences == ["diet"]
-    assert rows["pasta"].quantity_violations == 1
+    assert rows["pasta"].quantity_violations == ["2 kg salt"]
+    assert rows["curry"].judge_failures == 1
     assert rows["soup"].recipes == 0
     assert rows["soup"].error == "TimeoutError: deadline"
 
 
 def test_rendered_scorecard_shows_headline_metrics_and_failures():
-    text = Scorecard.from_results(RESULTS, mode="live").render()
+    text = Scorecard.from_results(
+        RESULTS, mode="live", experiment="freshplate-live", url="https://example.test/x"
+    ).render()
 
     assert "Cases with recipes      2/3" in text
     assert "Preference alignment    76.7" in text
     assert "missed diet" in text
     assert "TimeoutError: deadline" in text
+    assert "https://example.test/x" in text
     assert all(line == line.rstrip() for line in text.splitlines())
