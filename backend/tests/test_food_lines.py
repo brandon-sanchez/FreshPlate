@@ -24,6 +24,7 @@ FACTS_ROW = {
     "id": "f-garlic",
     "stock_base": "each",
     "each_label": "head",
+    "whole_units_only": False,
     "grams_per_each": None,
     "ml_per_each": None,
     "g_per_ml": None,
@@ -82,6 +83,7 @@ async def test_reads_unexpired_stock_and_facts_as_the_caller() -> None:
     assert stock_call.url.params["available"] == "gt.0"
     assert "next_expiry:soonest_expiry" in stock_call.url.params["select"]
     assert facts_call.url.params["household_id"] == f"eq.{HOUSEHOLD}"
+    assert "whole_units_only" in facts_call.url.params["select"]
     assert stock_call.headers["Authorization"] == "Bearer user-jwt"
     assert stock_call.headers["apikey"] == "publishable"
 

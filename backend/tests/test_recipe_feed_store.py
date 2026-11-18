@@ -125,6 +125,36 @@ async def test_store_uses_scoped_reads_and_backend_only_atomic_writes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_store_reads_the_callers_newest_live_session_as_the_caller() -> None:
+    session_id = UUID("00000000-0000-0000-0000-000000000020")
+    row = _session_row(session_id)
+    client = FakeHttpClient(
+        [httpx.Response(200, json=[row]), httpx.Response(200, json=[])]
+    )
+    store = SupabaseRecipeFeedStore(
+        "user-jwt",
+        url="https://project.supabase.co",
+        publishable_key="publishable-key",
+        secret_key="backend-secret",
+        http_client=client,
+    )
+
+    latest = await store.get_latest_session(row["user_id"])
+    missing = await store.get_latest_session(row["user_id"])
+
+    assert latest == RecipeFeedSession.model_validate(row)
+    assert missing is None
+    call = client.calls[0]
+    assert call["method"] == "GET"
+    assert call["url"].endswith("/rest/v1/recipe_feed_sessions")
+    assert call["headers"]["Authorization"] == "Bearer user-jwt"
+    assert call["params"]["user_id"] == f"eq.{row['user_id']}"
+    assert call["params"]["expires_at"].startswith("gt.")
+    assert call["params"]["order"] == "created_at.desc"
+    assert call["params"]["limit"] == "1"
+
+
+@pytest.mark.asyncio
 async def test_store_round_trips_a_sessions_kitchen_basics() -> None:
     session_id = UUID("00000000-0000-0000-0000-000000000020")
     row = {**_session_row(session_id), "kitchen_basics": ["Salt", "Olive oil"]}

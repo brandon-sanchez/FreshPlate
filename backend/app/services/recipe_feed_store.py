@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any, Protocol
 from uuid import UUID
 
@@ -92,6 +92,10 @@ class RecipeFeedStore(Protocol):
         user_id: str,
         session_id: UUID,
     ) -> RecipeFeedSession | None: ...
+
+    async def get_latest_session(self, user_id: str) -> RecipeFeedSession | None:
+        """Return the caller's newest unexpired session, or None if none is live."""
+        ...
 
     async def list_candidates(
         self,
@@ -205,14 +209,29 @@ class SupabaseRecipeFeedStore:
                 "limit": "1",
             },
         )
-        if not rows:
-            return None
-        try:
-            return RecipeFeedSession.model_validate(rows[0])
-        except (TypeError, ValidationError) as exc:
-            raise RecipeFeedStoreError(
-                "Recipe feed session returned invalid data"
-            ) from exc
+        return self._session_from_rows(rows)
+
+    async def get_latest_session(self, user_id: str) -> RecipeFeedSession | None:
+        """Return the caller's newest unexpired session, or None if none is live.
+
+        Reads with the caller's token, so row-level security also hides other
+        users' and expired sessions.
+
+        Raises:
+            RecipeFeedStoreError: When the read fails or returns invalid data.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        rows = await self._request(
+            "GET",
+            RECIPE_FEED_SESSIONS_TABLE,
+            params={
+                "user_id": f"eq.{user_id}",
+                "expires_at": f"gt.{now}",
+                "order": "created_at.desc",
+                "limit": "1",
+            },
+        )
+        return self._session_from_rows(rows)
 
     async def list_candidates(
         self,
@@ -304,6 +323,17 @@ class SupabaseRecipeFeedStore:
                 "p_claim_id": str(claim_id),
             },
         )
+
+    @staticmethod
+    def _session_from_rows(rows: list[dict[str, Any]]) -> RecipeFeedSession | None:
+        if not rows:
+            return None
+        try:
+            return RecipeFeedSession.model_validate(rows[0])
+        except (TypeError, ValidationError) as exc:
+            raise RecipeFeedStoreError(
+                "Recipe feed session returned invalid data"
+            ) from exc
 
     async def _session_rpc(
         self,

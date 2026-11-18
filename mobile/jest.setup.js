@@ -17,23 +17,8 @@ jest.mock("react-native-gesture-handler", () => {
   return { ...actual, RectButton };
 });
 
-// The real swipeable attaches worklet gestures that Jest cannot run. The mock
-// renders the actions beside the content so tests can tap them, and keeps
-// `close` callable through the ref.
-jest.mock("react-native-gesture-handler/ReanimatedSwipeable", () => {
-  const React = require("react");
-  const { View } = require("react-native");
-  const MockSwipeable = React.forwardRef(function MockSwipeable(
-    { children, renderRightActions },
-    ref,
-  ) {
-    React.useImperativeHandle(ref, () => ({ close: jest.fn() }));
-    return React.createElement(
-      View,
-      { testID: "swipe-row" },
-      children,
-      renderRightActions ? renderRightActions({ value: 0 }) : null,
-    );
-  });
-  return { __esModule: true, default: MockSwipeable };
-});
+// React Native's View mock stubs measureInWindow without calling back, so a
+// menu anchored to a measured trigger would never open.
+require("react-native/jest/MockNativeMethods").default.measureInWindow.mockImplementation(
+  (callback) => callback(0, 0, 0, 0),
+);

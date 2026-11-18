@@ -1,5 +1,12 @@
 import type { InventoryItem } from "@/hooks/useInventoryItems";
-import { groupFoodRows, inDrawOrder, stackLots, type DrawnLot, type FoodSection } from "@/lib/foodRows";
+import {
+  countUsableFoods,
+  groupFoodRows,
+  inDrawOrder,
+  stackLots,
+  type DrawnLot,
+  type FoodSection,
+} from "@/lib/foodRows";
 
 const TODAY = new Date(2026, 10, 8, 12);
 
@@ -144,6 +151,33 @@ describe("stackLots", () => {
     ]);
 
     expect(rows.map((r) => r.name)).toEqual(["Ham", "Apples", "Eggs", "Beans", "Rice"]);
+  });
+});
+
+describe("countUsableFoods", () => {
+  it("counts a food once however many unexpired batches it has", () => {
+    expect(countUsableFoods([milk("a", 2), milk("b", 9), milk("c", null)])).toBe(1);
+  });
+
+  it("leaves out a food whose every batch has expired", () => {
+    const eggs = lot({ id: "e", food_id: "eggs", name: "Eggs", expiration_date: inDays(-1) });
+    expect(countUsableFoods([eggs, milk("a", 3)])).toBe(1);
+  });
+
+  it("counts a food that still has a good batch beside an expired one", () => {
+    expect(countUsableFoods([milk("old", -2), milk("new", 4)])).toBe(1);
+  });
+
+  it("counts a food whose only batch has no date", () => {
+    expect(countUsableFoods([milk("a", null)])).toBe(1);
+  });
+
+  it("counts a batch expiring today as usable", () => {
+    expect(countUsableFoods([milk("a", 0)])).toBe(1);
+  });
+
+  it("returns 0 for an empty kitchen", () => {
+    expect(countUsableFoods([])).toBe(0);
   });
 });
 

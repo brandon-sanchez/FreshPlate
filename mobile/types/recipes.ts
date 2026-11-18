@@ -155,3 +155,17 @@ export type RecipeFeedResponse = {
     requested_dish: RequestedDish;
   };
 };
+
+/**
+ * Body of `GET /api/recipes/sessions/latest`: the caller's newest live feed
+ * session with every stored card from the start of the feed, or `null` when
+ * no session is live.
+ */
+export type RecipeFeedRestoreResponse = {
+  data:
+    | (RecipeFeedResponse["data"] & {
+        /** The answers the session started with. */
+        preferences: RecipePreferences;
+      })
+    | null;
+};

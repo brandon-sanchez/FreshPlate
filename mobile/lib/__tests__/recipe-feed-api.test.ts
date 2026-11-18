@@ -8,6 +8,7 @@ jest.mock("@/lib/api", () => ({
 
 import {
   createRecipeFeedSession,
+  fetchLatestRecipeFeed,
   fetchRecipeFeedPage,
   RECIPE_FEED_REQUEST_TIMEOUT_MS,
 } from "@/lib/recipe-feed-api";
@@ -52,5 +53,31 @@ describe("recipe feed API", () => {
       { cursor: "5", limit: 5 },
       { cursor: "10", limit: 5, steering },
     ]);
+  });
+
+  it("keeps only the stored answers the app asks about", async () => {
+    mockApiFetch.mockResolvedValue({
+      data: {
+        session_id: "session-1",
+        recipes: [],
+        next_cursor: null,
+        has_more: false,
+        ready_count: 0,
+        empty_reason: null,
+        requested_dish: "meal",
+        preferences: { meal: "Dinner", time: 30, extra: "x", diet: "Vegan" },
+      },
+    });
+
+    const response = await fetchLatestRecipeFeed();
+
+    expect(mockApiFetch.mock.calls[0][0]).toBe("/api/recipes/sessions/latest");
+    expect(response.data?.preferences).toEqual({ meal: "Dinner", diet: "Vegan" });
+  });
+
+  it("reads no session as none", async () => {
+    mockApiFetch.mockResolvedValue({ data: null });
+
+    await expect(fetchLatestRecipeFeed()).resolves.toEqual({ data: null });
   });
 });
