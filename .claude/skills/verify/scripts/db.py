@@ -4,7 +4,7 @@ Usage (from the repo root):
   python3 -I .claude/skills/verify/scripts/db.py <table> [postgrest-query]
 
 Examples:
-  db.py inventory_items "household_id=eq.<uuid>&select=name,quantity,unit&order=name"
+  db.py food_stock "household_id=eq.<uuid>&select=name,available,stock_base&order=name"
   db.py cook_events "household_id=eq.<uuid>&order=created_at.desc&limit=1"
 
 GET only: this helper cannot write. It authenticates with the backend's secret
