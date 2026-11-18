@@ -1,19 +1,24 @@
 import React from "react";
-import { DeviceEventEmitter, ScrollView } from "react-native";
+import { Alert, DeviceEventEmitter, ScrollView } from "react-native";
 import { act, fireEvent, render } from "@testing-library/react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 jest.mock("expo-router", () => ({ useRouter: () => ({ push: jest.fn() }) }));
 jest.mock("@react-navigation/bottom-tabs", () => ({ useBottomTabBarHeight: () => 0 }));
 jest.mock("@expo/vector-icons/FontAwesome", () => () => null);
+const mockAuth = {
+  user: null as { email?: string } | null,
+  signOut: jest.fn(),
+};
 jest.mock("@/stores/auth", () => ({
-  useAuthStore: (selector: (s: object) => unknown) =>
-    selector({ user: null, signOut: jest.fn() }),
+  useAuthStore: (selector: (s: object) => unknown) => selector(mockAuth),
   firstNameFromMetadata: () => null,
 }));
+const mockProfile = { data: undefined as { display_name: string } | undefined };
 jest.mock("@/hooks/useProfile", () => ({
-  useProfile: () => ({ data: undefined }),
-  firstNameFromProfile: () => null,
+  useProfile: () => mockProfile,
+  firstNameFromProfile: (name: string | null | undefined) =>
+    name?.trim().split(/\s+/)[0] ?? null,
 }));
 jest.mock("@/components/kitchen-basics-editor", () => {
   const { TextInput } = jest.requireActual("react-native");
@@ -50,6 +55,53 @@ function renderProfile() {
 }
 
 describe("ProfileScreen", () => {
+  beforeEach(() => {
+    mockAuth.user = null;
+    mockAuth.signOut.mockReset();
+    mockProfile.data = undefined;
+  });
+
+  it("shows the person's name and only a masked email", () => {
+    mockAuth.user = { email: "brandonsanchez5051@gmail.com" };
+    mockProfile.data = { display_name: "Brandon Sanchez" };
+
+    const screen = renderProfile();
+
+    expect(screen.getByText("Brandon Sanchez")).toBeTruthy();
+    expect(screen.getByText("b•••@gmail.com")).toBeTruthy();
+    expect(screen.queryByText(/brandonsanchez5051/)).toBeNull();
+  });
+
+  it("shows no development copy or sections that aren't built", () => {
+    const screen = renderProfile();
+
+    for (const text of [
+      /phase/i,
+      /placeholder/i,
+      /coming/i,
+      /for now/i,
+      /taste profile/i,
+      /dietary/i,
+      /household/i,
+      /expiration alerts/i,
+    ]) {
+      expect(screen.queryByText(text)).toBeNull();
+    }
+    expect(screen.getByText("Kitchen basics")).toBeTruthy();
+  });
+
+  it("signs out after the person confirms", () => {
+    const alert = jest.spyOn(Alert, "alert").mockImplementation(() => {});
+    const screen = renderProfile();
+
+    fireEvent.press(screen.getByRole("button", { name: "Sign out" }));
+    const buttons = alert.mock.calls[0][2] ?? [];
+    void buttons.find((button) => button.text === "Sign out")?.onPress?.();
+
+    expect(mockAuth.signOut).toHaveBeenCalledTimes(1);
+    alert.mockRestore();
+  });
+
   it("keeps a focused field above the keyboard and lets taps through", () => {
     const screen = renderProfile();
 

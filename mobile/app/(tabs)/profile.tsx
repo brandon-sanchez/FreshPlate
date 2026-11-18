@@ -1,12 +1,5 @@
-import { ReactNode, Ref, useRef, useState } from "react";
-import {
-  Alert,
-  Pressable,
-  ScrollView,
-  Switch,
-  Text,
-  View,
-} from "react-native";
+import { ReactNode, Ref, useRef } from "react";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
@@ -18,22 +11,20 @@ import { firstNameFromProfile, useProfile } from "@/hooks/useProfile";
 import { useScrollAboveKeyboard } from "@/hooks/useScrollAboveKeyboard";
 import KitchenBasicsEditor from "@/components/kitchen-basics-editor";
 
-const DIETARY_TAGS = [
-  "Vegetarian",
-  "Vegan",
-  "Gluten-free",
-  "Dairy-free",
-  "Pescatarian",
-  "Keto",
-] as const;
+/**
+ * Returns the email with its local part reduced to the first character, such
+ * as `b•••@gmail.com`, so the address isn't shown in full on a shared screen.
+ */
+function maskEmail(email: string): string {
+  const at = email.lastIndexOf("@");
+  if (at < 1) return "•••";
+  return `${email[0]}•••${email.slice(at)}`;
+}
 
-const PLACEHOLDER_TASTE = [
-  "Comfort food",
-  "Quick weeknights",
-  "Low-effort",
-  "One-pan",
-] as const;
-
+/**
+ * The Profile tab: the person's name, their kitchen basics, the app's
+ * appearance setting and sign out.
+ */
 export default function ProfileScreen() {
   const { colors, fonts, spacing } = useTheme();
   const router = useRouter();
@@ -54,14 +45,6 @@ export default function ProfileScreen() {
     firstNameFromProfile(profile.data?.display_name) ??
     firstNameFromMetadata(user);
   const displayFull = profile.data?.display_name?.trim() ?? displayFirst ?? null;
-
-  const [expirationAlerts, setExpirationAlerts] = useState(true);
-  const [dietary, setDietary] = useState<string[]>([]);
-
-  const toggleDietary = (tag: string) =>
-    setDietary((d) =>
-      d.includes(tag) ? d.filter((x) => x !== tag) : [...d, tag],
-    );
 
   const handleSignOut = () => {
     Alert.alert("Sign out", "Sign out of FreshPlate?", [
@@ -167,7 +150,7 @@ export default function ProfileScreen() {
               marginTop: 2,
             }}
           >
-            {user?.email ?? ""}
+            {user?.email ? maskEmail(user.email) : ""}
           </Text>
         </View>
         <Pressable
@@ -193,84 +176,6 @@ export default function ProfileScreen() {
         </Pressable>
       </View>
 
-      <Section title="Taste profile" subtitle="Learned from what you've cooked">
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-          {PLACEHOLDER_TASTE.map((t) => (
-            <View
-              key={t}
-              style={{
-                paddingHorizontal: 12,
-                paddingVertical: 6,
-                borderRadius: 100,
-                backgroundColor: colors.accentSoft,
-              }}
-            >
-              <Text
-                style={{
-                  fontFamily: fonts.bodyStrong,
-                  fontSize: 12,
-                  color: colors.accent,
-                  letterSpacing: -0.1,
-                }}
-              >
-                {t}
-              </Text>
-            </View>
-          ))}
-        </View>
-        <Text
-          style={{
-            marginTop: 10,
-            fontFamily: fonts.body,
-            fontSize: 11.5,
-            color: colors.textSubtle,
-          }}
-        >
-          Cook a few recipes to start seeing your real taste profile.
-        </Text>
-      </Section>
-
-      <Section title="Dietary preferences">
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-          {DIETARY_TAGS.map((t) => {
-            const selected = dietary.includes(t);
-            return (
-              <Pressable
-                key={t}
-                onPress={() => toggleDietary(t)}
-                style={{
-                  paddingHorizontal: 14,
-                  paddingVertical: 8,
-                  borderRadius: 100,
-                  backgroundColor: selected ? colors.accent : colors.surfaceAlt,
-                }}
-              >
-                <Text
-                  style={{
-                    fontFamily: fonts.bodyStrong,
-                    fontSize: 12.5,
-                    color: selected ? colors.accentInk : colors.text,
-                    letterSpacing: -0.1,
-                  }}
-                >
-                  {t}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-        <Text
-          style={{
-            marginTop: 10,
-            fontFamily: fonts.body,
-            fontSize: 11.5,
-            color: colors.textSubtle,
-          }}
-        >
-          These won&apos;t be saved until preferences ship — placeholder for now.
-        </Text>
-      </Section>
-
       <Section
         title="Kitchen basics"
         subtitle="Recipes can always use these. Cooking never deducts them."
@@ -283,46 +188,8 @@ export default function ProfileScreen() {
         />
       </Section>
 
-      <Section title="Household">
-        <Row
-          icon="users"
-          label="My household"
-          value="1 member"
-          onPress={() =>
-            Toast.show({
-              type: "info",
-              text1: "Household management",
-              text2: "Coming in Phase 9.",
-            })
-          }
-        />
-      </Section>
-
-      <Section title="App" subtitle="Notifications ship in Phase 12 — toggle saved locally for now">
-        <Row
-          icon="bell"
-          label="Expiration alerts"
-          right={
-            <Switch
-              value={expirationAlerts}
-              onValueChange={setExpirationAlerts}
-              trackColor={{ false: colors.surfaceAlt, true: colors.accent }}
-              thumbColor={colors.surface}
-            />
-          }
-        />
-        <Row
-          icon="moon-o"
-          label="Appearance"
-          value="System"
-          onPress={() =>
-            Toast.show({
-              type: "info",
-              text1: "Appearance",
-              text2: "Follows your device theme.",
-            })
-          }
-        />
+      <Section title="App">
+        <Row icon="moon-o" label="Appearance" value="Matches your device" />
         <Row icon="sign-out" label="Sign out" tone="crit" onPress={handleSignOut} />
       </Section>
 
@@ -403,14 +270,12 @@ function Row({
   icon,
   label,
   value,
-  right,
   onPress,
   tone,
 }: {
   icon: React.ComponentProps<typeof FontAwesome>["name"];
   label: string;
   value?: string;
-  right?: ReactNode;
   onPress?: () => void;
   tone?: "crit";
 }) {
@@ -419,6 +284,9 @@ function Row({
   return (
     <Pressable
       onPress={onPress}
+      disabled={!onPress}
+      accessibilityRole={onPress ? "button" : undefined}
+      accessibilityLabel={label}
       style={({ pressed }) => ({
         flexDirection: "row",
         alignItems: "center",
@@ -449,8 +317,7 @@ function Row({
           {value}
         </Text>
       ) : null}
-      {right}
-      {onPress && !right ? (
+      {onPress ? (
         <FontAwesome name="angle-right" size={14} color={colors.textSubtle} />
       ) : null}
     </Pressable>
