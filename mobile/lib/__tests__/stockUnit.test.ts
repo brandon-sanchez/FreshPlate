@@ -13,13 +13,13 @@ type SharedCase = {
   per_unit: string;
 };
 
-// The backend backfill tests read the same cases, so both sides agree on how a
+// The backend unit tests read the same cases, so both sides agree on how a
 // table unit or a bare word maps onto a food.
 const sharedCases: SharedCase[] = require("../../../backend/tests/fixtures/stock_unit_cases.json");
 
 describe("readStockUnit", () => {
   it.each(sharedCases.map((c) => [c.unit, c] as const))(
-    "reads %j the way the backfill does",
+    "reads %j the way the backend does",
     (unit, expected) => {
       const read = readStockUnit(unit);
       expect(read.stockBase).toBe(expected.stock_base);

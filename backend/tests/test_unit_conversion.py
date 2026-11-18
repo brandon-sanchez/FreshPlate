@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -28,6 +30,13 @@ MILK = FoodFacts(stock_base="ml")
 ONIONS = FoodFacts(stock_base="g", grams_per_each=D(150))
 SALT = FoodFacts(stock_base="each", each_label="container")
 COLA = FoodFacts(stock_base="each", each_label="can", ml_per_each=D(355))
+# Shared with mobile/lib/__tests__/stockUnit.test.ts, so the add form reads a
+# typed unit onto the same stock base and amount as the backend: a table unit
+# keeps its base and factor, and any other word is one each, labelled by
+# normalize_unit.
+STOCK_UNIT_CASES = json.loads(
+    (Path(__file__).parent / "fixtures/stock_unit_cases.json").read_text()
+)
 
 
 def _approx(conversion: Exact | Approximate | Small, places: str = "0.001") -> D:
@@ -410,3 +419,14 @@ def test_every_offered_unit_converts_without_asking() -> None:
     for food in (GARLIC, OIL, BUTTER, MILK, ONIONS, SALT, COLA):
         for unit in convertible_units(food):
             assert not isinstance(to_stock(D(1), unit, food), AskAtCook), (food, unit)
+
+
+@pytest.mark.parametrize("case", STOCK_UNIT_CASES, ids=lambda c: c["unit"])
+def test_a_table_unit_keeps_its_factor_and_any_other_word_is_one_each(case) -> None:
+    measured = table_unit(case["unit"])
+    if measured is None:
+        read = ("each", normalize_unit(case["unit"]), D(1))
+    else:
+        read = (measured[0], None, measured[1])
+
+    assert read == (case["stock_base"], case["each_label"], D(case["per_unit"]))

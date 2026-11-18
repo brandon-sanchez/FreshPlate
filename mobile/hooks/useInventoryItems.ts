@@ -15,11 +15,11 @@ type Category = {
  * `is_leftover` is true when the food is in the Leftovers category.
  * `opened_at` is when the lot was first opened (`null` while sealed), and
  * `created_at` is when it was added; both are ISO timestamps.
- * `initial_quantity` is the lot's full size in `unit`, or `null` for a lot
- * backfilled from `inventory_items`, whose full size is unknown. `is_estimate` is
- * true when `quantity` was eyeballed, so it shows as "about". `updated_at` is
- * the lot's version, kept as the exact string the database sent so that
- * `set_lot_remaining` can compare it at full precision.
+ * `initial_quantity` is the lot's full size in `unit`, or `null` when the full
+ * size is unknown. `is_estimate` is true when `quantity` was eyeballed, so it
+ * shows as "about". `updated_at` is the lot's version, kept as the exact
+ * string the database sent so that `set_lot_remaining` can compare it at full
+ * precision.
  * `whole_units_only` is true for foods counted in whole units, such as cans.
  */
 export type InventoryItem = {
