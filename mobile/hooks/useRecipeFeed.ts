@@ -28,7 +28,17 @@ import type {
 } from "@/types/recipes";
 import type { RecipeFeedEnding } from "@/lib/recipes";
 
-export const RECIPE_FEED_READY_POOL_TARGET = 10;
+/**
+ * The smallest reserve of unseen cards: a page loads once fewer unseen cards
+ * than this remain.
+ *
+ * Every page past the first batch is a paid generation. Until the cook
+ * first scrolls, steers or dismisses, the card on screen counts as unseen,
+ * so a first batch of four or five cards buys no page before anyone moves.
+ * On a five-card batch, the first swipe leaves three unseen and starts the
+ * next batch.
+ */
+export const RECIPE_FEED_READY_POOL_TARGET = 4;
 export const RECIPE_FEED_PREFETCH_BATCH_CEILING = RECIPE_FEED_PAGE_SIZE;
 export const RECIPE_FEED_MAX_RUNS = 6;
 export { RECIPE_FEED_REQUEST_TIMEOUT_MS };
@@ -102,7 +112,10 @@ function uniqueRecipes(recipes: RecipeSuggestion[]): RecipeSuggestion[] {
 
 /**
  * Runs one recipe feed session: creates it, pages through its cards and
- * keeps an unseen reserve loaded ahead of the user.
+ * keeps an unseen reserve loaded ahead of the user. A page loads when fewer
+ * than {@link RECIPE_FEED_READY_POOL_TARGET} unseen cards remain, counting
+ * a dismissed card as gone, or when a "More like this" press asks for one.
+ * Scrolling raises the reserve to cover one refill at the measured pace.
  *
  * Calls `POST /api/recipes/sessions` and
  * `POST /api/recipes/sessions/{id}/pages`, caching pages under
@@ -144,6 +157,7 @@ export function useRecipeFeed() {
   const activeStartControllerRef = useRef<AbortController | null>(null);
   const signalsRef = useRef<readonly SteerSignal[]>([]);
   const steeredPageWantedRef = useRef(false);
+  const hasBrowsedRef = useRef(false);
   // Stored cards ignore a page request's steering, so they are filtered
   // against the picks of the request that generated them instead.
   const poolSizeRef = useRef(0);
@@ -235,6 +249,7 @@ export function useRecipeFeed() {
       seenIdsRef.current.clear();
       signalsRef.current = [];
       steeredPageWantedRef.current = false;
+      hasBrowsedRef.current = false;
       poolSizeRef.current = 0;
       poolSignalsRef.current = [];
       activePageRef.current = null;
@@ -330,14 +345,23 @@ export function useRecipeFeed() {
     });
   }, [feedQuery, recipes.length, sessionId, status]);
 
-  useEffect(() => {
-    const unseenCount = recipes.filter(
-      (recipe) => !seenIdsRef.current.has(recipe.recipe_id),
-    ).length;
+  const topUpReserve = useCallback(() => {
+    // Until the cook first scrolls, steers or dismisses, the card on screen
+    // counts as still ahead of them, so a four-card first batch doesn't buy
+    // the next one before anyone has moved.
+    const unseenCount = hasBrowsedRef.current
+      ? recipes.filter((recipe) => !seenIdsRef.current.has(recipe.recipe_id))
+          .length
+      : recipes.length;
     if (unseenCount < bufferTargetRef.current) loadNextPage();
-  }, [recipes, consumptionVersion, loadNextPage]);
+  }, [loadNextPage, recipes]);
+
+  useEffect(() => {
+    topUpReserve();
+  }, [consumptionVersion, topUpReserve]);
 
   const maybePrefetch = useCallback((lastVisibleIndex: number) => {
+    if (lastVisibleIndex > 0) hasBrowsedRef.current = true;
     const consumed = recipes.slice(0, Math.max(0, lastVisibleIndex + 1));
     const previousCount = seenIdsRef.current.size;
     for (const recipe of consumed) seenIdsRef.current.add(recipe.recipe_id);
@@ -361,11 +385,8 @@ export function useRecipeFeed() {
       }
       setConsumptionVersion((value) => value + 1);
     }
-    const unseenCount = recipes.filter(
-      (recipe) => !seenIdsRef.current.has(recipe.recipe_id),
-    ).length;
-    if (unseenCount < bufferTargetRef.current) loadNextPage();
-  }, [loadNextPage, recipes]);
+    topUpReserve();
+  }, [recipes, topUpReserve]);
 
   useEffect(() => {
     if (!steeredPageWantedRef.current || feedQuery.isFetching) return;
@@ -384,6 +405,7 @@ export function useRecipeFeed() {
       // Each "More like this" batch is a paid generation, so a repeat press
       // waits for the batch already on its way.
       if (repeatsPendingMore) return;
+      hasBrowsedRef.current = true;
       signalsRef.current = [
         ...signalsRef.current.filter(
           (signal) => signal.recipe.recipe_id !== recipe.recipe_id,
@@ -402,6 +424,7 @@ export function useRecipeFeed() {
     const fresh = recipeIds.filter((id) => !dismissedIdsRef.current.has(id));
     if (fresh.length === 0) return;
     for (const id of fresh) dismissedIdsRef.current.add(id);
+    hasBrowsedRef.current = true;
     setDismissedVersion((value) => value + 1);
   }, []);
 

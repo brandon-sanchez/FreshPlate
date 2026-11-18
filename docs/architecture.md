@@ -144,7 +144,7 @@ sequenceDiagram
 	API->>DB: create_recipe_feed_session (every kept recipe)
 	API-->>App: session_id, the 3 photographed cards
 
-	loop While fewer than the target number of unseen cards
+	loop While 3 or fewer unseen cards remain
 		App->>API: POST /sessions/{id}/pages (cursor)
 		API->>DB: Read stored candidates from cursor
 		alt Nothing stored at the cursor, and runs remain
@@ -164,7 +164,7 @@ The design has four parts:
 - **The first batch does the expensive work once.** `POST /api/recipes/sessions` runs the full pipeline and retrieves 30 grounding recipes, enough for all six generation runs a session may make. The session stores the analysis and the retrieved recipes, so later refills skip embedding and vector search and run only generation and the quality check.
 - **A lease makes each refill run once.** Two page requests can reach the end of the stored recipes at the same moment. `claim_recipe_feed_refill` grants one of them a 45-second lease. The other waits for that refill and returns the same recipes, so a cursor always maps to the same recipe IDs. If the owner fails, it releases the lease. If it crashes, the lease expires. Only the backend can call these functions, using the Supabase secret key.
 - **The first cards come back before the batch is done.** Each recipe's photo starts as soon as its review keeps it, and a batch answers once its first three kept recipes have photos. Recipes still being written then are dropped. The other kept recipes are stored without photos, and the page request that returns them makes their photos first. No work runs after a response, because the planned AWS Lambda deployment freezes the instance once it answers, so the rest of a batch always finishes inside a later request the app makes.
-- **The app prefetches by how fast you scroll.** `mobile/hooks/useRecipeFeed.ts` keeps between 10 and 20 unseen cards ready. It measures how fast the user moves through cards and how long a refill takes, then asks for more before the buffer runs out. If the user still reaches the end, a skeleton card holds the place until the next batch arrives.
+- **The app pays only for cards the user moves toward.** `mobile/hooks/useRecipeFeed.ts` asks for the next page when three or fewer unseen cards remain. Until the user first scrolls, steers or dismisses, the card on screen counts as unseen, so a first batch of four or five cards never pays for another batch before anyone moves. On a five-card batch the first swipe starts the next one. Once the user scrolls, the hook measures how fast they move through cards and how long a page takes, and keeps up to 20 unseen cards ready to match. If the user still reaches the end, a skeleton card holds the place until the next page arrives.
 
 A session stops after six generation runs. The app then offers to add items or change the answers, rather than generating forever.
 
