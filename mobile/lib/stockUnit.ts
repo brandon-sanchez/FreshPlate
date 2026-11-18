@@ -104,7 +104,7 @@ const IRREGULAR_PLURALS = new Map([
  * @param text - The unit as typed, in any case, singular or plural.
  */
 export function readStockUnit(text: string): StockUnit {
-  const key = normalizeUnit(text);
+  const key = unitWord(text);
   const grams = MASS.get(key);
   if (grams !== undefined)
     return { stockBase: "g", eachLabel: null, perUnit: grams };
@@ -160,7 +160,11 @@ export function roundAmount(value: number): number {
   return Number(value.toPrecision(12));
 }
 
-function normalizeUnit(text: string): string {
+/**
+ * Returns a unit word in the singular, lowercase form the tables key on:
+ * "Lemons" is "lemon", "tbs." is "tbsp", and a blank or "item" is "each".
+ */
+export function unitWord(text: string): string {
   let words = text
     .toLowerCase()
     .replace(ABBREVIATION_PERIOD, "")
@@ -172,7 +176,8 @@ function normalizeUnit(text: string): string {
   return ALIASES.get(key) ?? key;
 }
 
-function singular(word: string): string {
+/** Returns a lowercase word's singular form: "lemons" is "lemon", "berries" is "berry". */
+export function singular(word: string): string {
   const irregular = IRREGULAR_PLURALS.get(word);
   if (irregular !== undefined) return irregular;
   if (word.length <= 3 || /(ss|us|is)$/.test(word)) return word;

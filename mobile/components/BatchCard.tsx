@@ -3,7 +3,7 @@ import Feather from "@expo/vector-icons/Feather";
 import { useTheme } from "@/hooks/useTheme";
 import UrgencyBar from "@/components/UrgencyBar";
 import type { DrawnLot } from "@/lib/foodRows";
-import { formatAmount } from "@/lib/amount";
+import { formatAmount, type SubUnit } from "@/lib/amount";
 import { expiryLabel } from "@/lib/expiry";
 
 // Border plus padding, so the content stays put when the border thickens.
@@ -20,16 +20,18 @@ type BatchCardProps = {
    * outside a multi-select.
    */
   selected?: boolean;
+  /** The food's smaller unit, such as a clove of garlic, for the amount. */
+  subUnit?: SubUnit | null;
 };
 
 /**
  * Renders one batch of a food as a card: amount, location, opened state,
  * expiry with an urgency bar, notes, and "Use first" or "Expired" pills.
  */
-function BatchCard({ batch, onPress, selected }: BatchCardProps) {
+function BatchCard({ batch, onPress, selected, subUnit = null }: BatchCardProps) {
   const { colors, fonts, card } = useTheme();
   const { lot, days, expired, useFirst } = batch;
-  const amount = formatAmount(lot.quantity, lot.unit, lot.is_estimate);
+  const amount = formatAmount(lot.quantity, lot.unit, lot.is_estimate, subUnit);
   const meta = [capitalize(lot.storage_location)];
   if (lot.opened_at !== null) meta.push("Opened");
   const expiry = expiryLabel(days);

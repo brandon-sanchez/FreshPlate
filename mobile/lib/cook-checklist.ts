@@ -1,6 +1,6 @@
+import { formatAmount, type SubUnit } from "@/lib/amount";
 import { foodNameKey } from "@/lib/foodName";
-import { pluralize } from "@/lib/recipe-format";
-import { roundAmount, toMeasure } from "@/lib/stockUnit";
+import { roundAmount } from "@/lib/stockUnit";
 import type { ActiveCook } from "@/stores/activeCook";
 import type {
   CookConfirmationRequest,
@@ -23,6 +23,8 @@ export type ChecklistLine = {
   unit: string;
   /** True for counted foods that can't be split, so the stepper moves by 1. */
   wholeUnitsOnly: boolean;
+  /** The counted food's smaller unit, such as a clove of garlic, or `null`. */
+  subUnit: SubUnit | null;
   /** Unexpired stock the person was last shown. */
   available: number;
   /** How much the person says they used. 0 deducts nothing. */
@@ -43,13 +45,10 @@ export type ChecklistLine = {
 /** What "Add item" needs to know about a food to put it on the checklist. */
 export type AddableFood = Pick<
   ChecklistLine,
-  "foodId" | "name" | "stockBase" | "unit" | "available" | "wholeUnitsOnly"
+  "foodId" | "name" | "stockBase" | "unit" | "available" | "wholeUnitsOnly" | "subUnit"
 >;
 
 const ADD_ITEM_LIMIT = 5;
-const BASE_UNIT_DECIMALS = 2;
-// A few grams stay visible in kilograms: 1.995 kg, not 2 kg.
-const LARGER_UNIT_DECIMALS = 3;
 const MEASURED_STEPS: [below: number, step: number][] = [
   [100, 5],
   [1000, 25],
@@ -65,6 +64,7 @@ export function linesFromPlan(plan: CookPlan): ChecklistLine[] {
     stockBase: food.stock_base,
     unit: food.each_label ?? food.stock_base,
     wholeUnitsOnly: food.whole_units_only,
+    subUnit: null,
     available: food.available,
     amount: food.draw,
     estimated: food.estimated,
@@ -89,14 +89,17 @@ export function addedLine(food: AddableFood): ChecklistLine {
 
 /**
  * Returns the line's amount one step up or down, snapped to the step: whole
- * units step by 1, other counts by a quarter, and weights and volumes by 5,
- * 25 or 100 depending on the amount. Never below 0.
+ * units step by 1, other counts by one of their smaller unit or else by a
+ * quarter, and weights and volumes by 5, 25 or 100 depending on the amount.
+ * Never below 0.
  *
  * @param direction - 1 for up, -1 for down.
  */
 export function stepAmount(line: ChecklistLine, direction: 1 | -1): number {
   const size = stepSize(line);
-  const steps = line.amount / size;
+  // A sub-unit step such as 0.1 is inexact in binary, so 0.3 / 0.1 lands
+  // just under 3 and would step back to 0.3.
+  const steps = roundAmount(line.amount / size);
   const next =
     direction === 1 ? Math.floor(steps) + 1 : Math.ceil(steps) - 1;
   return Math.max(0, roundAmount(next * size));
@@ -104,7 +107,7 @@ export function stepAmount(line: ChecklistLine, direction: 1 | -1): number {
 
 function stepSize(line: ChecklistLine): number {
   if (line.wholeUnitsOnly) return 1;
-  if (line.stockBase === "each") return SPLIT_COUNT_STEP;
+  if (line.stockBase === "each") return line.subUnit?.perUnit ?? SPLIT_COUNT_STEP;
   return MEASURED_STEPS.find(([below]) => line.amount < below)![1];
 }
 
@@ -129,15 +132,26 @@ export function reloadLines(
     return {
       ...line,
       available: fresh,
-      changed: short ? changeNote(fresh, line.unit) : null,
+      changed: short ? changeNote(line, fresh) : null,
     };
   });
 }
 
-function changeNote(available: number, unit: string): string {
+function changeNote(line: ChecklistLine, available: number): string {
   return available <= 0
     ? "None left now"
-    : `Only ${formatStock(available, unit, false)} left now`;
+    : `Only ${formatAmount(available, line.unit, false, line.subUnit)} left now`;
+}
+
+/**
+ * Returns the warning for a line set to use more than the stock it was
+ * shown, or `null`. Cooking takes only what is there, so the line says how
+ * much that is before the person confirms.
+ */
+export function shortfallNote(line: ChecklistLine): string | null {
+  if (line.amount <= line.available) return null;
+  if (line.available <= 0) return "None left to deduct";
+  return `More than the ${formatAmount(line.available, line.unit, false, line.subUnit)} you have`;
 }
 
 function expectedAmount(line: ChecklistLine): number {
@@ -213,29 +227,6 @@ function cookLines(line: ChecklistLine): PositionedLine[] {
       stock_amount: answers ? (hasDraw ? rest : line.amount) : planLine.stock_amount,
     };
   });
-}
-
-/**
- * Formats a stock amount for the checklist: weights and volumes in their
- * largest unit ("1.5 kg"), counts with a plural word ("2 eggs"), and "about"
- * before an estimate.
- */
-export function formatStock(amount: number, unit: string, estimate: boolean): string {
-  let text: string;
-  if (unit === "g" || unit === "ml") {
-    const measured = toMeasure(amount, unit);
-    const places =
-      measured.unit === unit ? BASE_UNIT_DECIMALS : LARGER_UNIT_DECIMALS;
-    text = `${shortNumber(measured.amount, places)} ${measured.unit}`;
-  } else {
-    const word = amount === 1 || unit === "each" ? unit : pluralize(unit);
-    text = `${shortNumber(amount, BASE_UNIT_DECIMALS)} ${word}`;
-  }
-  return estimate ? `about ${text}` : text;
-}
-
-function shortNumber(value: number, places: number): string {
-  return String(Number(value.toFixed(places)));
 }
 
 /**

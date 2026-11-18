@@ -132,12 +132,12 @@ it("lists the food's batches in the order cooking draws them, tagging the next o
   renderScreen();
 
   expect(await screen.findByText("Milk")).toBeTruthy();
-  expect(screen.getByText("Dairy · 1500 ml · 3 batches")).toBeTruthy();
+  expect(screen.getByText("Dairy · 1.5 l · 3 batches")).toBeTruthy();
 
   const cards = batchCards();
   expect(cards.map((card) => card.props.accessibilityLabel)).toEqual([
     "500 ml, Freezer, Opened, Expires in 6 days, use first",
-    "1000 ml, Fridge, Expires in 2 days",
+    "1 l, Fridge, Expires in 2 days",
     "250 ml, Fridge, Expired 2 days ago",
   ]);
   expect(within(cards[0]).getByText("Use first")).toBeTruthy();
@@ -150,14 +150,14 @@ it("lists the food's batches in the order cooking draws them, tagging the next o
 it("opens the batch editor for a tapped batch", async () => {
   renderScreen();
 
-  fireEvent.press(await screen.findByLabelText("1000 ml, Fridge, Expires in 2 days"));
+  fireEvent.press(await screen.findByLabelText("1 l, Fridge, Expires in 2 days"));
 
   expect(mockPush).toHaveBeenCalledWith("/item/milk-sealed");
 });
 
 it("records a swiped batch on its own", async () => {
   renderScreen();
-  const card = await screen.findByLabelText("1000 ml, Fridge, Expires in 2 days");
+  const card = await screen.findByLabelText("1 l, Fridge, Expires in 2 days");
   const row = screen.getAllByTestId("swipe-row").find((r) => within(r).queryByLabelText(card.props.accessibilityLabel));
   await swipeOpen("lot-swipe:milk-sealed");
 
@@ -229,7 +229,7 @@ it("combines the picked batches into the one cooking draws first", async () => {
   renderScreen();
 
   fireEvent.press(await screen.findByRole("button", { name: "Combine" }));
-  fireEvent.press(screen.getByLabelText("1000 ml, Fridge, Expires in 2 days"));
+  fireEvent.press(screen.getByLabelText("1 l, Fridge, Expires in 2 days"));
   fireEvent.press(screen.getByLabelText("500 ml, Freezer, Opened, Expires in 6 days, use first"));
   fireEvent.press(screen.getByRole("button", { name: "Combine 2 batches" }));
 
@@ -250,7 +250,7 @@ it("checks the picked batches and says which one holds the mix", async () => {
   fireEvent.press(await screen.findByRole("button", { name: "Combine" }));
   expect(screen.getByText("Pick 2 or more batches")).toBeTruthy();
 
-  const sealed = screen.getByLabelText("1000 ml, Fridge, Expires in 2 days");
+  const sealed = screen.getByLabelText("1 l, Fridge, Expires in 2 days");
   fireEvent.press(sealed);
   fireEvent.press(screen.getByLabelText("500 ml, Freezer, Opened, Expires in 6 days, use first"));
 
@@ -267,7 +267,7 @@ it("needs two picked batches to combine, and cancels without changes", async () 
   renderScreen();
 
   fireEvent.press(await screen.findByRole("button", { name: "Combine" }));
-  fireEvent.press(screen.getByLabelText("1000 ml, Fridge, Expires in 2 days"));
+  fireEvent.press(screen.getByLabelText("1 l, Fridge, Expires in 2 days"));
   fireEvent.press(screen.getByRole("button", { name: "Combine 1 batch" }));
   fireEvent.press(screen.getByRole("button", { name: "Cancel" }));
 
