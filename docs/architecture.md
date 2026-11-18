@@ -123,7 +123,7 @@ The pipeline shares one `PipelineDeadline` across all nodes. `POST /api/recipes/
 
 A judge call that fails drops only its recipe. The batch fails when any call failed and no recipe was kept, because the failed call might have written a keeper. An empty batch therefore always means every call answered, so an outage never looks like a kitchen that can't make a meal.
 
-The deadline keeps a slow model call from holding a request open past the app's timeout. It also causes the main failure in the live eval. When generation runs long, too little time is left for the judge. The [evaluation reference](evals.md) has the numbers.
+The deadline keeps a slow model call from holding a request open past the app's timeout.
 
 Open [PR #73](https://github.com/brandon-sanchez/FreshPlate/pull/73) changes this pipeline. It sets Gemini's thinking level to minimal and replaces the meal judge with a checklist judge whose verdict code decides.
 
@@ -141,27 +141,31 @@ sequenceDiagram
 	App->>API: POST /api/recipes/sessions (household_id, answers)
 	API->>DB: Read food_stock and food_facts as the user
 	API->>G: Full pipeline, 5 recipes, retrieve 30 docs
-	G-->>API: Valid recipes
-	API->>DB: create_recipe_feed_session
-	API-->>App: session_id, first page
+	G-->>API: Kept recipes, photos of the first 3
+	API->>DB: create_recipe_feed_session (every kept recipe)
+	API-->>App: session_id, the 3 photographed cards
 
-	loop While fewer than the target number of unseen cards
+	loop While 3 or fewer unseen cards remain
 		App->>API: POST /sessions/{id}/pages (cursor)
 		API->>DB: Read stored candidates from cursor
-		alt Not enough stored, and runs remain
+		alt Nothing stored at the cursor, and runs remain
 			API->>DB: claim_recipe_feed_refill (45 s lease)
 			API->>G: Generate and check only, reuse retrieved docs
 			API->>DB: finalize_recipe_feed_refill
+			API-->>App: The batch's first 3 cards, with photos
+		else Stored candidates
+			API->>API: Make the photo of each card that has none
+			API-->>App: Stored cards, with photos
 		end
-		API-->>App: Next page
 	end
 ```
 
-The design has three parts:
+The design has four parts:
 
 - **The first batch does the expensive work once.** `POST /api/recipes/sessions` runs the full pipeline and retrieves 30 grounding recipes, enough for all six generation runs a session may make. The session stores the analysis and the retrieved recipes, so later refills skip embedding and vector search and run only generation and the quality check.
 - **A lease makes each refill run once.** Two page requests can reach the end of the stored recipes at the same moment. `claim_recipe_feed_refill` grants one of them a 45-second lease. The other waits for that refill and returns the same recipes, so a cursor always maps to the same recipe IDs. If the owner fails, it releases the lease. If it crashes, the lease expires. Only the backend can call these functions, using the Supabase secret key.
-- **The app prefetches by how fast you scroll.** `mobile/hooks/useRecipeFeed.ts` keeps between 10 and 20 unseen cards ready. It measures how fast the user moves through cards and how long a refill takes, then asks for more before the buffer runs out. If the user still reaches the end, a skeleton card holds the place until the next batch arrives.
+- **The first cards come back before the batch is done.** Each recipe's photo starts as soon as its review keeps it, and a batch answers once its first three kept recipes have photos. Recipes still being written then are dropped. The other kept recipes are stored without photos, and the page request that returns them makes their photos first. No work runs after a response, because the planned AWS Lambda deployment freezes the instance once it answers, so the rest of a batch always finishes inside a later request the app makes.
+- **The app pays only for cards the user moves toward.** `mobile/hooks/useRecipeFeed.ts` asks for the next page when three or fewer unseen cards remain. Until the user first scrolls, steers or dismisses, the card on screen counts as unseen, so a first batch of four or five cards never pays for another batch before anyone moves. On a five-card batch the first swipe starts the next one. Once the user scrolls, the hook measures how fast they move through cards and how long a page takes, and keeps up to 20 unseen cards ready to match. If the user still reaches the end, a skeleton card holds the place until the next page arrives.
 
 A session stops after six generation runs. The app then offers to add items or change the answers, rather than generating forever.
 
@@ -210,7 +214,7 @@ The backend serves recipe photos and ingredient thumbnails from `POST /api/image
 - Each image is generated at most once. A recipe photo is keyed by a hash of the dish title and the set of ingredient names, both normalized for case, spacing and punctuation. Amounts, ingredient order and steps don't change the key, so the feed and saved copies share a photo, and so do households that get the same dish. Adding or swapping an ingredient, or renaming the dish, gives a new photo. The photo prompt is built from the same title and ingredient names, with no amounts or steps, so every recipe that shares a photo would have asked for the same picture. An ingredient thumbnail is keyed by its food profile, or by its normalized name when it has none, so every household's tomato shares one.
 - Before any provider call, `claim_image_asset` reserves an upper-bound cost against a global monthly cap ($10 by default, recipes and ingredients combined) and a per-user monthly cap. The backend then settles the claim with the stored image or releases it. A release refunds the reservation only when the provider returned an error response, which it does not bill.
 - A failed image is attempted again only by a later request, after a cooldown, and only up to a fixed number of possibly billed attempts. Requests never retry the provider themselves.
-- The feed generates photos inside the recipe pipeline. After the quality check, a photo step requests every valid recipe's photo at once. The batch is stored and returned only when those requests end, so each feed card carries its photo, or its placeholder result, in the feed response. The recipe steps stop 15 seconds before the request deadline to leave the photos time, and each photo must finish before the request does. A failed, over-budget or late photo never fails the batch. A photo that missed the deadline comes back as `unavailable` with reason `late`, and the app asks for it again when its card next shows, at most once a minute.
+- The feed generates photos inside the recipe pipeline. A recipe's photo starts as soon as the meal review keeps it, for the first three recipes of a batch, and the request returns those three cards once their photos end. A page request makes the photo of any stored card it returns that has none. So each feed card carries its photo, or its placeholder result, in the feed response. The recipe steps stop 15 seconds before the request deadline to leave the photos time, and each photo must finish before the request does. A failed, over-budget or late photo never fails the batch. A photo that missed the deadline comes back as `unavailable` with reason `late`, and the app asks for it again when its card next shows, at most once a minute.
 - Only recipes from the caller's feed, which the backend writes, can start a generation. Saved recipes, which members write directly, get the matching feed photo or a placeholder.
 - Images are WebP files in the private `generated-images` Storage bucket. Responses carry a signed URL and a stable `image_key`. When there is no image, the response says `pending` or `unavailable` with a reason, so the screen shows its placeholder.
 - `OpenAIImageProvider` in `backend/app/ai/images/openai.py` makes one image request and checks that the result is a PNG no larger than 4096 pixels on a side.
@@ -229,6 +233,5 @@ Supabase, Gemini, OpenAI image generation, Open Food Facts, and LangSmith stay a
 
 ## Where to go next
 
-- [Evaluation reference](evals.md) describes the eval dataset, metrics, and latest scorecards.
-- [Run the evals](run-evals.md) shows how to run them.
+- [Recipe evals](evals.md) explains what the eval measures, defines the rubric, and shows how to run it and read the scorecard.
 - [CI/CD](ci-cd.md) explains what runs on each push.

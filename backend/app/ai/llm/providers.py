@@ -23,6 +23,13 @@ from app.core.config import settings
 
 logger = logging.getLogger("freshplate.llm.provider")
 
+GEMINI_CALL_RECORD = "gemini_call"
+"""The log-record attribute that holds one Gemini call's usage mapping.
+
+``GeminiProvider`` logs each call on ``logger`` at INFO with this attribute
+set to the call's model, outcome and token counts.
+"""
+
 # Gemini Developer API pricing lists this model in the free tier. Keep the
 # model pin explicit so a future change does not accidentally add paid usage.
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
@@ -229,7 +236,7 @@ class GeminiProvider:
         logger.info(
             "Gemini call %s",
             " ".join(f"{key}={value}" for key, value in call.items()),
-            extra={"gemini_call": call},
+            extra={GEMINI_CALL_RECORD: call},
         )
 
     def _get_client(self) -> Any:
