@@ -114,7 +114,9 @@ function uniqueRecipes(recipes: RecipeSuggestion[]): RecipeSuggestion[] {
  * `steer` records a "More like this" or "Less like this" press for the rest
  * of the session. Every later page request carries the picks, so batches are
  * generated toward or away from them, and arriving cards are filtered by
- * {@link keepSteeredCards}. A "More like this" press also requests the next
+ * {@link keepSteeredCards}. A page of stored cards ignores the picks it
+ * carries, so it is filtered against the picks of the request that
+ * generated those cards. A "More like this" press also requests the next
  * page at once, or as soon as a page already loading lands. Pressing it again
  * on the same recipe while that page is on its way changes nothing. The
  * caller removes the swept cards on screen with `dismiss`, and `restore` puts
@@ -142,6 +144,10 @@ export function useRecipeFeed() {
   const activeStartControllerRef = useRef<AbortController | null>(null);
   const signalsRef = useRef<readonly SteerSignal[]>([]);
   const steeredPageWantedRef = useRef(false);
+  // Stored cards ignore a page request's steering, so they are filtered
+  // against the picks of the request that generated them instead.
+  const poolSizeRef = useRef(0);
+  const poolSignalsRef = useRef<readonly SteerSignal[]>([]);
   const [steerVersion, setSteerVersion] = useState(0);
 
   const createMutation = useMutation<RecipeFeedPage, Error, StartMutationInput>({
@@ -171,11 +177,16 @@ export function useRecipeFeed() {
         signal,
         steering: steeringRequest(requested),
       });
+      const fromPool = Number(pageParam) < poolSizeRef.current;
       const recipes = keepSteeredCards(
         response.data.recipes,
         signalsRef.current,
-        requested,
+        fromPool ? poolSignalsRef.current : requested,
       );
+      if (sessionIdRef.current === sessionId) {
+        if (!fromPool) poolSignalsRef.current = requested;
+        poolSizeRef.current = response.data.ready_count;
+      }
       const page = await unpackPhotos(queryClient, {
         data: { ...response.data, recipes },
       });
@@ -224,6 +235,8 @@ export function useRecipeFeed() {
       seenIdsRef.current.clear();
       signalsRef.current = [];
       steeredPageWantedRef.current = false;
+      poolSizeRef.current = 0;
+      poolSignalsRef.current = [];
       activePageRef.current = null;
       bufferTargetRef.current = RECIPE_FEED_READY_POOL_TARGET;
       pageLatencyMsRef.current = 25_000;
@@ -242,6 +255,7 @@ export function useRecipeFeed() {
           if (generationRef.current !== generation) return;
           const nextSessionId = firstPage.data.session_id;
           sessionIdRef.current = nextSessionId;
+          poolSizeRef.current = firstPage.data.ready_count;
           queryClient.setQueryData(["recipe-feed", nextSessionId], {
             pages: [firstPage],
             pageParams: ["0"],
