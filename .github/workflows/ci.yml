@@ -68,7 +68,7 @@ jobs:
 
   docker:
     name: Docker build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Check out the repository
         uses: actions/checkout@v7
@@ -80,6 +80,21 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: backend
+          platforms: linux/arm64
           push: false
+          load: true
+          provenance: false
+          tags: freshplate-api
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Check /health
+        run: |
+          docker run --detach --publish 8080:8080 --name api freshplate-api
+          for _ in $(seq 1 30); do
+            if curl --silent --fail http://localhost:8080/health; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs api
+          exit 1
