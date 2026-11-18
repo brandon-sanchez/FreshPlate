@@ -1,10 +1,3 @@
-"""Deterministic mechanism repros for the intermittent post-loader error (#42).
-
-Offline companions to test_recipe_feed_live_repro.py. Each test replays one
-suspected failure mechanism through the real session endpoint and asserts the
-exact surface the mobile client turns into the error-with-retry state.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -14,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.ai.llm.errors import ProviderError
+from app.ai.llm.retry import PipelineDeadline
 from app.api.recipes import (
     RECIPE_FEED_INITIAL_HEAD_BATCH_CEILING,
     RECIPE_FEED_REFILL_BATCH_CEILING,
@@ -140,6 +134,37 @@ class UnusedStore:
         raise AssertionError("store should not be reached")
 
 
+class _StoppedLoopClock:
+    """Clock that moves only when the test advances it.
+
+    It replaces the running event loop's clock and the clock of every
+    ``PipelineDeadline.from_now`` deadline, so timers and deadlines expire
+    together and only when the test says so, however slowly a loaded
+    machine runs the loop. Code that waits on a timer before the test
+    advances the clock never wakes up, so the test hangs instead of failing.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, monkeypatch) -> None:
+        self._now = loop.time()
+        monkeypatch.setattr(loop, "time", self.time)
+        start_deadline = PipelineDeadline.from_now
+        monkeypatch.setattr(
+            PipelineDeadline,
+            "from_now",
+            staticmethod(
+                lambda budget_seconds=None: start_deadline(
+                    budget_seconds, clock=self.time
+                )
+            ),
+        )
+
+    def time(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+
+
 def _client(provider: Any) -> TestClient:
     app = create_app()
     app.dependency_overrides[get_recipe_provider] = lambda: provider
@@ -181,13 +206,6 @@ def test_zero_valid_generation_late_in_budget_skips_the_quality_retry(
     patch_jwks,
     monkeypatch,
 ) -> None:
-    """Regression for the #42 fix: no retry without one generation's budget.
-
-    Before the fix this scenario fired a second generation with almost no
-    time left and surfaced as 503 AI_UNAVAILABLE. Now the router skips the
-    quality retry below its 20-second floor and the loader ends in the
-    explicit empty state instead of the error state.
-    """
     patch_jwks([signing_key])
     from tests.test_recipe_feed import InMemoryRecipeFeedStore
 
@@ -272,6 +290,7 @@ async def test_refill_deadline_observes_provider_failure_during_cancellation(
         client=SimpleNamespace(aio=SimpleNamespace(models=models)),
     )
     loop = asyncio.get_running_loop()
+    clock = _StoppedLoopClock(loop, monkeypatch)
     unobserved = []
     previous = loop.get_exception_handler()
     loop.set_exception_handler(lambda loop, context: unobserved.append(context))
@@ -295,12 +314,13 @@ async def test_refill_deadline_observes_provider_failure_during_cancellation(
                     json={"cursor": "1"},
                 )
             )
+            await models.all_started.wait()
             if cancel_request:
-                await models.all_started.wait()
                 request.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await request
             else:
+                clock.advance(2 * generation_budget)
                 response = await request
                 assert response.status_code == 503
                 assert response.json()["code"] == "AI_UNAVAILABLE"
