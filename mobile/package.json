@@ -8,6 +8,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "test": "jest",
+    "render-icons": "swift scripts/render-app-icons.swift",
     "lint": "expo lint . --max-warnings 0"
   },
   "dependencies": {
