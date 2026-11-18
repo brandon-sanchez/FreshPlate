@@ -1,394 +1,183 @@
-"""Run the local recipe evaluation dataset."""
+"""Run the recipe evals and print a scorecard.
+
+Usage:
+    cd backend
+    venv/bin/python -m scripts.run_evals            # offline, free
+    venv/bin/python -m scripts.run_evals --live     # Gemini, billed
+
+Offline mode answers every model call with fixtures, so it needs no keys
+and checks the harness rather than recipe quality. Live mode runs the real
+pipeline on Gemini and the production vector store, and the judge on
+Gemini, and logs a named LangSmith experiment when ``LANGSMITH_API_KEY`` is
+set, unless ``--no-upload`` is passed. Offline runs never upload, so fixture
+scores never sit beside real ones in LangSmith. The exit
+status is 0 whatever the scores are: evals inform, they don't gate.
+"""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import json
-import math
-from pathlib import Path
-from typing import Any
+import contextlib
+import os
+import sys
+from collections.abc import Sequence
 
-from app.ai.agents.food_labels import FoodLabels
-from app.ai.agents.graph import build_recipe_graph
-from app.ai.agents.kitchen_basics import KitchenBasics
-from app.ai.agents.meal_quality import MealCheck
-from app.ai.agents.models import Recipe, RecipeIngredient, RecipeStep
-from app.ai.agents.nodes import analyze_inventory
-from app.ai.eval.judge import JudgeResult, judge_recipe
-from app.ai.eval.scorers import completeness_percent, ingredient_coverage_percent
-from app.ai.llm.providers import FakeProvider, GeminiProvider
-from app.ai.rag.vector_store import RetrievedRecipe
-from app.inventory.food_facts import FoodLine
+from langsmith import Client
 
-DATASET = Path(__file__).parents[1] / "app/ai/eval/dataset.json"
-# Mirrors public.default_kitchen_basics() in
-# supabase/migrations/20261116140000_add_kitchen_basics.sql, so evals cook
-# with the basics a new household has.
-_DEFAULT_BASICS = KitchenBasics(
-    ("Salt", "Black pepper", "Neutral oil", "Olive oil", "Water")
-)
+from app.ai.eval.cases import EvalCase, load_cases
+from app.ai.eval.experiment import dataset_name, evaluate_in_langsmith
+from app.ai.eval.offline import OfflineModel, OfflineRetriever
+from app.ai.eval.runner import EvalMode, EvalSetup, evaluate_cases
+from app.ai.eval.scorecard import Scorecard
+from app.ai.eval.usage import recorded_gemini_calls, summarize_calls
+from app.ai.llm.providers import DEFAULT_GEMINI_MODEL, GeminiProvider
+from app.ai.prompts.loader import load_prompt
+from app.ai.rag.embeddings import EmbeddingClient
+from app.ai.rag.retriever import RecipeRetriever
+from app.ai.rag.vector_store import SupabaseVectorStore
+from app.api.recipes import RECIPE_FEED_INITIAL_HEAD_BATCH_CEILING
+from app.core.config import settings
+
+# Each live case makes up to five generation calls at once, then its meal
+# reviews and judge calls, so two cases at a time keep about ten Gemini
+# calls in flight.
+_CASE_CONCURRENCY = 2
 
 
-def _fixture_recipe(case: dict[str, Any]) -> Recipe:
-    """Return the offline model's answer: a recipe of all of the first usable food.
+async def run(
+    mode: EvalMode,
+    *,
+    experiment: str,
+    upload: bool,
+) -> Scorecard:
+    """Run every case in ``mode`` and return the scorecard.
 
-    Using the whole stock gives the recipe a meal-sized portion, so the code
-    portion checks pass it on to the offline judge.
+    Args:
+        mode: "offline" for fixtures, "live" for Gemini and vector search.
+        experiment: The LangSmith experiment's name prefix.
+        upload: Whether to log the run as a LangSmith experiment. The
+            caller must have configured LangSmith.
+
+    Raises:
+        EvalCaseError: When the dataset file is invalid.
+        ExperimentError: When an uploaded experiment is missing a case.
     """
-    analysis = analyze_inventory(
-        {"inventory": case["inventory"], "kitchen_basics": _DEFAULT_BASICS}
-    )
-    usable = analysis["usable_items"]
-    item = FoodLine.model_validate(usable[0]["food"])
-    food_label = FoodLabels(
-        (food["id"] for food in usable), analysis["kitchen_basics"]
-    ).label(item.id)
-    return Recipe(
-        title=case["name"].title(),
-        headnote="A deterministic offline fixture built from the first usable food.",
-        cook_time_minutes=20,
-        servings=2,
-        active_minutes=10,
-        total_minutes=20,
-        equipment=["large skillet"],
-        ingredients=[
-            RecipeIngredient(
-                name=item.name,
-                inventory_item_id=food_label,
-                use_amount=item.available,
-                unit=item.stock_unit,
-            ),
-        ],
-        steps=[
-            RecipeStep(instruction="Prepare the ingredients", uses=[food_label]),
-            RecipeStep(
-                instruction="Cook\nCook over medium heat.",
-                doneness_cue="Ready when tender.",
-                minutes=10,
-            ),
-            RecipeStep(instruction="Serve warm."),
-        ],
-    )
-
-
-def _offline_judgement() -> JudgeResult:
-    """Provide deterministic scoring for the offline smoke benchmark."""
-    return JudgeResult(
-        preference_alignment=100,
-        rationale="Deterministic offline fixture.",
-    )
-
-
-async def run(mode: str, experiment: str) -> dict[str, float | int | str]:
-    """Run deterministic offline scoring or the configured live experiment."""
-    cases = json.loads(DATASET.read_text(encoding="utf-8"))
-    if mode == "live":
-        return await _run_live(cases, experiment)
-
-    class FixtureRetriever:
-        async def search(self, query: str, **kwargs: Any) -> list[RetrievedRecipe]:
-            """Return one deterministic grounding document for a fixture query."""
-            del kwargs
-            return [RetrievedRecipe(id=1, title=query, content=query, similarity=1.0)]
-
-    rows: list[dict[str, Any]] = []
-    for index, case in enumerate(cases):
-        rejected = index in {0, len(cases) - 1}
-        recipe = _fixture_recipe(case)
-        assessment = MealCheck(
-            main_component="Grounded offline fixture",
-            dish_reasoning="Deterministic offline fixture",
-            portion_reasoning="Deterministic offline fixture",
-            unlisted_foods=[],
-            is_requested_dish=not rejected,
-            realistic_portions=True,
-            coherent_method=True,
-        )
-        responses: list[dict[str, Any]] = []
-        for _ in range(4):
-            responses.extend(
-                [
-                    {"recipes": [recipe.model_dump()]},
-                    assessment.model_dump(),
-                ]
+    cases = load_cases()
+    setup = _setup(mode)
+    with recorded_gemini_calls() as calls:
+        if not upload:
+            results = await evaluate_cases(cases, setup, concurrency=_CASE_CONCURRENCY)
+            return Scorecard.from_results(
+                results, mode=mode, usage=summarize_calls(calls)
             )
-        provider = FakeProvider(responses)
-        graph = build_recipe_graph(provider, FixtureRetriever())
-        result = await graph.ainvoke(
-            {
-                "inventory": case["inventory"],
-                "kitchen_basics": _DEFAULT_BASICS,
-                "preferences": {"request": case["name"]},
-                "batch_ceiling": 1,
-            }
+        logged = await evaluate_in_langsmith(
+            cases,
+            setup,
+            client=Client(),
+            experiment_prefix=experiment,
+            metadata=_metadata(mode, cases),
+            concurrency=_CASE_CONCURRENCY,
         )
-        recipes = result.get("valid_recipes", [])
-        if not recipes:
-            rows.append({"name": case["name"], "error": "no valid recipe"})
-            continue
-        recipe = recipes[0]
-        judge = _offline_judgement()
-        rows.append(
-            {
-                "name": case["name"],
-                "coverage": ingredient_coverage_percent(
-                    recipe, case["inventory"], result["kitchen_basics"]
-                ),
-                "completeness": completeness_percent(recipe),
-                "preference": judge.preference_alignment,
-                "violations": len(judge.quantity_violations),
-            }
-        )
-    successful_rows = [row for row in rows if "coverage" in row]
-    scorecard = {
-        "experiment": experiment,
-        "judge_mode": "synthetic",
-        "cases": len(rows),
-        "succeeded_cases": len(successful_rows),
-        "failed_cases": len(rows) - len(successful_rows),
-        "coverage": round(
-            sum(r["coverage"] for r in successful_rows) / len(successful_rows), 1
-        )
-        if successful_rows
-        else 0.0,
-        "completeness": round(
-            sum(r["completeness"] for r in successful_rows) / len(successful_rows), 1
-        )
-        if successful_rows
-        else 0.0,
-        "preference": round(
-            sum(r["preference"] for r in successful_rows) / len(successful_rows), 1
-        )
-        if successful_rows
-        else 0.0,
-        "quantity_violation_rate": (
-            round(
-                sum(bool(r["violations"]) for r in successful_rows)
-                / len(successful_rows),
-                3,
-            )
-            if successful_rows
-            else 0.0
-        ),
-    }
-    print(json.dumps(scorecard, indent=2, sort_keys=True))
-    return scorecard
-
-
-async def _run_live(cases: list[dict[str, Any]], experiment: str) -> dict[str, Any]:
-    """Evaluate the real graph with Gemini and the production retriever."""
-    from langsmith import Client
-
-    from app.ai.rag.embeddings import EmbeddingClient
-    from app.ai.rag.retriever import RecipeRetriever
-    from app.ai.rag.vector_store import SupabaseVectorStore
-
-    provider = GeminiProvider()
-    retriever = RecipeRetriever(EmbeddingClient(), SupabaseVectorStore())
-    graph = build_recipe_graph(provider, retriever)
-    client = Client()
-    dataset_name = f"{experiment}-dataset"
-    existing = client.has_dataset(dataset_name=dataset_name)
-    dataset = (
-        client.read_dataset(dataset_name=dataset_name)
-        if existing
-        else client.create_dataset(dataset_name=dataset_name)
-    )
-    examples = (
-        list(client.list_examples(dataset_id=dataset.id))
-        if existing
-        else [
-            client.create_example(
-                inputs={
-                    "inventory": case["inventory"],
-                    "preferences": {"request": case["name"]},
-                },
-                dataset_id=dataset.id,
-            )
-            for case in cases
-        ]
+    return Scorecard.from_results(
+        logged.results,
+        mode=mode,
+        usage=summarize_calls(calls),
+        experiment=logged.name,
+        url=logged.url,
     )
 
-    async def target(inputs: dict[str, Any]) -> dict[str, Any]:
-        """Adapt graph output to LangSmith's evaluator target contract."""
-        result = await graph.ainvoke(
-            {
-                **inputs,
-                "kitchen_basics": _DEFAULT_BASICS,
-                "batch_ceiling": 1,
-            }
-        )
-        recipes = result.get("valid_recipes", [])
-        if not recipes:
-            raise ValueError("recipe pipeline returned no valid recipes")
-        return {
-            "recipe": recipes[0].model_dump(mode="json"),
-            "inventory": inputs.get("inventory", []),
-            "kitchen_basics": list(result["kitchen_basics"].names),
-            "request": inputs.get("preferences", {}).get("request", ""),
-        }
 
-    results = await client.aevaluate(
-        target,
-        data=examples,
-        evaluators=build_live_evaluators(provider),
-        experiment_prefix=experiment,
-        description="FreshPlate recipe pipeline evaluation",
-        upload_results=True,
+def _setup(mode: EvalMode) -> EvalSetup:
+    if mode == "offline":
+        return EvalSetup(model_for=OfflineModel, retriever=OfflineRetriever())
+    gemini = GeminiProvider()
+    return EvalSetup(
+        model_for=lambda case: gemini,
+        retriever=RecipeRetriever(EmbeddingClient(), SupabaseVectorStore()),
     )
-    completed = []
-    if hasattr(results, "__aiter__"):
-        async for item in results:
-            completed.append(item)
-    elif isinstance(results, (list, tuple)):
-        completed.extend(results)
-    metrics = _aggregate_live_results(completed, expected_count=len(examples))
-    url = getattr(results, "experiment_url", None) or getattr(results, "url", "")
-    scorecard = {
-        "experiment": experiment,
-        "cases": metrics["total_cases"],
-        "judge_mode": "llm",
-        **metrics,
-        "url": str(url),
-    }
-    print(json.dumps(scorecard, indent=2, sort_keys=True))
-    return scorecard
 
 
-def _aggregate_live_results(
-    results: list[Any], expected_count: int | None = None, *, total: int | None = None
-) -> dict[str, Any]:
-    """Aggregate evaluator feedback while retaining failed target rows."""
-    scores: dict[str, list[float]] = {
-        "coverage": [],
-        "completeness": [],
-        "preference": [],
-    }
-    violations = 0
-    failed = 0
-    required = {"coverage", "completeness", "preference_alignment"}
-    for result in results:
-        run = result["run"]
-        if run.error:
-            failed += 1
-            continue
-        feedback = result.get("evaluation_results", {}).get("results", [])
-        keys = [item.key for item in feedback]
-        if len(keys) != len(set(keys)):
-            failed += 1
-            continue
-        feedback_by_key = dict(zip(keys, feedback))
-        if not required.issubset(feedback_by_key):
-            failed += 1
-            continue
-        if any(
-            item.score is None
-            or not isinstance(item.score, (int, float))
-            or isinstance(item.score, bool)
-            or not math.isfinite(float(item.score))
-            or not 0 <= item.score <= 100
-            or (item.evaluator_info or {}).get("error")
-            for item in feedback_by_key.values()
-            if item.key in required
-        ):
-            failed += 1
-            continue
-        for item in feedback:
-            key = item.key
-            score = item.score
-            score_key = "preference" if key == "preference_alignment" else key
-            if score_key in scores and isinstance(score, (int, float)):
-                scores[score_key].append(float(score))
-            info = item.evaluator_info or {}
-            if key == "preference_alignment" and info.get(
-                "quantity_violation_count", 0
-            ):
-                violations += 1
-    expected = expected_count if expected_count is not None else (total or len(results))
-    incomplete = max(expected - len(results), 0)
-    failed_cases = failed + incomplete
-    succeeded = len(results) - failed
+def _metadata(mode: EvalMode, cases: Sequence[EvalCase]) -> dict[str, str | int]:
+    """Return what makes two experiments comparable: model, prompts and data."""
     return {
-        "total_cases": expected,
-        "succeeded_cases": succeeded,
-        "failed_cases": failed_cases,
-        "coverage": round(sum(scores["coverage"]) / len(scores["coverage"]), 1)
-        if scores["coverage"]
-        else 0.0,
-        "completeness": round(
-            sum(scores["completeness"]) / len(scores["completeness"]), 1
-        )
-        if scores["completeness"]
-        else 0.0,
-        "preference": round(sum(scores["preference"]) / len(scores["preference"]), 1)
-        if scores["preference"]
-        else 0.0,
-        "quantity_violation_rate": round(violations / succeeded, 3)
-        if succeeded
-        else 0.0,
+        "mode": mode,
+        "model": DEFAULT_GEMINI_MODEL if mode == "live" else "OfflineModel",
+        "batch_ceiling": RECIPE_FEED_INITIAL_HEAD_BATCH_CEILING,
+        "dataset": dataset_name(cases),
+        **{
+            f"{name}_prompt_version": load_prompt(name).version
+            for name in ("generate_recipes", "assess_meals", "judge_recipe")
+        },
     }
 
 
-def build_live_evaluators(provider: Any) -> list[Any]:
-    """Return LangSmith evaluators for completeness, coverage, and preference."""
+def _export_langsmith_settings() -> None:
+    """Copy LangSmith settings from ``backend/.env`` into the environment.
 
-    def measured(
-        outputs: dict[str, Any], reference_outputs: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
-        """Score structural recipe completeness on a target output."""
-        del reference_outputs
-        return {
-            "key": "completeness",
-            "score": completeness_percent(Recipe.model_validate(outputs["recipe"])),
-        }
+    The LangSmith client and LangGraph's tracer read only the process
+    environment. A variable the shell already set wins.
+    """
+    values = {
+        "LANGSMITH_API_KEY": settings.langsmith_api_key,
+        "LANGSMITH_ENDPOINT": settings.langsmith_endpoint,
+        "LANGSMITH_PROJECT": settings.langsmith_project,
+        "LANGSMITH_TRACING": "true",
+    }
+    for name, value in values.items():
+        if value:
+            os.environ.setdefault(name, value)
 
-    def coverage(
-        outputs: dict[str, Any], reference_outputs: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
-        """Score how many recipe ingredients are grounded in inventory."""
-        del reference_outputs
-        recipe = Recipe.model_validate(outputs["recipe"])
-        return {
-            "key": "coverage",
-            "score": ingredient_coverage_percent(
-                recipe,
-                outputs.get("inventory", []),
-                KitchenBasics(outputs.get("kitchen_basics", [])),
-            ),
-        }
 
-    async def judge(
-        outputs: dict[str, Any], reference_outputs: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
-        """Run the structured LLM judge and expose its rubric metadata."""
-        del reference_outputs
-        result = await judge_recipe(
-            provider,
-            Recipe.model_validate(outputs["recipe"]),
-            request=outputs["request"],
-            inventory=outputs["inventory"],
+def _live_configured() -> bool:
+    return bool(
+        settings.gemini_api_key
+        and settings.supabase_url
+        and (settings.supabase_publishable_key or settings.supabase_anon_key)
+    )
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    """Parse options, run the evals and print the scorecard."""
+    parser = argparse.ArgumentParser(
+        description="Run the FreshPlate recipe evals and print a scorecard."
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="run on Gemini and the production vector store (billed)",
+    )
+    parser.add_argument(
+        "--experiment",
+        default="freshplate-live",
+        help="LangSmith experiment name for a live run (default: freshplate-live)",
+    )
+    parser.add_argument(
+        "--no-upload",
+        action="store_true",
+        help="run live without logging a LangSmith experiment",
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="print the scorecard as JSON"
+    )
+    args = parser.parse_args(argv)
+    mode: EvalMode = "live" if args.live else "offline"
+    if mode == "live" and not _live_configured():
+        sys.exit(
+            "Live evals need GEMINI_API_KEY, SUPABASE_URL and "
+            "SUPABASE_PUBLISHABLE_KEY in backend/.env."
         )
-        return {
-            "key": "preference_alignment",
-            "score": result.preference_alignment,
-            "comment": result.rationale,
-            "evaluator_info": {
-                "quantity_violation_count": len(result.quantity_violations),
-                "quantity_violations": result.quantity_violations,
-            },
-        }
-
-    return [measured, coverage, judge]
-
-
-def main() -> None:
-    """Parse CLI options and execute the selected evaluation mode."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("offline", "live"), default="offline")
-    parser.add_argument("--experiment", default="freshplate-eval-local")
-    args = parser.parse_args()
-    asyncio.run(run(args.mode, args.experiment))
+    upload = (
+        mode == "live"
+        and not args.no_upload
+        and bool(os.environ.get("LANGSMITH_API_KEY") or settings.langsmith_api_key)
+    )
+    if upload:
+        _export_langsmith_settings()
+    # LangSmith prints its own progress to stdout, which would break --json.
+    with contextlib.redirect_stdout(sys.stderr):
+        scorecard = asyncio.run(run(mode, experiment=args.experiment, upload=upload))
+    print(scorecard.model_dump_json(indent=2) if args.json else scorecard.render())
 
 
 if __name__ == "__main__":

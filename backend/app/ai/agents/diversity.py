@@ -118,6 +118,15 @@ def recipe_directions(
     ]
 
 
+def title_key(title: str) -> str:
+    """Return a title case-folded with its whitespace collapsed.
+
+    The feed compares titles in this form to tell whether a recipe repeats
+    one it already showed.
+    """
+    return " ".join(title.casefold().split())
+
+
 def drop_near_duplicate_titles(recipes: Sequence[Recipe]) -> list[Recipe]:
     """Return ``recipes`` without any whose title repeats an earlier dish.
 

@@ -1,12 +1,9 @@
-# ruff: noqa: E501
-import json
-from pathlib import Path
-
 import pytest
 
 from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.models import Recipe, RecipeGenerationResponse, RecipeIngredient
 from app.ai.agents.nodes import analyze_inventory
+from app.ai.eval.cases import load_cases
 from app.ai.eval.scorers import (
     completeness_percent,
     embedding_diversity,
@@ -23,49 +20,112 @@ def recipe() -> Recipe:
         cook_time_minutes=20,
         servings=2,
         ingredients=[
-            RecipeIngredient(name="tomato", inventory_item_id="t", use_amount=2, unit="each"),
+            RecipeIngredient(
+                name="tomato", inventory_item_id="t", use_amount=2, unit="each"
+            ),
             RecipeIngredient(name="salt", unit="pinch"),
         ],
         steps=["Boil", "Serve"],
     )
 
 
-CASE_COVERAGE = {name: 67 for name in ("tomato pasta", "lemon rice", "miso soup", "salmon bowl", "apple salad", "egg fried rice", "bean chili", "coconut noodles", "greek salad", "corn quesadilla", "berry yogurt")}
+TOMATOES = {
+    "id": "t",
+    "name": "tomato",
+    "available": 4,
+    "stock_base": "each",
+    "each_label": "each",
+}
+RICE = {"id": "t", "name": "rice", "available": 2000, "stock_base": "g"}
+MISO = {
+    "id": "m",
+    "name": "miso",
+    "available": 1,
+    "stock_base": "each",
+    "each_label": "jar",
+}
 
 
-@pytest.mark.asyncio
-async def test_scorers_and_curated_dataset_contract():
-    cases = json.loads((Path(__file__).parents[1] / "app/ai/eval/dataset.json").read_text())
-    assert len(cases) == 22
-    assert set(CASE_COVERAGE).issubset({case["name"] for case in cases})
-    assert all(all("name" in item and "available" in item and "stock_base" in item for item in case["inventory"]) for case in cases)
-    for case in cases:
-        usable = analyze_inventory({"kitchen_basics": NO_BASICS, "inventory": case["inventory"]})["usable_items"]
-        mapped = [RecipeIngredient(name=item["name"], inventory_item_id=item["id"], use_amount=1, unit=item["unit"]) for item in usable]
-        ingredients = [*mapped, RecipeIngredient(name="olive oil", unit="tablespoon")] if case["name"] in CASE_COVERAGE else mapped
-        generated = recipe().model_copy(update={"ingredients": ingredients})
-        generated = (await FakeProvider([{"recipes": [generated.model_dump()]}]).generate("eval", response_model=RecipeGenerationResponse)).recipes[0]
-        score = ingredient_coverage_percent(generated, usable, KitchenBasics(()))
-        assert score == (CASE_COVERAGE[case["name"]] if case["name"] in CASE_COVERAGE else 100)
-        if case["name"] in CASE_COVERAGE:
-            assert case["expected_coverage"][0] <= score <= case["expected_coverage"][1]
-        else:
-            assert case["expected_coverage"][0] <= score <= case["expected_coverage"][1]
+def kitchen(*lines: dict) -> list:
+    return analyze_inventory({"kitchen_basics": NO_BASICS, "inventory": list(lines)})[
+        "usable_items"
+    ]
+
+
+def with_ingredients(*ingredients: RecipeIngredient) -> Recipe:
+    return recipe().model_copy(update={"ingredients": list(ingredients)})
+
+
+def test_scorers_score_a_recipe_of_every_dataset_kitchen():
+    for case in load_cases():
+        inventory = [line.model_dump() for line in case.inventory]
+        usable = analyze_inventory(
+            {"kitchen_basics": NO_BASICS, "inventory": inventory}
+        )["usable_items"]
+        mapped = [
+            RecipeIngredient(
+                name=item["name"],
+                inventory_item_id=item["id"],
+                use_amount=1,
+                unit=item["unit"],
+            )
+            for item in usable
+        ]
+        generated = recipe().model_copy(
+            update={
+                "ingredients": [
+                    *mapped,
+                    RecipeIngredient(name="olive oil", use_amount=1, unit="tablespoon"),
+                ]
+            }
+        )
+        assert ingredient_coverage_percent(generated, usable, NO_BASICS) == 67
+        assert (
+            ingredient_coverage_percent(
+                generated, usable, KitchenBasics(("Olive oil",))
+            )
+            == 100
+        )
+        assert mapping_validity_percent(generated, usable) == 100
     assert completeness_percent(recipe()) == 100
-    assert mapping_validity_percent(recipe(), [{"id": "t", "quantity": 4}]) == 100
+    assert mapping_validity_percent(recipe(), kitchen(TOMATOES)) == 100
     assert embedding_diversity([[1, 0], [0, 1]]) == pytest.approx(1)
     assert embedding_diversity([[1, 0], [1, 0]]) == pytest.approx(0)
 
 
 @pytest.mark.parametrize("amount", [0, -1, 5])
-def test_mapping_rejects_invalid_amounts(amount):
+def test_mapping_rejects_invalid_or_over_stock_amounts(amount):
     item = recipe().ingredients[0].model_copy(update={"use_amount": amount})
-    assert mapping_validity_percent(recipe().model_copy(update={"ingredients": [item]}), [{"id": "t", "quantity": 4}]) == 0
+
+    assert mapping_validity_percent(with_ingredients(item), kitchen(TOMATOES)) == 0
 
 
 def test_mapping_partial_and_unknown_id():
-    ingredients = [recipe().ingredients[0], RecipeIngredient(name="other", inventory_item_id="missing", use_amount=1, unit="each")]
-    assert mapping_validity_percent(recipe().model_copy(update={"ingredients": ingredients}), [{"id": "t", "quantity": 4}]) == 50
+    other = RecipeIngredient(
+        name="other", inventory_item_id="missing", use_amount=1, unit="each"
+    )
+
+    score = mapping_validity_percent(
+        with_ingredients(recipe().ingredients[0], other), kitchen(TOMATOES)
+    )
+
+    assert score == 50
+
+
+def test_mapping_counts_a_spoon_of_a_counted_food_as_valid():
+    spoon = RecipeIngredient(
+        name="miso", inventory_item_id="m", use_amount=2, unit="tbsp"
+    )
+
+    assert mapping_validity_percent(with_ingredients(spoon), kitchen(MISO)) == 100
+
+
+def test_mapping_sums_every_ingredient_on_one_food():
+    three = recipe().ingredients[0].model_copy(update={"use_amount": 3})
+
+    score = mapping_validity_percent(with_ingredients(three, three), kitchen(TOMATOES))
+
+    assert score == 0
 
 
 @pytest.mark.asyncio
@@ -73,30 +133,38 @@ async def test_fake_provider_output_scores_through_public_seam():
     provider = FakeProvider([{"recipes": [recipe().model_dump()]}])
     response = await provider.generate("eval", response_model=RecipeGenerationResponse)
     generated = response.recipes[0]
-    assert ingredient_coverage_percent(generated, [{"id": "t", "quantity": 4}], KitchenBasics(())) == 50
-    assert mapping_validity_percent(generated, [{"id": "t", "quantity": 4}]) == 100
+    assert (
+        ingredient_coverage_percent(
+            generated, [{"id": "t", "quantity": 4}], KitchenBasics(())
+        )
+        == 50
+    )
+    assert mapping_validity_percent(generated, kitchen(TOMATOES)) == 100
 
 
 def test_coverage_leaves_out_unmapped_kitchen_basics():
     soup = recipe().model_copy(
         update={
             "ingredients": [
-                RecipeIngredient(name="tomato", inventory_item_id="t", use_amount=2, unit="each"),
+                RecipeIngredient(
+                    name="tomato", inventory_item_id="t", use_amount=2, unit="each"
+                ),
                 RecipeIngredient(name=" Water ", use_amount=500, unit="ml"),
                 RecipeIngredient(name="salt", use_amount=1, unit="tsp"),
             ]
         }
     )
     inventory = [{"id": "t", "quantity": 4}]
-    assert ingredient_coverage_percent(soup, inventory, KitchenBasics(("Water", "Salt"))) == 100
+    assert (
+        ingredient_coverage_percent(soup, inventory, KitchenBasics(("Water", "Salt")))
+        == 100
+    )
     assert ingredient_coverage_percent(soup, inventory, KitchenBasics(())) == 33
 
 
 def test_mapping_compares_amounts_in_a_common_unit():
-    rice = [{"id": "t", "quantity": 2, "unit": "kg"}]
     light = recipe().ingredients[0].model_copy(update={"use_amount": 300, "unit": "g"})
     heavy = light.model_copy(update={"use_amount": 2.5, "unit": "kg"})
-    light_recipe = recipe().model_copy(update={"ingredients": [light]})
-    heavy_recipe = recipe().model_copy(update={"ingredients": [heavy]})
-    assert mapping_validity_percent(light_recipe, rice) == 100
-    assert mapping_validity_percent(heavy_recipe, rice) == 0
+
+    assert mapping_validity_percent(with_ingredients(light), kitchen(RICE)) == 100
+    assert mapping_validity_percent(with_ingredients(heavy), kitchen(RICE)) == 0

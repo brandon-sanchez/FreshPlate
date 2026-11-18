@@ -102,11 +102,11 @@ CI runs the same checks on every push and pull request.
 
 ## Run the evals
 
-The offline evals need no keys:
+The offline evals need no keys and cost nothing:
 
 ```sh
 cd backend
-venv/bin/python -m scripts.run_evals --mode offline
+venv/bin/python -m scripts.run_evals
 ```
 
-[Run the evals](docs/run-evals.md) covers the live mode, which calls Gemini and records a LangSmith experiment. The [evaluation reference](docs/evals.md) defines each metric and lists the latest scorecards.
+Add `--live` to run the pipeline and the LLM judge on Gemini, which bills each run. [Recipe evals](docs/evals.md) explains what the eval measures, defines the rubric, and shows how to read the scorecard.

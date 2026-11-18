@@ -12,8 +12,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable, Iterable, Sequence
-from typing import NamedTuple
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Sequence
+from typing import Any, NamedTuple
 
 from app.ai.agents.models import Recipe
 from app.ai.agents.state import RecipeReview
@@ -56,6 +56,8 @@ async def write_slots(
     quality_retry_limit: int,
     retry_only_when_no_valid: bool,
     can_retry: Callable[[], bool],
+    on_kept: Callable[[Recipe], None] | None = None,
+    stop: asyncio.Event | None = None,
 ) -> list[SlotOutcome]:
     """Run one slot per direction at once and return their outcomes in order.
 
@@ -65,6 +67,8 @@ async def write_slots(
     ``retry_only_when_no_valid``, no slot retries while the first round
     runs: rejected slots retry together afterwards, and only if no slot kept
     a recipe. With no reviewer, a slot keeps the recipe its call writes.
+    Once ``stop`` is set, it cancels the slots still writing or reviewing,
+    and they end with nothing kept.
 
     Args:
         directions: One prompt direction per slot.
@@ -75,15 +79,23 @@ async def write_slots(
         retry_only_when_no_valid: Hold retries until the first round has
             kept nothing.
         can_retry: Whether enough time is left to start a rewrite.
+        on_kept: Called with each kept recipe the moment its slot keeps it.
+        stop: When set, ends the batch without waiting for slower slots.
 
     Returns:
         One outcome per direction, in the same order. A failed call ends
         only its own slot.
     """
     first_round_limit = 0 if retry_only_when_no_valid else quality_retry_limit
+    kept = on_kept or (lambda _: None)
     outcomes = await _gather(
-        _run_slot(index, direction, write, review, first_round_limit, can_retry)
-        for index, direction in enumerate(directions)
+        (
+            _run_slot(
+                index, direction, write, review, first_round_limit, can_retry, kept
+            )
+            for index, direction in enumerate(directions)
+        ),
+        stop,
     )
     if (
         not retry_only_when_no_valid
@@ -105,6 +117,7 @@ async def write_slots(
             review,
             quality_retry_limit,
             can_retry,
+            kept,
             resume=outcomes[index],
         )
         for index in rejected
@@ -114,18 +127,39 @@ async def write_slots(
     return outcomes
 
 
-async def _gather(slots: Iterable[Awaitable[SlotOutcome]]) -> list[SlotOutcome]:
-    """Await every slot, then raise the first unexpected error, if any.
+async def _gather(
+    slots: Iterable[Coroutine[Any, Any, SlotOutcome]],
+    stop: asyncio.Event | None = None,
+) -> list[SlotOutcome]:
+    """Await every slot, or until ``stop`` is set, then raise any bug.
 
     A slot turns a ``ProviderError`` into its outcome, so anything else is a
     bug. Waiting for every slot before raising leaves no slot running with
-    nobody to read its result.
+    nobody to read its result. A slot cut off by ``stop`` ends with an empty
+    outcome.
     """
-    results = await asyncio.gather(*slots, return_exceptions=True)
-    for result in results:
-        if isinstance(result, BaseException):
+    tasks = [asyncio.create_task(slot) for slot in slots]
+    stopped = asyncio.create_task((stop or asyncio.Event()).wait())
+    try:
+        await asyncio.wait(
+            [asyncio.gather(*tasks, return_exceptions=True), stopped],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    finally:
+        stopped.cancel()
+        for task in tasks:
+            task.cancel()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    outcomes: list[SlotOutcome] = []
+    for index, result in enumerate(results):
+        if isinstance(result, asyncio.CancelledError) and stop and stop.is_set():
+            logger.info("Recipe slot %s stopped before it finished", index + 1)
+            outcomes.append(SlotOutcome([], None, None, 0, None))
+        elif isinstance(result, BaseException):
             raise result
-    return list(results)
+        else:
+            outcomes.append(result)
+    return outcomes
 
 
 async def _run_slot(
@@ -135,6 +169,7 @@ async def _run_slot(
     review: SlotReviewer | None,
     retry_limit: int,
     can_retry: Callable[[], bool],
+    on_kept: Callable[[Recipe], None],
     *,
     resume: SlotOutcome | None = None,
 ) -> SlotOutcome:
@@ -161,6 +196,7 @@ async def _run_slot(
         written.append(recipe)
         if review is None:
             _log_attempt(index, retries, started, None, "kept")
+            on_kept(recipe)
             return SlotOutcome(written, recipe, None, retries, None)
         try:
             reviewed = await review(recipe)
@@ -170,6 +206,7 @@ async def _run_slot(
             return SlotOutcome(written, None, feedback, retries, error)
         if reviewed.recipe is not None:
             _log_attempt(index, retries, started, generated_at, "kept")
+            on_kept(reviewed.recipe)
             return SlotOutcome(written, reviewed.recipe, None, retries, None)
         feedback = reviewed.feedback
         _log_attempt(index, retries, started, generated_at, "rejected")
