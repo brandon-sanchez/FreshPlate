@@ -172,3 +172,15 @@ def test_cdk_nag_finds_no_unacknowledged_issues(tmp_path) -> None:
 
     report = json.loads((tmp_path / "validation-report.json").read_text())
     assert report["pluginReports"] == []
+
+
+def test_deploy_workflow_targets_the_function_and_repository(templates) -> None:
+    registry, api = templates
+    workflow = (_ROOT / ".github" / "workflows" / "deploy.yml").read_text()
+    function = next(iter(api.find_resources("AWS::Lambda::Function").values()))
+    repository = next(iter(registry.find_resources("AWS::ECR::Repository").values()))
+
+    assert f"FUNCTION_NAME: {function['Properties']['FunctionName']}\n" in workflow
+    assert (
+        f"REPOSITORY_NAME: {repository['Properties']['RepositoryName']}\n" in workflow
+    )
