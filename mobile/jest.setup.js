@@ -22,3 +22,12 @@ jest.mock("react-native-gesture-handler", () => {
 require("react-native/jest/MockNativeMethods").default.measureInWindow.mockImplementation(
   (callback) => callback(0, 0, 0, 0),
 );
+
+// Expo's native views, such as expo-image's Image, call findNodeHandle when
+// they mount, and React Native loads its whole renderer and its public
+// instance module on that first call. On a cold transform cache with every
+// worker busy, those loads can push the first test that renders a photo past
+// Jest's 5-second timeout. Loading them here charges them to file setup,
+// which no test timeout covers.
+require("react-native/Libraries/Renderer/shims/ReactNative");
+require("react-native/Libraries/ReactNative/ReactFabricPublicInstance/ReactFabricPublicInstance");
