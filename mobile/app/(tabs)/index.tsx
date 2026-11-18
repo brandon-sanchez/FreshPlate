@@ -451,7 +451,7 @@ function StatRow({
   const { colors, fonts } = useTheme();
   return (
     <View style={{ flexDirection: "row", gap: 8 }}>
-      <StatTile label="In fridge" value={inventoryCount} onPress={onPress} colors={colors} fonts={fonts} />
+      <StatTile label="In kitchen" value={inventoryCount} onPress={onPress} colors={colors} fonts={fonts} />
       <StatTile
         label="Use this week"
         value={useSoonCount}
