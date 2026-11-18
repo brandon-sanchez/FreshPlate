@@ -1,0 +1,185 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+env:
+  FUNCTION_NAME: freshplate-api
+  REPOSITORY_NAME: freshplate-api
+  HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+
+jobs:
+  check:
+    name: Check the commit is the tip of main
+    # workflow_run also fires for CI runs on pull requests, including ones from
+    # forks, and runs with this repository's permissions.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      current: ${{ steps.tip.outputs.current }}
+    steps:
+      # CI runs can finish out of order. Deploying an older commit after a
+      # newer one would roll the API back, so only the tip of main deploys.
+      - name: Compare with the tip of main
+        id: tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tip=$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)
+          if [ "$tip" = "$HEAD_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Skipping ${HEAD_SHA}: main is now at ${tip}."
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    name: Deploy the API
+    needs: check
+    if: needs.check.outputs.current == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    # Only runs that reach this job queue here, so a run that skips can't
+    # replace a pending deploy of the tip of main.
+    concurrency:
+      group: deploy-api
+      cancel-in-progress: false
+    # No GitHub environment: one would change the OIDC subject the AWS role
+    # trusts from this branch to the environment.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the commit CI tested
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          persist-credentials: false
+
+      - name: Sign in to AWS
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: deploy-${{ github.run_id }}
+          role-duration-seconds: 3600
+
+      - name: Look up the image in ECR
+        id: lookup
+        run: |
+          account=$(aws sts get-caller-identity --query Account --output text)
+          registry="${account}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
+          # Commit tags are immutable, so a re-run must reuse the image it pushed.
+          found=$(aws ecr batch-get-image --repository-name "$REPOSITORY_NAME" \
+            --image-ids imageTag="$HEAD_SHA" --query 'length(images)' --output text)
+          echo "repository=${registry}/${REPOSITORY_NAME}" >> "$GITHUB_OUTPUT"
+          echo "found=${found}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        if: steps.lookup.outputs.found == '0'
+        uses: docker/setup-buildx-action@v4
+
+      # Reads the layer cache that CI's Docker build job writes on main, so an
+      # unchanged dependency layer is reused instead of stored again.
+      - name: Build and push the image
+        if: steps.lookup.outputs.found == '0'
+        uses: docker/build-push-action@v7
+        with:
+          context: backend
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.lookup.outputs.repository }}:${{ env.HEAD_SHA }}
+          cache-from: type=gha
+
+      - name: Resolve the image digest
+        id: image
+        env:
+          REPOSITORY: ${{ steps.lookup.outputs.repository }}
+        run: |
+          digest=$(aws ecr batch-get-image --repository-name "$REPOSITORY_NAME" \
+            --image-ids imageTag="$HEAD_SHA" \
+            --query 'images[0].imageId.imageDigest' --output text)
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "uri=${REPOSITORY}@${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Record the running image
+        id: previous
+        run: |
+          uri=$(aws lambda get-function --function-name "$FUNCTION_NAME" \
+            --query Code.ResolvedImageUri --output text)
+          echo "uri=${uri}" >> "$GITHUB_OUTPUT"
+
+      - name: Update the function
+        id: update
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+        run: |
+          aws lambda update-function-code --function-name "$FUNCTION_NAME" \
+            --image-uri "$IMAGE_URI" --output text --query LastUpdateStatus
+          aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME"
+
+      - name: Check /health
+        run: |
+          url=$(aws lambda get-function-url-config --function-name "$FUNCTION_NAME" \
+            --query FunctionUrl --output text)
+          for request in cold warm; do
+            ok=false
+            for _ in 1 2 3 4 5; do
+              if curl --silent --show-error --fail --max-time 30 \
+                  --output health.json --write-out '%{time_total}' \
+                  "${url}health" > seconds.txt \
+                  && [ "$(jq -r .status health.json)" = healthy ]; then
+                ok=true
+                break
+              fi
+              sleep 10
+            done
+            if [ "$ok" != true ]; then
+              echo "::error::/health did not answer healthy at ${url}health"
+              exit 1
+            fi
+            echo "- ${request} /health: $(cat seconds.txt) s" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Mark the image live
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          live=$(aws ecr batch-get-image --repository-name "$REPOSITORY_NAME" \
+            --image-ids imageTag=live --query 'images[0].imageId.imageDigest' \
+            --output text)
+          if [ "$live" != "$DIGEST" ]; then
+            # The manifest bytes must stay exact, or ECR stores a new digest.
+            aws ecr batch-get-image --repository-name "$REPOSITORY_NAME" \
+              --image-ids imageDigest="$DIGEST" --output json > image.json
+            jq -j '.images[0].imageManifest' image.json > manifest.json
+            aws ecr put-image --repository-name "$REPOSITORY_NAME" --image-tag live \
+              --image-digest "$DIGEST" --image-manifest file://manifest.json \
+              --image-manifest-media-type "$(jq -r '.images[0].imageManifestMediaType' image.json)" \
+              --query image.imageId.imageDigest --output text
+          fi
+
+      - name: Roll back to the previous image
+        if: (failure() || cancelled()) && steps.update.outcome == 'success'
+        env:
+          PREVIOUS_URI: ${{ steps.previous.outputs.uri }}
+        run: |
+          aws lambda update-function-code --function-name "$FUNCTION_NAME" \
+            --image-uri "$PREVIOUS_URI" --output text --query LastUpdateStatus
+          aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME"
+          echo "::error::Rolled back to ${PREVIOUS_URI}"

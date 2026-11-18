@@ -22,7 +22,6 @@ These features are in progress:
 
 - Cooking a recipe and deducting what you used from inventory. The backend endpoint and database function exist. The app screens are in [#27](https://github.com/brandon-sanchez/FreshPlate/issues/27) and [#30](https://github.com/brandon-sanchez/FreshPlate/issues/30).
 - Recipe and ingredient photos, in [#56](https://github.com/brandon-sanchez/FreshPlate/issues/56).
-- Automatic deploys of the API to AWS Lambda, in [#36](https://github.com/brandon-sanchez/FreshPlate/issues/36). The API isn't deployed yet.
 
 ## How it works
 
@@ -50,6 +49,7 @@ The recipe pipeline has three nodes. `analyze_inventory` filters and orders the 
 | Data | Supabase Auth, Postgres with row-level security, pgvector with an HNSW index |
 | Observability and evals | LangSmith traces and experiments |
 | CI | GitHub Actions: Ruff, pytest, TypeScript, and Jest |
+| Deploy | AWS Lambda behind a Function URL, ECR, Parameter Store, and AWS CDK in Python. GitHub Actions deploys through OIDC. See [Deploy the API](docs/deployment.md) |
 
 ## Repository layout
 
@@ -58,6 +58,7 @@ The recipe pipeline has three nodes. `analyze_inventory` filters and orders the 
 | `mobile/` | The Expo app |
 | `backend/app/` | The FastAPI service and the AI pipeline in `backend/app/ai/` |
 | `backend/scripts/` | The recipe corpus loader and the eval runner |
+| `infra/` | The AWS CDK app that hosts the API on Lambda |
 | `supabase/migrations/` | The database schema, row-level security policies, and functions |
 | `docs/` | Project documentation, starting with the architecture overview |
 
