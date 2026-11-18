@@ -1,4 +1,5 @@
 import React from "react";
+import { swipeOpen } from "@/test-utils/swipe";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -158,6 +159,7 @@ it("records a swiped batch on its own", async () => {
   renderScreen();
   const card = await screen.findByLabelText("1000 ml, Fridge, Expires in 2 days");
   const row = screen.getAllByTestId("swipe-row").find((r) => within(r).queryByLabelText(card.props.accessibilityLabel));
+  await swipeOpen("lot-swipe:milk-sealed");
 
   fireEvent.press(within(row!).getByLabelText("Used up"));
 

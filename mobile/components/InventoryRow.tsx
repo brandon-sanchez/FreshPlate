@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Platform, Text, View } from "react-native";
 import Animated, {
   interpolateColor,
   useAnimatedStyle,
@@ -10,6 +10,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { useTheme } from "@/hooks/useTheme";
 import { getUrgency } from "@/constants/theme";
+import { RecipePressable } from "@/components/recipe-motion";
 import UrgencyBar from "@/components/UrgencyBar";
 import FoodPhoto, { FOOD_PHOTO_RADIUS_RATIO } from "@/components/food-photo";
 import { SkeletonBar } from "@/components/skeleton";
@@ -17,7 +18,6 @@ import type { FoodRow } from "@/lib/foodRows";
 import { formatAmount } from "@/lib/amount";
 
 const PHOTO_SIZE = 48;
-const ROW_RADIUS = 14;
 const ROW_CONTENT_STYLE = {
   flexDirection: "row",
   alignItems: "center",
@@ -39,6 +39,18 @@ type InventoryRowProps = {
    */
   photoEnabled: boolean;
 };
+
+// Holds the press shrink back briefly, so a scroll that starts on a row
+// does not shrink and spring the card.
+const PRESS_FEEDBACK_DELAY_MS = 100;
+const CARD_RADIUS = 14;
+// Android draws a foreground ripple over the pressable's whole box, so the
+// box is rounded and clipped there to keep the ripple inside the card's
+// corners. iOS has no ripple and keeps the card's pulse unclipped.
+const ANDROID_RIPPLE_CLIP =
+  Platform.OS === "android"
+    ? { borderRadius: CARD_RADIUS, overflow: "hidden" as const }
+    : undefined;
 
 /**
  * Renders one food as an inventory card: the food's photo, name, total
@@ -88,81 +100,84 @@ function InventoryRow({
     transform: [{ scale: 1 + pulse.value * 0.012 }],
   }));
 
+  // A JS Pressable rather than a gesture-handler RectButton: inside
+  // LotOutcomeSwipe, the swipeable's tap gesture keeps a RectButton's onPress
+  // from firing on iOS, so the row would not open.
   return (
-    <Animated.View
-      style={[
-        {
-          borderRadius: ROW_RADIUS,
-          borderWidth: 1,
-          overflow: "hidden",
-          shadowColor: card.shadowColor,
-          shadowOffset: card.shadowOffset,
-          shadowOpacity: card.shadowOpacity,
-          shadowRadius: card.shadowRadius,
-          elevation: card.elevation,
-        },
-        animatedStyle,
-      ]}
+    <RecipePressable
+      unstable_pressDelay={PRESS_FEEDBACK_DELAY_MS}
+      onPress={onPress ? () => onPress(row) : undefined}
+      disabled={!onPress}
+      accessibilityRole={onPress ? "button" : undefined}
+      accessibilityLabel={accessibilitySummary(row)}
+      android_ripple={{ color: colors.border, foreground: true }}
+      style={ANDROID_RIPPLE_CLIP}
     >
-      {/* A JS Pressable rather than a gesture-handler RectButton: inside
-          LotOutcomeSwipe, the swipeable's tap gesture keeps a RectButton's
-          onPress from firing on iOS, so the row would not open. */}
-      <Pressable
-        onPress={onPress ? () => onPress(row) : undefined}
-        disabled={!onPress}
-        accessibilityRole={onPress ? "button" : undefined}
-        accessibilityLabel={accessibilitySummary(row)}
-        android_ripple={{ color: colors.border }}
-        style={ROW_CONTENT_STYLE}
+      <Animated.View
+        style={[
+          {
+            borderRadius: CARD_RADIUS,
+            borderWidth: 1,
+            overflow: "hidden",
+            shadowColor: card.shadowColor,
+            shadowOffset: card.shadowOffset,
+            shadowOpacity: card.shadowOpacity,
+            shadowRadius: card.shadowRadius,
+            elevation: card.elevation,
+          },
+          animatedStyle,
+        ]}
       >
-        <FoodPhoto
-          foodId={row.foodId}
-          size={PHOTO_SIZE}
-          icon={row.category?.icon}
-          enabled={photoEnabled}
-        />
+        <View style={ROW_CONTENT_STYLE}>
+          <FoodPhoto
+            foodId={row.foodId}
+            size={PHOTO_SIZE}
+            icon={row.category?.icon}
+            enabled={photoEnabled}
+          />
 
-        <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-          <Text
-            numberOfLines={1}
-            style={{
-              fontFamily: fonts.bodyStrong,
-              fontSize: 15,
-              color: colors.text,
-              letterSpacing: -0.2,
-            }}
-          >
-            {row.name}
-          </Text>
-          <Text
-            numberOfLines={1}
-            style={{
-              fontFamily: fonts.body,
-              fontSize: 12.5,
-              color: colors.textMuted,
-              letterSpacing: -0.05,
-            }}
-          >
-            {metaLine(row)}
-          </Text>
-          <UrgencyBar daysUntilExpiration={days} width={92} />
+          <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+            <Text
+              numberOfLines={1}
+              style={{
+                fontFamily: fonts.bodyStrong,
+                fontSize: 15,
+                color: colors.text,
+                letterSpacing: -0.2,
+              }}
+            >
+              {row.name}
+            </Text>
+            <Text
+              numberOfLines={1}
+              style={{
+                fontFamily: fonts.body,
+                fontSize: 12.5,
+                color: colors.textMuted,
+                letterSpacing: -0.05,
+              }}
+            >
+              {metaLine(row)}
+            </Text>
+            <UrgencyBar daysUntilExpiration={days} width={92} />
+          </View>
+
+          {urgencyLabel ? (
+            <Text
+              style={{
+                fontFamily: fonts.bodyStrong,
+                fontSize: 11,
+                color: labelColor,
+                letterSpacing: 0.4,
+                textTransform: "uppercase",
+              }}
+            >
+              {urgencyLabel}
+            </Text>
+          ) : null}
         </View>
-
-        {urgencyLabel ? (
-          <Text
-            style={{
-              fontFamily: fonts.bodyStrong,
-              fontSize: 11,
-              color: labelColor,
-              letterSpacing: 0.4,
-              textTransform: "uppercase",
-            }}
-          >
-            {urgencyLabel}
-          </Text>
-        ) : null}
-      </Pressable>
-    </Animated.View>
+      </Animated.View>
+    </RecipePressable>
   );
 }
 
@@ -177,7 +192,7 @@ export function InventoryRowSkeleton() {
       style={[
         ROW_CONTENT_STYLE,
         {
-          borderRadius: ROW_RADIUS,
+          borderRadius: CARD_RADIUS,
           borderWidth: 1,
           borderColor: colors.border,
           backgroundColor: colors.surface,

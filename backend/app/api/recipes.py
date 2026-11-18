@@ -42,6 +42,8 @@ from app.models.recipes import (
     RecipeFeedData,
     RecipeFeedPageRequest,
     RecipeFeedResponse,
+    RecipeFeedRestoreData,
+    RecipeFeedRestoreResponse,
     RecipeFeedSessionRequest,
     RecipeSuggestion,
     RecipeSuggestionRequest,
@@ -277,6 +279,51 @@ async def post_recipe_feed_session(
         empty_reason=(
             None if recipes else RECIPE_FEED_EMPTY_REASON_UNSUPPORTED_INVENTORY
         ),
+    )
+
+
+@router.get("/sessions/latest", response_model=RecipeFeedRestoreResponse)
+async def get_latest_recipe_feed_session(
+    _user_id: CurrentUserId,
+    store: RecipeFeedStore = Depends(get_recipe_feed_store),
+    images: ImageService = Depends(get_image_service),
+) -> RecipeFeedRestoreResponse:
+    """Return the caller's newest unexpired feed session with its stored cards.
+
+    Lets an app that restarted show the feed it already paid for. Only reads:
+    it never generates recipes or photos and never refills the pool, so a
+    card with no stored photo carries no image. Responds with ``data`` set to
+    None when the caller has no live session, and 503
+    ``RECIPE_FEED_UNAVAILABLE`` when the session can't be read.
+    """
+    deadline = PipelineDeadline.from_now(settings.recipe_feed_restore_budget_seconds)
+    try:
+        session = await _within_recipe_deadline(
+            deadline, lambda: store.get_latest_session(_user_id)
+        )
+        if session is None:
+            return RecipeFeedRestoreResponse(data=None)
+        recipes = await _within_recipe_deadline(
+            deadline,
+            lambda: store.list_candidates(
+                _user_id,
+                session.id,
+                start_position=0,
+                limit=session.candidate_count,
+            ),
+        )
+        cards = await _feed_cards(recipes, {}, images, _user_id, deadline)
+    except asyncio.CancelledError:
+        raise
+    except (RecipeFeedStoreError, TimeoutError) as exc:
+        logger.warning("Recipe feed restore failed: %s", exc)
+        raise _feed_unavailable() from exc
+
+    page = _feed_data(session, cards, cursor=0)
+    return RecipeFeedRestoreResponse(
+        data=RecipeFeedRestoreData(
+            **page.model_dump(), preferences=session.preferences
+        )
     )
 
 
@@ -644,18 +691,28 @@ def _feed_response(
     cursor: int,
     empty_reason: str | None = None,
 ) -> RecipeFeedResponse:
+    return RecipeFeedResponse(
+        data=_feed_data(session, recipes, cursor=cursor, empty_reason=empty_reason)
+    )
+
+
+def _feed_data(
+    session: RecipeFeedSession,
+    recipes: Sequence[RecipeFeedCard],
+    *,
+    cursor: int,
+    empty_reason: str | None = None,
+) -> RecipeFeedData:
     next_position = cursor + len(recipes)
     has_more = next_position < session.candidate_count or session.has_more
-    return RecipeFeedResponse(
-        data=RecipeFeedData(
-            session_id=session.id,
-            recipes=list(recipes),
-            next_cursor=str(next_position) if has_more else None,
-            has_more=has_more,
-            ready_count=session.candidate_count,
-            empty_reason=empty_reason,
-            requested_dish=requested_dish(session.preferences),
-        )
+    return RecipeFeedData(
+        session_id=session.id,
+        recipes=list(recipes),
+        next_cursor=str(next_position) if has_more else None,
+        has_more=has_more,
+        ready_count=session.candidate_count,
+        empty_reason=empty_reason,
+        requested_dish=requested_dish(session.preferences),
     )
 
 
