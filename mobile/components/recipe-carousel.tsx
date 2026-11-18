@@ -126,21 +126,18 @@ export default function RecipeCarousel({
           Math.min(
             lastIndex,
             dragStart.value +
-              Math.max(-2, Math.min(2, -event.translationY / dragDistance)),
+              Math.max(-1, Math.min(1, -event.translationY / dragDistance)),
           ),
         );
       }
     })
     .onEnd((event) => {
-      const projected =
-        dragStart.value -
-        (event.translationY + event.velocityY * 0.12) / dragDistance;
-      // A fling may advance two cards. Bound it so unseen cards cannot all
-      // disappear in one gesture and the mounted neighbors cover the motion.
-      const step = Math.max(
-        -2,
-        Math.min(2, Math.round(projected - dragStart.value)),
-      );
+      // A swipe moves one card whatever its speed, like a paging scroll
+      // view. Rounding the projected travel instead would turn a short,
+      // quick swipe into a two-card jump.
+      const travel =
+        -(event.translationY + event.velocityY * 0.12) / dragDistance;
+      const step = Math.abs(travel) < 0.5 ? 0 : Math.sign(travel);
       const next = Math.max(
         0,
         Math.min(lastIndex, Math.round(dragStart.value) + step),

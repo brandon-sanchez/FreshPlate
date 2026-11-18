@@ -174,9 +174,24 @@ describe("RecipeCarousel", () => {
     expect(getByRole("button", { name: "Previous recipe" })).toBeDisabled();
   });
 
-  it.each([false, true])(
-    "bounds a fast fling to two recipes with reduced motion %s",
-    async (reducedMotion) => {
+  function swipe(translationY: number, velocityY: number) {
+    return act(async () =>
+      fireGestureHandler(getByGestureTestId("recipe-carousel-pan"), [
+        { state: State.BEGAN, translationY: 0, velocityY: 0 },
+        { state: State.ACTIVE, translationY: 0, velocityY: 0 },
+        { state: State.ACTIVE, translationY, velocityY },
+        { state: State.END, translationY, velocityY },
+      ]),
+    );
+  }
+
+  it.each([
+    ["a gentle swipe", -140, -1500, false],
+    ["a fast fling", -900, -3000, false],
+    ["a fast fling with reduced motion", -900, -3000, true],
+  ])(
+    "moves exactly one recipe for %s",
+    async (_name, translationY, velocityY, reducedMotion) => {
       const onActiveIndexChange = jest.fn();
       const { getByRole } = render(
         <RecipeCarousel
@@ -186,18 +201,42 @@ describe("RecipeCarousel", () => {
           onActiveIndexChange={onActiveIndexChange}
         />,
       );
-      await act(async () =>
-        fireGestureHandler(getByGestureTestId("recipe-carousel-pan"), [
-          { state: State.BEGAN, translationY: 0, velocityY: 0 },
-          { state: State.ACTIVE, translationY: 0, velocityY: 0 },
-          { state: State.ACTIVE, translationY: -900, velocityY: -3000 },
-          { state: State.END, translationY: -900, velocityY: -3000 },
-        ]),
-      );
-      expect(getByRole("button", { name: "Ingredients 3" })).toBeTruthy();
-      expect(onActiveIndexChange).toHaveBeenLastCalledWith(2);
+      await swipe(translationY, velocityY);
+      expect(getByRole("button", { name: "Ingredients 2" })).toBeTruthy();
+      expect(onActiveIndexChange).toHaveBeenLastCalledWith(1);
     },
   );
+
+  it("moves back exactly one recipe for a downward fling", async () => {
+    const onActiveIndexChange = jest.fn();
+    const { getByRole } = render(
+      <RecipeCarousel
+        {...props}
+        items={recipes}
+        onActiveIndexChange={onActiveIndexChange}
+      />,
+    );
+    fireEvent.press(getByRole("button", { name: "Next recipe" }));
+    fireEvent.press(getByRole("button", { name: "Next recipe" }));
+    fireEvent.press(getByRole("button", { name: "Next recipe" }));
+    await swipe(900, 3000);
+    expect(getByRole("button", { name: "Ingredients 3" })).toBeTruthy();
+    expect(onActiveIndexChange).toHaveBeenLastCalledWith(2);
+  });
+
+  it("stays on the recipe after a small accidental drag", async () => {
+    const onActiveIndexChange = jest.fn();
+    const { getByRole } = render(
+      <RecipeCarousel
+        {...props}
+        items={recipes}
+        onActiveIndexChange={onActiveIndexChange}
+      />,
+    );
+    await swipe(-20, -50);
+    expect(getByRole("button", { name: "Ingredients 1" })).toBeTruthy();
+    expect(onActiveIndexChange).toHaveBeenLastCalledWith(0);
+  });
 
   it("plays a sweep exit on the leaving slot only, dimming included", () => {
     const items = recipes.slice(0, 3).map((item, index) =>
