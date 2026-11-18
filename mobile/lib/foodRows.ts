@@ -1,5 +1,5 @@
 import type { InventoryItem } from "@/hooks/useInventoryItems";
-import { daysUntilExpiration } from "@/lib/expiry";
+import { compareDays, daysUntilExpiration } from "@/lib/expiry";
 
 type StorageLocation = InventoryItem["storage_location"];
 
@@ -43,6 +43,8 @@ export type FoodRow = {
   urgency: Urgency;
   /** Number of lots whose date has passed. */
   expiredLots: number;
+  /** When the newest lot was added, in epoch milliseconds. */
+  lastAddedAt: number;
 };
 
 /**
@@ -51,8 +53,16 @@ export type FoodRow = {
  */
 export type Urgency = "expired" | "today" | "week" | "fresh";
 
+/** The ways the inventory screen partitions its rows into sections, in tab order. */
+export const GROUP_BYS = ["Location", "Category", "Urgency"] as const;
+
 /** How the inventory screen partitions its rows into sections. */
-export type GroupBy = "Urgency" | "Location" | "Category";
+export type GroupBy = (typeof GROUP_BYS)[number];
+
+/** True when `value` names a grouping, for reading a stored choice. */
+export function isGroupBy(value: unknown): value is GroupBy {
+  return GROUP_BYS.some((groupBy) => groupBy === value);
+}
 
 /** One inventory section. `tone` colors the header for the urgent Urgency buckets. */
 export type FoodSection = {
@@ -92,8 +102,9 @@ export function stackLots(lots: InventoryItem[]): FoodRow[] {
  * section's lots per food. The Urgency and Category views hold one row per
  * food. The Location view partitions lots by place first, so a food stored in
  * two places has a row in each place's section holding only that place's lots.
- * The Urgency and Location views return every section, even empty ones.
- * Rows inside each section are sorted as {@link stackLots} sorts them.
+ * The Urgency and Location views return every section, even empty ones, in
+ * their fixed order. Category sections come in the order of their most urgent
+ * food. Rows inside each section are sorted as {@link stackLots} sorts them.
  */
 export function groupFoodRows(lots: InventoryItem[], groupBy: GroupBy): FoodSection[] {
   if (groupBy === "Location") {
@@ -200,6 +211,7 @@ function toRow(group: InventoryItem[]): FoodRow {
     days,
     urgency: urgencyOf(days),
     expiredLots: expired.length,
+    lastAddedAt: Math.max(...lots.map((lot) => Date.parse(lot.created_at))),
   };
 }
 
@@ -209,13 +221,6 @@ function urgencyOf(days: number | null): Urgency {
   if (days <= 1) return "today";
   if (days <= 6) return "week";
   return "fresh";
-}
-
-function compareDays(a: number | null, b: number | null): number {
-  if (a === b) return 0;
-  if (a === null) return 1;
-  if (b === null) return -1;
-  return a - b;
 }
 
 function capitalize(s: string): string {
