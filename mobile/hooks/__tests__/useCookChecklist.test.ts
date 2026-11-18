@@ -97,12 +97,13 @@ async function setup() {
     defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
   });
   const invalidate = jest.spyOn(client, "invalidateQueries");
+  const onConfirmed = jest.fn();
   const wrapper = ({ children }: { children: React.ReactNode }) =>
     React.createElement(QueryClientProvider, { client }, children);
-  const hook = renderHook(() => useCookChecklist(), { wrapper });
+  const hook = renderHook(() => useCookChecklist({ onConfirmed }), { wrapper });
   await waitFor(() => expect(hook.result.current.status).toBe("ready"));
   await waitFor(() => expect(hook.result.current.addable).toHaveLength(1));
-  return { ...hook, invalidate };
+  return { ...hook, invalidate, onConfirmed };
 }
 
 beforeEach(async () => {
@@ -146,7 +147,7 @@ it("plans the active cook's recipe and lists foods in stock for Add item", async
 
 it("deducts the confirmed amounts, refreshes the inventory and ends the cook", async () => {
   respond([planWith(6)], () => ({ data: {} }));
-  const { result, invalidate } = await setup();
+  const { result, invalidate, onConfirmed } = await setup();
 
   act(() => result.current.setAmount("eggs", 2));
   await act(() => result.current.confirm());
@@ -158,7 +159,8 @@ it("deducts the confirmed amounts, refreshes the inventory and ends the cook", a
     deductions: [{ inventory_item_id: "eggs", confirmed_amount: 2, expected_amount: 2 }],
   });
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ["inventory"] });
-  expect(Toast.show).toHaveBeenCalledWith({ type: "success", text1: "Your fridge is updated." });
+  expect(onConfirmed).toHaveBeenCalledWith(recipe);
+  expect(Toast.show).not.toHaveBeenCalled();
   expect(useActiveCookStore.getState().activeCook).toBeNull();
 });
 
@@ -166,11 +168,11 @@ it("ends the cook when an earlier attempt already confirmed it", async () => {
   respond([planWith(6)], () => {
     throw new ApiError(409, "This cook was already confirmed", "COOK_ALREADY_CONFIRMED");
   });
-  const { result } = await setup();
+  const { result, onConfirmed } = await setup();
 
   await act(() => result.current.confirm());
 
-  expect(Toast.show).toHaveBeenCalledWith(expect.objectContaining({ type: "success" }));
+  expect(onConfirmed).toHaveBeenCalledWith(recipe);
   expect(useActiveCookStore.getState().activeCook).toBeNull();
 });
 

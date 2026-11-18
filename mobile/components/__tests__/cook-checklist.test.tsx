@@ -92,7 +92,7 @@ function renderChecklist(plans: CookPlan[], confirm: () => unknown) {
       }}
     >
       <QueryClientProvider client={client}>
-        <CookChecklist onBack={jest.fn()} />
+        <CookChecklist onBack={jest.fn()} onConfirmed={jest.fn()} />
       </QueryClientProvider>
     </SafeAreaProvider>,
   );

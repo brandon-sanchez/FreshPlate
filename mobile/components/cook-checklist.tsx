@@ -13,7 +13,7 @@ import { useCookChecklist } from "@/hooks/useCookChecklist";
 import { useScrollAboveKeyboard } from "@/hooks/useScrollAboveKeyboard";
 import { useTheme } from "@/hooks/useTheme";
 import type { UntrackedIngredient } from "@/types/cook";
-import type { RecipeIngredient } from "@/types/recipes";
+import type { RecipeIngredient, RecipeSuggestion } from "@/types/recipes";
 
 const FOOTER_TOP_PADDING = 16;
 const CONFIRM_BUTTON_HEIGHT = 54;
@@ -23,19 +23,19 @@ const KEYBOARD_GAP = 16;
 type CookChecklistProps = {
   /** Called by "Back", which returns to the recipe without changing anything. */
   onBack: () => void;
+  /** Receives the cooked recipe once the kitchen is updated, just before the active cook clears. */
+  onConfirmed: (recipe: RecipeSuggestion) => void;
 };
 
 /**
  * The done-cooking checklist for the active cook: one card per tracked food,
  * "Add item", the untracked ingredients greyed, and one confirm button that
  * deducts everything. Reads and confirms through {@link useCookChecklist}.
- * Confirming clears the active cook, so the screen that shows this one
- * closes itself.
  */
-export default function CookChecklist({ onBack }: CookChecklistProps) {
+export default function CookChecklist({ onBack, onConfirmed }: CookChecklistProps) {
   const { colors, fonts } = useTheme();
   const insets = useSafeAreaInsets();
-  const checklist = useCookChecklist();
+  const checklist = useCookChecklist({ onConfirmed });
   const scrollRef = useRef<ScrollView>(null);
   const addItemRef = useRef<View>(null);
   const keyboard = useScrollAboveKeyboard(scrollRef, addItemRef, KEYBOARD_GAP);
