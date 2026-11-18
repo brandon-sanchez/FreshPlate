@@ -25,7 +25,7 @@ jest.mock("expo-image", () => ({
 
 jest.mock("@/lib/recipe-feed-api", () => ({
   RECIPE_FEED_PAGE_SIZE: 5,
-  RECIPE_FEED_REQUEST_TIMEOUT_MS: 50_000,
+  RECIPE_FEED_REQUEST_TIMEOUT_MS: 56_000,
   createRecipeFeedSession: (...args: unknown[]) => mockCreateSession(...args),
   fetchRecipeFeedPage: (...args: unknown[]) => mockFetchPage(...args),
   fetchLatestRecipeFeed: (...args: unknown[]) => mockFetchLatest(...args),

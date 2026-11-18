@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from typing import Literal, Protocol
@@ -38,7 +39,14 @@ from app.models.images import ImageResult
 
 logger = logging.getLogger("freshplate.images")
 
-_UPLOAD_GRACE_SECONDS = 60
+# Added to the provider timeout for an attempt with no deadline, whose store
+# calls have only their HTTP timeouts. The lease then outlasts the Lambda
+# function's 150 s timeout, so an attempt the timeout kills is never retried
+# while it could still be running.
+_NO_DEADLINE_LEASE_GRACE_SECONDS = 60
+# Added to an attempt's deadline, which the attempt cannot outrun, to cover
+# the claim's network time.
+_DEADLINE_LEASE_GRACE_SECONDS = 5
 # Time a request-bound attempt keeps after the provider returns, for WebP
 # encoding, the upload, the ledger settle and URL signing.
 _FINISH_SECONDS = 2.0
@@ -80,6 +88,7 @@ class ClaimLimits(BaseModel):
         max_attempts: Possibly billed attempts allowed per image.
         retry_after_seconds: Wait after a failure before another attempt.
         lease_seconds: How long an attempt may run before it is presumed dead.
+            Once it expires, the next claim may start a new attempt.
     """
 
     cost_microusd: int
@@ -197,8 +206,19 @@ class ImagePolicy(BaseModel):
             signed_url_ttl_seconds=settings.image_signed_url_ttl_seconds,
         )
 
-    def limits(self, kind: ImageKind) -> ClaimLimits:
-        """Return the claim bounds for one image of `kind`."""
+    def limits(
+        self, kind: ImageKind, *, deadline: PipelineDeadline | None = None
+    ) -> ClaimLimits:
+        """Return the claim bounds for one image of `kind`.
+
+        The lease lasts as long as the attempt can run: until `deadline`, or
+        without one, the provider timeout plus time for the store calls.
+        """
+        if deadline is None:
+            lease_seconds = int(self.timeout_seconds) + _NO_DEADLINE_LEASE_GRACE_SECONDS
+        else:
+            remaining = math.ceil(max(deadline.remaining_seconds, 0.0))
+            lease_seconds = remaining + _DEADLINE_LEASE_GRACE_SECONDS
         cost = (
             self.recipe_cost_microusd
             if kind == "recipe"
@@ -210,17 +230,20 @@ class ImagePolicy(BaseModel):
             requester_cap_microusd=self.user_monthly_cap_microusd,
             max_attempts=self.max_attempts,
             retry_after_seconds=self.retry_after_seconds,
-            lease_seconds=int(self.timeout_seconds) + _UPLOAD_GRACE_SECONDS,
+            lease_seconds=lease_seconds,
         )
 
 
 class ImageService:
-    """Cached, budgeted image generation shared by every request in a process.
+    """Cached, budgeted image generation.
 
-    One instance must serve the whole process: it collapses concurrent
-    requests for the same image into one claim and one provider call.
-    Across processes the database ledger does the same, and the losers get
-    `pending`.
+    Each attempt runs in its caller's task, so it ends with the caller's
+    request: AWS Lambda freezes an instance once its response is sent, and
+    work left running would stall until a later request thawed it. A caller
+    cancelled mid-attempt leaves its claim reserved, and the database ledger
+    lets a later request try again once the claim's lease expires. The
+    ledger also collapses concurrent requests for one image, in one process
+    or many, into one claim and one provider call: the others get `pending`.
     """
 
     def __init__(
@@ -229,9 +252,6 @@ class ImageService:
         self._store = store
         self._provider = provider
         self._policy = policy
-        self._inflight: dict[
-            tuple[ImageKind, str, bool], asyncio.Task[ImageResult]
-        ] = {}
 
     @staticmethod
     def recipe_key(recipe: Recipe) -> str:
@@ -283,14 +303,12 @@ class ImageService:
             generate: Whether a miss may generate. Pass True only for
                 snapshots the backend wrote, since a client-written recipe
                 would let a user choose the prompt.
-            deadline: When a generation this call starts must be finished,
-                stored and signed. The provider gets whatever is left of it
-                when the call starts, less time to store the result, and
-                never more than the policy's timeout. An attempt the
-                deadline cuts short, or leaves no time to start, returns
-                `unavailable` with reason `late`. A request that must not
-                leave work running after its response passes its own
-                deadline. None allows the policy's timeout.
+            deadline: When the call must return. The provider gets whatever
+                is left of it after the claim, less time to store the
+                result, and never more than the policy's timeout. A call
+                the deadline cuts short, or leaves no time to generate,
+                returns `unavailable` with reason `late`. None gives the
+                provider the policy's timeout.
 
         Returns:
             The image, `pending`, or `unavailable` with a reason.
@@ -338,24 +356,20 @@ class ImageService:
         generate: bool,
         deadline: PipelineDeadline | None = None,
     ) -> ImageResult:
-        flight = (kind, key, generate and self._policy.enabled)
-        task = self._inflight.get(flight)
-        if task is None:
-            # A separate task, so a caller that disconnects mid-generation
-            # cannot cancel an attempt that is already billed.
-            task = asyncio.create_task(
-                self._resolve(
-                    kind,
-                    key,
-                    prompt,
-                    requester,
-                    generate=flight[2],
-                    deadline=deadline,
-                )
-            )
-            self._inflight[flight] = task
-            task.add_done_callback(lambda _: self._inflight.pop(flight, None))
-        return await asyncio.shield(task)
+        resolve = self._resolve(
+            kind,
+            key,
+            prompt,
+            requester,
+            generate=generate and self._policy.enabled,
+            deadline=deadline,
+        )
+        limit = None if deadline is None else deadline.remaining_seconds
+        try:
+            async with asyncio.timeout(limit):
+                return await resolve
+        except TimeoutError:
+            return ImageResult.unavailable(key, "late")
 
     async def _resolve(
         self,
@@ -374,7 +388,9 @@ class ImageService:
             return await self._ready(key, path)
         if len(prompt.encode()) > MAX_PROMPT_BYTES:
             return ImageResult.unavailable(key, "failed")
-        claim = await self._store.claim(kind, key, requester, self._policy.limits(kind))
+        claim = await self._store.claim(
+            kind, key, requester, self._policy.limits(kind, deadline=deadline)
+        )
         if claim.outcome == "ready" and claim.object_path:
             return await self._ready(key, claim.object_path)
         if claim.outcome == "in_progress":
@@ -477,7 +493,7 @@ class RequesterRecipePhotos:
 
         Args:
             recipe: A recipe the backend generated.
-            deadline: When a generation this call starts must be stored.
+            deadline: When the call must return.
 
         Returns:
             The image, `pending`, or `unavailable` with a reason. A ledger or

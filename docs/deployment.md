@@ -146,7 +146,7 @@ aws lambda update-function-code --function-name freshplate-api --image-uri \
 
 ### Work after a response
 
-Lambda freezes an instance once the response is sent, so the API does all of its work inside the request. Recipe photos are generated before the feed response returns. When `LANGSMITH_TRACING` is `true`, `TraceFlushMiddleware` in `backend/app/core/tracing.py` uploads queued traces before each response starts, waiting at most 1 second.
+Lambda freezes an instance once the response is sent, so the API does all of its work inside the request. Recipe photos are generated before the feed response returns. A photo runs in the request that asked for it and stops when that request's deadline ends or the request is cancelled. A photo stopped partway leaves its `image_assets` row reserved until the row's lease expires. For a feed photo, the lease is the request's remaining time plus 5 seconds. For a photo request, it is `IMAGE_GENERATION_TIMEOUT_SECONDS` plus 60 seconds, which also outlasts the function's 150 s timeout. The next request for that photo then starts a new attempt. When `LANGSMITH_TRACING` is `true`, `TraceFlushMiddleware` in `backend/app/core/tracing.py` uploads queued traces before each response starts, waiting at most 1 second.
 
 ### Resources and limits
 
@@ -154,16 +154,25 @@ Lambda freezes an instance once the response is sent, so the API does all of its
 | --- | --- | --- |
 | Lambda function | `freshplate-api` | Container image, arm64, 2048 MB, 150 s timeout |
 | Function URL | Stack output `ApiUrl` | Public (`NONE` auth). The API checks each Supabase JWT. Buffered responses up to 6 MB |
-| ECR repository | `freshplate-api` | Scan on push. Commit tags are immutable. Keeps `live` and the 3 newest other images |
+| ECR repository | `freshplate-api` | Scan on push. Commit tags are immutable. Keeps the two newest images and `live` |
 | Parameters | `/freshplate/prod/*` | SecureString, encrypted with the AWS managed `aws/ssm` key |
 | Log group | Created by `FreshPlateApi` | Kept 14 days |
 | Deploy role | `freshplate-github-deploy` | See the role section above |
 
 Each instance serves one request at a time. An idle function costs nothing. The first request after an idle period starts a new instance, which takes a few seconds.
 
-The 150 s timeout covers a photo request, which waits up to `IMAGE_GENERATION_TIMEOUT_SECONDS` (120 s by default) for OpenAI. A recipe feed request ends on the backend's own budget, 48 s for the first page. That budget starts when the endpoint runs, so a cold start comes out of the 2 s between it and the app's 50 s request timeout. If cold Generate requests time out in the app, lower `RECIPE_FEED_INITIAL_BUDGET_SECONDS` in Parameter Store.
+A request's budget starts when its endpoint runs. The app's timeout must also cover the time before and after the budget, so each budget leaves room for a cold start:
 
-The setup fits the AWS free tier at demo traffic. Lambda includes 1 million requests and 400,000 GB-seconds a month, which is about 55 hours of requests at 2048 MB. Function URLs, standard Parameter Store parameters, and the `aws/ssm` key cost nothing. CloudWatch Logs includes 5 GB of log data a month. An image is about 170 MB compressed. When a deploy reuses CI's cached layers, images built from the same `requirements.txt` share their dependency layer in ECR, and each later image adds only its app layer. ECR storage past its free allowance costs $0.10 per GB-month.
+| Request | Backend budget | Outside the budget on a cold start | Limit |
+| --- | --- | --- | --- |
+| First feed page, `POST /api/recipes/sessions` | 48 s (`RECIPE_FEED_INITIAL_BUDGET_SECONDS`) | 6.5 s | App timeout, 56 s |
+| Next feed page, `POST /api/recipes/sessions/{id}/pages` | 43 s (`RECIPE_FEED_PAGE_BUDGET_SECONDS`) | 6.5 s | App timeout, 56 s |
+| Feed restore, `GET /api/recipes/sessions/latest` | 3 s (`RECIPE_FEED_RESTORE_BUDGET_SECONDS`) | 5.5 s | App timeout, 10 s |
+| Photo, `POST /api/images/*` | 120 s for OpenAI (`IMAGE_GENERATION_TIMEOUT_SECONDS`), plus about 1 s of Supabase calls | 5.5 s | Function timeout, 150 s |
+
+The time outside the budget is about 4 s to start an instance, 0.5 s for the first JWKS fetch, 1 s of phone network, and, for the feed, up to 1 s to flush traces. The 4 s estimate starts from a local measurement. In a container with 1.16 vCPUs and 2 GB, which is Lambda's share at 2048 MB, the image imports the app and answers `/health` 1.0 to 1.4 s after `docker run` on an Apple M2 Pro. Lambda's Graviton CPU is slower than that, and Lambda also loads the image and reads Parameter Store. The first deploy's job summary lists the real cold `/health` time. If cold Generate requests still time out in the app, lower the feed budgets in Parameter Store.
+
+The setup fits the AWS free tier at demo traffic. Lambda includes 1 million requests and 400,000 GB-seconds a month, which is about 55 hours of requests at 2048 MB. Function URLs, standard Parameter Store parameters, and the `aws/ssm` key cost nothing. CloudWatch Logs includes 5 GB of log data a month. An image is about 170 MB compressed, and ECR's free tier holds 500 MB. The lifecycle policy keeps the two newest images, which after a healthy deploy are `live` and the image before it, so a rollback has an image to return to. After a deploy that fails `/health`, the two newest are the failed image and `live`. After two failed deploys in a row, `live` is kept as well, so three images stay until the next healthy deploy. When a deploy reuses CI's cached layers, images built from the same `requirements.txt` share their dependency layer in ECR, and each later image adds only its app layer. ECR applies the policy within 24 hours of a push, and storage past its free allowance costs $0.10 per GB-month.
 
 The Function URL has no request rate limit. Every endpoint except `/health` answers a request without a valid JWT with a 401 in a few milliseconds.
 

@@ -62,7 +62,9 @@ def test_repository_keeps_commit_tags_immutable_and_the_live_image(templates) ->
         repository["Properties"]["LifecyclePolicy"]["LifecyclePolicyText"]
     )["rules"]
     assert rules[0]["selection"]["tagPrefixList"] == ["live"]
+    assert rules[0]["selection"]["countNumber"] == 1
     assert rules[-1]["selection"]["tagStatus"] == "any"
+    assert rules[-1]["selection"]["countNumber"] == 2
 
 
 def test_only_the_api_function_may_pull_images(templates) -> None:

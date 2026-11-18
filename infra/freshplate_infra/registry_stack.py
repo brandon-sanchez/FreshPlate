@@ -8,7 +8,8 @@ from constructs import Construct
 _GITHUB_OIDC_HOST = "token.actions.githubusercontent.com"
 LIVE_TAG = "live"
 """Image tag the deploy workflow moves to each image that passes /health."""
-_KEPT_COMMIT_IMAGES = 3
+# At about 170 MB compressed each, two images fit ECR's 500 MB free tier.
+_KEPT_NEWEST_IMAGES = 2
 
 
 class RegistryStack(Stack):
@@ -63,11 +64,13 @@ class RegistryStack(Stack):
                     tag_prefix_list=[LIVE_TAG],
                     max_image_count=1,
                 ),
+                # A lower-priority rule still counts the images a higher one
+                # selected, so `live` is one of the newest images it keeps.
                 ecr.LifecycleRule(
                     rule_priority=2,
-                    description="Keep the newest other images for rollback.",
+                    description="Keep the two newest images, for rollback.",
                     tag_status=ecr.TagStatus.ANY,
-                    max_image_count=_KEPT_COMMIT_IMAGES,
+                    max_image_count=_KEPT_NEWEST_IMAGES,
                 ),
             ],
         )
