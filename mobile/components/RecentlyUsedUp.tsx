@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Keyboard, Pressable, Text, TextInput, View } from "react-native";
-import FontAwesome from "@expo/vector-icons/FontAwesome";
+import Feather from "@expo/vector-icons/Feather";
 import SectionLabel from "@/components/SectionLabel";
 import { useTheme } from "@/hooks/useTheme";
 import {
@@ -15,9 +15,15 @@ type RecentlyUsedUpProps = {
   search: string;
   /** Receives the restored batch's lot id once a restore succeeds. */
   onRestored: (lotId: string) => void;
+  /**
+   * Called once the opened list or a Restore form has laid out, so the
+   * screen can scroll it clear of the tab bar.
+   */
+  onExpand?: () => void;
 };
 
 const SLOP = 6;
+const SIDE_MARGIN = 16;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -26,10 +32,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * pill asks how much is left and restores it through
  * {@link useRecentlyUsedUp}. Renders nothing when no food matches.
  */
-export default function RecentlyUsedUp({ search, onRestored }: RecentlyUsedUpProps) {
+export default function RecentlyUsedUp({ search, onRestored, onExpand }: RecentlyUsedUpProps) {
   const { colors, fonts } = useTheme();
   const usedUp = useRecentlyUsedUp();
   const [open, setOpen] = useState(false);
+  const expandOnLayout = useScrollOnceAfterOpen(onExpand);
 
   const needle = search.trim().toLowerCase();
   const foods = (usedUp.data ?? []).filter((food) => food.name.toLowerCase().includes(needle));
@@ -37,15 +44,25 @@ export default function RecentlyUsedUp({ search, onRestored }: RecentlyUsedUpPro
 
   const count = `${foods.length} food${foods.length === 1 ? "" : "s"}`;
   return (
-    <View>
+    <View testID="recently-used-up" style={{ paddingHorizontal: SIDE_MARGIN }}>
       <Pressable
-        onPress={() => setOpen((value) => !value)}
+        onPress={() => {
+          if (!open) expandOnLayout.arm();
+          setOpen(!open);
+        }}
         accessibilityRole="button"
         accessibilityLabel={`Recently used up, ${count}`}
         accessibilityState={{ expanded: open }}
-        style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingTop: 14, paddingBottom: 8 }}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 6,
+          minHeight: 28,
+          paddingTop: 14,
+          paddingBottom: 8,
+        }}
       >
-        <FontAwesome name={open ? "angle-down" : "angle-right"} size={14} color={colors.textMuted} />
+        <Feather name={open ? "chevron-down" : "chevron-right"} size={14} color={colors.textMuted} />
         <Text
           style={{
             fontFamily: fonts.bodyStrong,
@@ -62,12 +79,13 @@ export default function RecentlyUsedUp({ search, onRestored }: RecentlyUsedUpPro
         </Text>
       </Pressable>
       {open ? (
-        <View style={{ gap: 6 }}>
+        <View testID="recently-used-up-list" style={{ gap: 6 }} onLayout={expandOnLayout.onLayout}>
           {foods.map((food) => (
             <UsedUpRow
               key={food.lotId}
               food={food}
               onRestored={onRestored}
+              onExpand={onExpand}
             />
           ))}
         </View>
@@ -79,13 +97,15 @@ export default function RecentlyUsedUp({ search, onRestored }: RecentlyUsedUpPro
 type UsedUpRowProps = {
   food: UsedUpFood;
   onRestored: (lotId: string) => void;
+  onExpand?: () => void;
 };
 
-function UsedUpRow({ food, onRestored }: UsedUpRowProps) {
+function UsedUpRow({ food, onRestored, onExpand }: UsedUpRowProps) {
   const { colors, fonts, card } = useTheme();
   const restore = useRestoreUsedUp({ onRestored });
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState("");
+  const expandOnLayout = useScrollOnceAfterOpen(onExpand);
   // A ref, not only mutation state, so two taps in one frame cannot both restore.
   const firedRef = useRef(false);
   const amount = parseExactAmount(text, food.wholeUnitsOnly);
@@ -132,7 +152,11 @@ function UsedUpRow({ food, onRestored }: UsedUpRowProps) {
           </Text>
         </View>
         <Pressable
-          onPress={() => !busy && setEditing((value) => !value)}
+          onPress={() => {
+            if (busy) return;
+            if (!editing) expandOnLayout.arm();
+            setEditing(!editing);
+          }}
           accessibilityRole="button"
           accessibilityLabel={`Restore ${food.name}`}
           accessibilityState={{ expanded: editing, disabled: busy }}
@@ -156,7 +180,11 @@ function UsedUpRow({ food, onRestored }: UsedUpRowProps) {
       </View>
 
       {editing ? (
-        <View style={{ gap: 8 }}>
+        <View
+          testID={`restore-form-${food.lotId}`}
+          style={{ gap: 8 }}
+          onLayout={expandOnLayout.onLayout}
+        >
           <SectionLabel text="How much is left?" inline />
           <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
             <View
@@ -212,6 +240,20 @@ function UsedUpRow({ food, onRestored }: UsedUpRowProps) {
       ) : null}
     </View>
   );
+}
+
+function useScrollOnceAfterOpen(onExpand: (() => void) | undefined) {
+  const armed = useRef(false);
+  return {
+    arm: () => {
+      armed.current = true;
+    },
+    onLayout: () => {
+      if (!armed.current) return;
+      armed.current = false;
+      onExpand?.();
+    },
+  };
 }
 
 function usedUpLabel(depletedAt: string): string {

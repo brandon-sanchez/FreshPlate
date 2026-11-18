@@ -20,6 +20,7 @@ import {
   StyleSheet,
   type FlatListProps,
   type LayoutChangeEvent,
+  type ScrollView,
   type StyleProp,
   type ViewStyle,
   type ViewToken,
@@ -100,6 +101,8 @@ export type PinnedSectionListProps<RowT, SectionT extends PinnedSection<RowT>> =
 export type PinnedSectionListHandle = {
   /** Scrolls up to where the pinned content just reaches the top, if the list is scrolled past that point. */
   scrollToPinned: () => void;
+  /** Scrolls to the end of the content, so a footer that just opened is in view. */
+  scrollToEnd: () => void;
 };
 
 type Cell<RowT, SectionT> =
@@ -265,6 +268,14 @@ export default function PinnedSectionList<
             offset: pinTop.value,
             animated: false,
           });
+      },
+      // FlatList's own scrollToEnd measures the footer from its last
+      // onLayout, which a footer that just grew hasn't sent yet. The scroll
+      // view's ref, typed loosely by React Native, scrolls by the laid-out
+      // content size.
+      scrollToEnd: () => {
+        const scroll = listRef.current?.getNativeScrollRef() as unknown as ScrollView | null;
+        scroll?.scrollToEnd({ animated: true });
       },
     }),
     [scrollY, pinTop],
