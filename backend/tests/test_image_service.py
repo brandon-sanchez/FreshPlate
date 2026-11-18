@@ -185,20 +185,48 @@ async def test_concurrent_requests_for_one_image_call_the_provider_once():
     results = await asyncio.gather(
         *(images.recipe_image(dish, USER, generate=True) for _ in range(6))
     )
-    assert {result.status for result in results} == {"ready"}
-    assert len({result.url for result in results}) == 1
+    assert sorted(result.status for result in results) == ["pending"] * 5 + ["ready"]
     assert len(provider.prompts) == 1 and store.spent == 60
 
 
-async def test_a_cancelled_caller_does_not_abandon_the_generation():
+def _other_tasks() -> set[asyncio.Task]:
+    return asyncio.all_tasks() - {asyncio.current_task()}
+
+
+async def test_a_cancelled_caller_stops_its_attempt_and_leaves_nothing_running():
     store, provider = FakeStore(), FakeProvider(delay=0.05)
-    images = service(store, provider)
+    images = service(store, provider, monthly_cap_microusd=1000)
     dish = recipe()
     caller = asyncio.create_task(images.recipe_image(dish, USER, generate=True))
     await asyncio.sleep(0.01)
     caller.cancel()
-    later = await images.recipe_image(dish, USER, generate=True)
-    assert later.status == "ready" and len(provider.prompts) == 1
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+
+    assert _other_tasks() == set()
+    await asyncio.sleep(0.1)
+    assert store.files == {}
+    assert (await images.recipe_image(dish, USER, generate=True)).status == "pending"
+    store.expire_leases()
+    retried = await images.recipe_image(dish, USER, generate=True)
+    assert retried.status == "ready" and len(provider.prompts) == 2
+
+
+async def test_a_caller_limit_during_the_upload_leaves_nothing_running():
+    store = FakeStore()
+    store.upload_delay = 0.2
+    images = service(store)
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(
+            images.recipe_image(
+                recipe(), USER, generate=True, deadline=PipelineDeadline(30)
+            ),
+            timeout=0.05,
+        )
+
+    assert _other_tasks() == set()
+    await asyncio.sleep(0.3)
+    assert store.files == {}
 
 
 async def test_generation_running_elsewhere_is_reported_pending():
@@ -375,6 +403,28 @@ async def test_a_caller_deadline_shorter_than_the_policy_bounds_the_attempt():
     assert asyncio.get_running_loop().time() - started < 0.5
     assert result.status == "unavailable" and result.reason == "late"
     assert store.spent == 60
+
+
+async def test_an_upload_past_the_deadline_is_abandoned_until_its_lease_expires():
+    store = FakeStore()
+    store.upload_delay = 5
+    images = service(store)
+    dish = recipe()
+    started = asyncio.get_running_loop().time()
+    result = await images.recipe_image(
+        dish, USER, generate=True, deadline=PipelineDeadline(2.1)
+    )
+    assert asyncio.get_running_loop().time() - started < 2.5
+    assert result.status == "unavailable" and result.reason == "late"
+    assert _other_tasks() == set() and store.files == {}
+    assert store.leases == [3 + 5]
+    assert (await images.recipe_image(dish, USER, generate=True)).status == "pending"
+
+
+async def test_an_attempt_without_a_deadline_leases_the_provider_timeout():
+    store = FakeStore()
+    await service(store).recipe_image(recipe(), USER, generate=True)
+    assert store.leases == [5 + 60]
 
 
 async def test_a_deadline_too_short_to_store_a_photo_refunds_the_claim():

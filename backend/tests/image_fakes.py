@@ -48,6 +48,13 @@ class FakeStore:
         self.cooled_down = False
         self.requesters: list[str] = []
         self.fail_upload = False
+        self.upload_delay = 0.0
+        self.signing_delay = 0.0
+        self.leases: list[int] = []
+
+    def expire_leases(self) -> None:
+        for asset in self.assets.values():
+            asset["lease_expired"] = True
 
     async def find_ready(self, kind, cache_key):
         asset = self.assets.get((kind, cache_key))
@@ -62,13 +69,17 @@ class FakeStore:
                     outcome="ready", asset_id=asset["id"], object_path=asset["path"]
                 )
             if asset["status"] == "reserved":
-                return ImageClaim(outcome="in_progress", asset_id=asset["id"])
-            if not self.cooled_down or asset["attempts"] >= limits.max_attempts:
+                if not asset.get("lease_expired"):
+                    return ImageClaim(outcome="in_progress", asset_id=asset["id"])
+            elif not self.cooled_down:
+                return ImageClaim(outcome="failed", asset_id=asset["id"])
+            if asset["attempts"] >= limits.max_attempts:
                 return ImageClaim(outcome="failed", asset_id=asset["id"])
         if self.spent + limits.cost_microusd > limits.cap_microusd:
             return ImageClaim(
                 outcome="budget_exhausted", asset_id=asset and asset["id"]
             )
+        self.leases.append(limits.lease_seconds)
         self.spent += limits.cost_microusd
         asset = asset or {"id": uuid4(), "attempts": 0}
         asset.update(
@@ -76,6 +87,7 @@ class FakeStore:
             reservation=uuid4(),
             cost=limits.cost_microusd,
             attempts=asset["attempts"] + 1,
+            lease_expired=False,
         )
         self.assets[(kind, cache_key)] = asset
         return ImageClaim(
@@ -110,9 +122,11 @@ class FakeStore:
     async def upload(self, object_path, data):
         if self.fail_upload:
             raise ImageStoreError("Storage down")
+        await asyncio.sleep(self.upload_delay)
         self.files[object_path] = data
 
     async def signed_url(self, object_path, ttl_seconds):
+        await asyncio.sleep(self.signing_delay)
         return f"https://cdn.test/{object_path}?ttl={ttl_seconds}"
 
 

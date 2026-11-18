@@ -1575,3 +1575,39 @@ def test_latest_session_is_unavailable_when_the_store_fails(
 
     assert response.status_code == 503
     assert response.json()["code"] == "RECIPE_FEED_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_a_photo_read_cut_by_the_request_deadline_stops_with_the_response(
+    signing_key: SigningKey, patch_jwks, monkeypatch
+) -> None:
+    import asyncio
+
+    import httpx
+
+    from app.core.config import settings
+
+    patch_jwks([signing_key])
+    provider = FakeProvider([*batch_responses(_recipe("Recipe 1")), _assessment(1)])
+    images = FakeStore()
+    app = create_app()
+    _install_dependencies(app, provider, StubRetriever(), InMemoryRecipeFeedStore())
+    _install_images(app, images)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await client.post(
+            "/api/recipes/sessions",
+            headers=_auth_headers(signing_key),
+            json={"household_id": HOUSEHOLD_ID, "preferences": {}},
+        )
+        images.signing_delay = 1.0
+        monkeypatch.setattr(settings, "recipe_feed_restore_budget_seconds", 0.2)
+        latest = await client.get(_LATEST_PATH, headers=_auth_headers(signing_key))
+        still_running = asyncio.all_tasks() - {asyncio.current_task()}
+
+    assert latest.status_code == 200
+    [card] = latest.json()["data"]["recipes"]
+    assert card["image"] is None
+    assert still_running == set()

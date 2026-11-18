@@ -146,7 +146,7 @@ aws lambda update-function-code --function-name freshplate-api --image-uri \
 
 ### Work after a response
 
-Lambda freezes an instance once the response is sent, so the API does all of its work inside the request. Recipe photos are generated before the feed response returns. When `LANGSMITH_TRACING` is `true`, `TraceFlushMiddleware` in `backend/app/core/tracing.py` uploads queued traces before each response starts, waiting at most 1 second.
+Lambda freezes an instance once the response is sent, so the API does all of its work inside the request. Recipe photos are generated before the feed response returns. A photo runs in the request that asked for it and stops when that request's deadline ends or the request is cancelled. A photo stopped partway leaves its `image_assets` row reserved until the row's lease expires. For a feed photo, the lease is the request's remaining time plus 5 seconds. For a photo request, it is `IMAGE_GENERATION_TIMEOUT_SECONDS` plus 60 seconds, which also outlasts the function's 150 s timeout. The next request for that photo then starts a new attempt. When `LANGSMITH_TRACING` is `true`, `TraceFlushMiddleware` in `backend/app/core/tracing.py` uploads queued traces before each response starts, waiting at most 1 second.
 
 ### Resources and limits
 
