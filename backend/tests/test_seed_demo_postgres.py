@@ -25,10 +25,15 @@ from tests.pg_support import (
 
 pytestmark = pytest.mark.skipif(not DSN, reason="Requires disposable local PostgreSQL")
 BACKEND = Path(__file__).parents[1]
-DEMO_MIGRATIONS = (
+# Timestamped names sort into the order the migrations ship in.
+MIGRATIONS = tuple(sorted((
+    *FOODS_MIGRATIONS,
     "20260905130000_add_demo_household_reset.sql",
+    "20261113120000_add_cook_recipe_v2.sql",
+    "20261113130000_add_cook_event_lines.sql",
     "20261116100000_reset_demo_household_into_foods_and_lots.sql",
-)
+    "20261117200000_drop_inventory_items_and_cook_recipe.sql",
+)))
 # Every column the app shows for a seeded food or batch. Ids and timestamps are
 # left out because each reset creates fresh rows.
 KITCHEN = """
@@ -50,7 +55,7 @@ KITCHEN = """
 
 @pytest.fixture(scope="module")
 def database():
-    yield from disposable_database(FOODS_MIGRATIONS + DEMO_MIGRATIONS)
+    yield from disposable_database(MIGRATIONS)
 
 
 def demo_household(db: DB, owner: str = USER, *, designated: bool = True) -> str:
@@ -78,14 +83,6 @@ def seed(db: DB, household_id: str, user: str = USER):
     )
 
 
-def move_inventory(db: DB, household_id: str) -> None:
-    result = run_script(
-        "app.scripts.run_inventory_backfill", "--household", household_id,
-        env={"BACKFILL_DATABASE_URL": db.dsn},
-    )
-    assert result.returncode == 0, result.stderr
-
-
 def reset(db: DB, household_id: str, payload, *, user: str = USER, role: str = "service_role"):
     payload = "NULL" if payload is None else f"{q(json.dumps(payload))}::jsonb"
     return db.run(
@@ -97,13 +94,6 @@ def reset(db: DB, household_id: str, payload, *, user: str = USER, role: str = "
 
 def kitchen(db: DB, household_id: str):
     return db.json(KITCHEN.format(household=q(household_id)))
-
-
-def inventory_item(db: DB, household_id: str, name: str, quantity=1, unit="each") -> None:
-    db.run(
-        "INSERT INTO inventory_items(household_id, added_by, name, quantity, unit, storage_location) "
-        f"VALUES ({q(household_id)}, {q(USER)}, {q(name)}, {quantity}, {q(unit)}, 'fridge');"
-    )
 
 
 def cook_event(db: DB, household_id: str) -> None:
@@ -186,34 +176,15 @@ def test_reset_after_reset_and_app_changes_restores_the_same_kitchen(database):
     assert cook_count(database, home) == "0"
 
 
-def test_reset_after_the_inventory_move_replaces_the_moved_lots(database):
-    fresh = demo_household(database)
-    assert seed(database, fresh).returncode == 0
-    home = demo_household(database)
-    inventory_item(database, home, "Milk", 1, "gallon")
-    inventory_item(database, home, "verify-old-item", 2, "each")
-    move_inventory(database, home)
-    assert database.run(f"SELECT count(*) FROM lots WHERE household_id = {q(home)}") == "2"
-
-    result = seed(database, home)
-    move_inventory(database, home)
-
-    assert result.returncode == 0, result.stderr
-    assert kitchen(database, home) == kitchen(database, fresh)
-    assert database.run(f"SELECT count(*) FROM inventory_items WHERE household_id = {q(home)}") == "0"
-
-
 def test_reset_leaves_other_households_untouched(database):
     home = demo_household(database)
     other = demo_household(database, OTHER)
     add_lot(database, other, "verify-keep", "g", 10, "pantry", user=OTHER)
-    inventory_item(database, other, "verify-keep-item")
     cook_event(database, other)
 
     assert seed(database, home).returncode == 0
 
     assert database.run(f"SELECT count(*) FROM lots WHERE household_id = {q(other)}") == "1"
-    assert database.run(f"SELECT count(*) FROM inventory_items WHERE household_id = {q(other)}") == "1"
     assert cook_count(database, other) == "1"
 
 

@@ -10,7 +10,8 @@ from typing import Any
 
 from app.ai.agents.kitchen_basics import KitchenBasics
 from app.ai.agents.models import Recipe
-from app.inventory.units import in_stock, measure
+from app.inventory.food_facts import FoodLine
+from app.inventory.units import Exact, to_stock
 
 
 def ingredient_coverage_percent(
@@ -20,7 +21,7 @@ def ingredient_coverage_percent(
 ) -> int:
     """Return the rounded share of recipe ingredients mapped to inventory.
 
-    The recipe API and ``scripts/run_evals.py`` both call this function, so
+    The recipe API and the eval runner both call this function, so
     the match percentage shown in the mobile feed cannot drift from the
     measured metric. An ingredient mapped to no inventory food counts in the
     denominator but not the numerator. Kitchen basics are always on hand, so
@@ -59,32 +60,52 @@ def completeness_percent(recipe: Recipe) -> int:
 
 
 def mapping_validity_percent(
-    recipe: Recipe, inventory: Sequence[Mapping[str, Any]]
+    recipe: Recipe, usable_items: Sequence[Mapping[str, Any]]
 ) -> int:
-    """Measure mapped ingredients whose IDs and requested amounts are safe."""
-    by_id = {
-        item["id"]: item
-        for item in inventory
-        if isinstance(item.get("id"), str) and item.get("id")
-    }
+    """Return the percentage of mapped ingredients the cook flow could deduct.
+
+    A mapped ingredient is valid when its food is in ``usable_items``, its
+    amount is positive and finite, and the exact amounts of every ingredient
+    on that food add up to no more than the food's stock. An approximate,
+    small or ask-at-cook amount counts as valid, because the cook flow has
+    the cook confirm it. A recipe with no mapped ingredient scores 100.
+
+    Args:
+        recipe: The recipe to score, with real food ids.
+        usable_items: The pipeline's usable items. Each needs ``id``,
+            ``quantity`` in its stock unit, and ``food``, the food's
+            ``FoodLine`` fields, for unit conversion.
+    """
+    by_id = {item["id"]: item for item in usable_items}
     mapped = [item for item in recipe.ingredients if item.inventory_item_id is not None]
     if not mapped:
         return 100
+    usable = [
+        ingredient.inventory_item_id in by_id
+        and ingredient.use_amount is not None
+        and math.isfinite(ingredient.use_amount)
+        and ingredient.use_amount > 0
+        for ingredient in mapped
+    ]
+    exact_by_id: dict[str, Decimal] = {}
+    for ingredient, ok in zip(mapped, usable, strict=True):
+        if not ok:
+            continue
+        food_id = ingredient.inventory_item_id
+        facts = FoodLine.model_validate(by_id[food_id]["food"]).facts
+        conversion = to_stock(Decimal(str(ingredient.use_amount)), ingredient.unit, facts)
+        if isinstance(conversion, Exact):
+            exact_by_id[food_id] = exact_by_id.get(food_id, Decimal(0)) + conversion.amount
+    over_stock = {
+        food_id
+        for food_id, needed in exact_by_id.items()
+        if needed > Decimal(str(by_id[food_id]["quantity"]))
+    }
     valid = sum(
-        item.inventory_item_id in by_id
-        and item.use_amount is not None
-        and math.isfinite(item.use_amount)
-        and item.use_amount > 0
-        and _within_stock(item.use_amount, item.unit, by_id[item.inventory_item_id])
-        for item in mapped
+        ok and ingredient.inventory_item_id not in over_stock
+        for ingredient, ok in zip(mapped, usable, strict=True)
     )
     return round(valid * 100 / len(mapped))
-
-
-def _within_stock(amount: float, unit: str, item: Mapping[str, Any]) -> bool:
-    stock = measure(Decimal(str(item.get("quantity", 0))), item.get("unit") or "each")
-    used = in_stock(Decimal(str(amount)), unit, stock)
-    return used is not None and used <= stock.amount
 
 
 def embedding_diversity(embeddings: Sequence[Sequence[float]]) -> float:

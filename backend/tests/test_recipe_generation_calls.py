@@ -76,7 +76,6 @@ def _state(**overrides: Any) -> dict[str, Any]:
         "preferences": {},
         "exclude_titles": ["Shown Before"],
         "batch_ceiling": 5,
-        "retry_count": 0,
         **overrides,
     }
 

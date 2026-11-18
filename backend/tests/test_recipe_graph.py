@@ -9,19 +9,19 @@ import pytest
 
 from app.ai.agents.graph import build_recipe_graph
 from app.ai.agents.kitchen_basics import KitchenBasics
-from app.ai.agents.models import Recipe, RecipeGenerationResponse
+from app.ai.agents.meal_quality import MealCheck
+from app.ai.agents.models import Recipe
 from app.ai.agents.nodes import (
     MEAL_REVIEW_RESERVE_SECONDS,
     analyze_inventory,
     check_quality,
     generate_recipes,
 )
-from app.ai.llm.providers import FakeProvider
 from app.ai.llm.retry import PipelineDeadline
 from app.ai.prompts.loader import load_prompt
 from app.ai.prompts.tracing import build_trace_config
 from app.ai.rag.vector_store import RetrievedRecipe
-from tests.recipe_fakes import NO_BASICS
+from tests.recipe_fakes import NO_BASICS, MealFakeProvider
 
 
 def _ingredient(
@@ -91,22 +91,6 @@ def _ends_before_meal_review(
     return abs(call_deadline.remaining_seconds - expected) < 0.5
 
 
-class RecordingProvider:
-    def __init__(self, responses: list[dict[str, Any]]) -> None:
-        self._provider = FakeProvider(responses)
-        self.calls: list[dict[str, Any]] = []
-
-    async def generate(self, prompt: str, **kwargs: Any) -> RecipeGenerationResponse:
-        self.calls.append({"prompt": prompt, **kwargs})
-        return await self._provider.generate(
-            prompt,
-            response_model=kwargs["response_model"],
-            system_instruction=kwargs.get("system_instruction"),
-            deadline=kwargs.get("deadline"),
-            thinking=kwargs.get("thinking"),
-        )
-
-
 class RecordingRetriever:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -127,7 +111,7 @@ class RecordingRetriever:
 async def test_generate_recipes_preserves_provider_amounts_for_quality_validation() -> (
     None
 ):
-    provider = RecordingProvider(
+    provider = MealFakeProvider(
         [
             {
                 "recipes": [
@@ -161,7 +145,6 @@ async def test_generate_recipes_preserves_provider_amounts_for_quality_validatio
             "preferences": {"meal": "dinner"},
             "exclude_titles": [],
             "batch_ceiling": 2,
-            "retry_count": 0,
         },
         provider,
         prompt=prompt,
@@ -246,7 +229,7 @@ def test_check_quality_rejects_incomplete_staple_amounts() -> None:
 
 @pytest.mark.asyncio
 async def test_generation_lists_one_line_per_food_with_its_units() -> None:
-    provider = RecordingProvider([{"recipes": []}])
+    provider = MealFakeProvider([{"recipes": []}])
     milk = _usable_item(
         "milk", name="Milk", quantity=5400, stock_base="ml", lot_count=2
     )
@@ -274,7 +257,7 @@ async def test_generation_lists_one_line_per_food_with_its_units() -> None:
 
 @pytest.mark.asyncio
 async def test_generation_schema_limits_units_to_the_kitchens_units() -> None:
-    provider = RecordingProvider([{"recipes": []}])
+    provider = MealFakeProvider([{"recipes": []}])
     garlic = _usable_item(
         "garlic",
         name="Garlic",
@@ -314,7 +297,7 @@ async def test_generation_schema_limits_units_to_the_kitchens_units() -> None:
 async def test_generation_schema_asks_for_a_cookbook_recipe_with_structured_steps() -> (
     None
 ):
-    provider = RecordingProvider([{"recipes": []}])
+    provider = MealFakeProvider([{"recipes": []}])
     garlic = _usable_item("garlic", name="Garlic", quantity=1, each_label="head")
 
     await generate_recipes(
@@ -362,7 +345,7 @@ async def test_generation_schema_asks_for_a_cookbook_recipe_with_structured_step
 
 @pytest.mark.asyncio
 async def test_a_kitchen_with_no_usable_food_makes_no_generation_call() -> None:
-    provider = RecordingProvider([])
+    provider = MealFakeProvider([])
 
     result = await generate_recipes(
         {"kitchen_basics": NO_BASICS, "usable_items": []}, provider
@@ -544,7 +527,7 @@ def test_check_quality_rejects_null_inventory_id() -> None:
 
 
 def test_prompt_describes_empty_result_for_unsupported_meals() -> None:
-    provider = RecordingProvider([{"recipes": []}])
+    provider = MealFakeProvider([{"recipes": []}])
     import asyncio
 
     asyncio.run(
@@ -591,28 +574,7 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
             )
         ]
     }
-    provider = RecordingProvider(
-        [
-            bad_response,
-            {"recipes": []},
-            good_response,
-            {"recipes": []},
-            {
-                "checks": [
-                    {
-                        "candidate_index": 0,
-                        "main_component": "pasta",
-                        "portion_reasoning": "substantial",
-                        "unlisted_foods": [],
-                        "dish_reasoning": "a meal on its own",
-                        "is_requested_dish": True,
-                        "realistic_portions": True,
-                        "coherent_method": True,
-                    }
-                ]
-            },
-        ]
-    )
+    provider = MealFakeProvider([bad_response, good_response, {"recipes": []}])
     retriever = RecordingRetriever()
     prompt = load_prompt("generate_recipes")
     deadline = PipelineDeadline(25.0)
@@ -625,7 +587,6 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
             "preferences": {"meal": "dinner"},
             "exclude_titles": [],
             "batch_ceiling": 2,
-            "retry_count": 0,
             "metadata": {},
             "deadline": deadline,
         },
@@ -634,13 +595,18 @@ async def test_graph_retries_once_with_quality_feedback_and_shared_deadline() ->
 
     assert [recipe.title for recipe in result["valid_recipes"]] == ["Second attempt"]
     assert result["retry_count"] == 1
-    assert len(provider.calls) == 5
-    assert "missing inventory id 'missing'" in provider.calls[2]["prompt"]
+    generations = [
+        call for call in provider.calls if call["response_model"] is not MealCheck
+    ]
+    assert len(generations) == 3
+    assert provider.judged_titles == ["Second attempt"]
+    [retry] = [call for call in generations if "missing inventory id" in call["prompt"]]
+    assert "Recipe 'First attempt'" in retry["prompt"]
     assert all(
-        _ends_before_meal_review(call["deadline"], deadline)
-        for call in provider.calls[:4]
+        _ends_before_meal_review(call["deadline"], deadline) for call in generations
     )
-    assert provider.calls[4]["deadline"] is deadline
+    [judge] = [call for call in provider.calls if call["response_model"] is MealCheck]
+    assert judge["deadline"] is deadline
     assert retriever.calls[0]["deadline"] is deadline
     assert result["metadata"]["prompt_name"] == "generate_recipes"
     assert result["metadata"]["prompt_version"] == 9
@@ -661,7 +627,7 @@ async def test_graph_fail_softs_after_one_quality_retry() -> None:
             )
         ]
     }
-    provider = RecordingProvider([invalid_response, invalid_response])
+    provider = MealFakeProvider([invalid_response, invalid_response])
     graph = build_recipe_graph(provider, RecordingRetriever())
     deadline = PipelineDeadline(25.0)
 
@@ -686,12 +652,7 @@ async def test_graph_fail_softs_after_one_quality_retry() -> None:
 
 @pytest.mark.asyncio
 async def test_graph_honors_a_quality_retry_limit_above_the_default() -> None:
-    """The retry counter must stay truthful for limits above the default.
-
-    Regression: capping retry_count at MAX_QUALITY_RETRIES made any higher
-    configured limit retry until the deadline instead of stopping at the
-    caller's bound.
-    """
+    """A rejected recipe stops at the caller's limit when it is above the default."""
     invalid_response = {
         "recipes": [
             _recipe(
@@ -704,7 +665,7 @@ async def test_graph_honors_a_quality_retry_limit_above_the_default() -> None:
             )
         ]
     }
-    provider = RecordingProvider([invalid_response] * 3)
+    provider = MealFakeProvider([invalid_response] * 3)
     graph = build_recipe_graph(
         provider,
         RecordingRetriever(),
@@ -728,47 +689,8 @@ async def test_graph_honors_a_quality_retry_limit_above_the_default() -> None:
 
 
 @pytest.mark.asyncio
-async def test_graph_skips_quality_retry_below_the_20s_budget_floor() -> None:
-    """One generation measures 16-24s, so a retry needs at least that budget.
-
-    Regression for the #42 fix: a zero-valid generation late in the budget
-    must finish honestly instead of firing a retry that can only time out
-    or trip Gemini's 10-second minimum HTTP deadline.
-    """
-    invalid_response = {
-        "recipes": [
-            _recipe(
-                _ingredient(
-                    "Unknown ingredient",
-                    inventory_item_id="missing",
-                    use_amount=1,
-                    unit="each",
-                )
-            )
-        ]
-    }
-    provider = RecordingProvider([invalid_response, invalid_response])
-    graph = build_recipe_graph(provider, RecordingRetriever())
-
-    result = await graph.ainvoke(
-        {
-            "kitchen_basics": NO_BASICS,
-            "inventory": [TOMATOES],
-            "preferences": {},
-            "exclude_titles": [],
-            "batch_ceiling": 1,
-            "deadline": PipelineDeadline(15.0),
-        }
-    )
-
-    assert result["valid_recipes"] == []
-    assert result["retry_count"] == 0
-    assert len(provider.calls) == 1
-
-
-@pytest.mark.asyncio
 async def test_generation_runs_at_minimal_thinking_one_open_recipe_per_call() -> None:
-    provider = RecordingProvider([{"recipes": []}] * 3)
+    provider = MealFakeProvider([{"recipes": []}] * 3)
     await generate_recipes(
         {
             "kitchen_basics": NO_BASICS,
@@ -791,7 +713,7 @@ async def test_generation_runs_at_minimal_thinking_one_open_recipe_per_call() ->
 
 @pytest.mark.asyncio
 async def test_every_generation_call_sees_the_kitchen_basics() -> None:
-    provider = RecordingProvider([{"recipes": []}] * 5)
+    provider = MealFakeProvider([{"recipes": []}] * 5)
     await generate_recipes(
         {
             "kitchen_basics": KitchenBasics(["Salt", "Olive oil"]),
@@ -815,7 +737,7 @@ async def test_every_generation_call_sees_the_kitchen_basics() -> None:
 
 @pytest.mark.asyncio
 async def test_generation_prompt_without_basics_never_mentions_them() -> None:
-    provider = RecordingProvider([{"recipes": []}] * 5)
+    provider = MealFakeProvider([{"recipes": []}] * 5)
     await generate_recipes(
         {"kitchen_basics": NO_BASICS, "usable_items": [_usable_item()]}, provider
     )
@@ -833,7 +755,7 @@ async def test_generation_prompt_without_basics_never_mentions_them() -> None:
 
 @pytest.mark.asyncio
 async def test_generation_schema_keeps_one_ingredient_shape_with_basics() -> None:
-    provider = RecordingProvider([{"recipes": []}] * 5)
+    provider = MealFakeProvider([{"recipes": []}] * 5)
     await generate_recipes(
         {
             "kitchen_basics": KitchenBasics(["Salt", "Water"]),
@@ -911,7 +833,7 @@ def test_check_quality_rejects_unmapped_water_when_it_is_not_a_basic() -> None:
 
 @pytest.mark.asyncio
 async def test_honest_empty_batch_finishes_without_a_quality_retry() -> None:
-    provider = RecordingProvider([{"recipes": []}] * 5)
+    provider = MealFakeProvider([{"recipes": []}] * 5)
     result = await build_recipe_graph(provider, RecordingRetriever()).ainvoke(
         {
             "kitchen_basics": NO_BASICS,
@@ -927,7 +849,7 @@ async def test_honest_empty_batch_finishes_without_a_quality_retry() -> None:
 
 @pytest.mark.asyncio
 async def test_graph_accepts_a_recipe_measured_in_a_smaller_unit_than_stock() -> None:
-    provider = RecordingProvider(
+    provider = MealFakeProvider(
         [
             {
                 "recipes": [
@@ -940,20 +862,6 @@ async def test_graph_accepts_a_recipe_measured_in_a_smaller_unit_than_stock() ->
                         ),
                         title="Lemon Herb Rice",
                     )
-                ]
-            },
-            {
-                "checks": [
-                    {
-                        "candidate_index": 0,
-                        "main_component": "rice",
-                        "portion_reasoning": "substantial",
-                        "unlisted_foods": [],
-                        "dish_reasoning": "a meal on its own",
-                        "is_requested_dish": True,
-                        "realistic_portions": True,
-                        "coherent_method": True,
-                    }
                 ]
             },
         ]

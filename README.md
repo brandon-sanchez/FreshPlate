@@ -36,7 +36,7 @@ flowchart LR
 	Graph -.-> LS["LangSmith"]
 ```
 
-The recipe pipeline has four nodes. `analyze_inventory` filters and orders the inventory. `retrieve_recipes` finds similar recipes in pgvector. `generate_recipes` asks Gemini for structured recipes. `check_quality` rejects any recipe that uses food you don't have, then has Gemini judge whether the rest are real meals. If the check rejects recipes and time remains, generation runs once more with the reasons attached.
+The recipe pipeline has three nodes. `analyze_inventory` filters and orders the inventory. `retrieve_recipes` finds similar recipes in pgvector. `write_recipes` asks Gemini for each recipe in its own call, all at once. As each recipe arrives, code rejects any that uses food you don't have or is too small to be a meal, and Gemini judges whether the rest are real meals. If a recipe is rejected and time remains, that recipe alone is written again with the reason attached.
 
 [Architecture](docs/architecture.md) explains each part, with diagrams of the pipeline, the recipe feed, the cook flow, and auth.
 
@@ -102,11 +102,11 @@ CI runs the same checks on every push and pull request.
 
 ## Run the evals
 
-The offline evals need no keys:
+The offline evals need no keys and cost nothing:
 
 ```sh
 cd backend
-venv/bin/python -m scripts.run_evals --mode offline
+venv/bin/python -m scripts.run_evals
 ```
 
-[Run the evals](docs/run-evals.md) covers the live mode, which calls Gemini and records a LangSmith experiment. The [evaluation reference](docs/evals.md) defines each metric and lists the latest scorecards.
+Add `--live` to run the pipeline and the LLM judge on Gemini, which bills each run. [Recipe evals](docs/evals.md) explains what the eval measures, defines the rubric, and shows how to read the scorecard.

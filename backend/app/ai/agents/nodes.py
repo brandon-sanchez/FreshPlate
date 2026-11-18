@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import date
 from decimal import Decimal
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -28,6 +27,7 @@ from app.ai.agents.models import (
     RecipeIngredient,
     recipe_batch_model,
 )
+from app.ai.agents.slots import SlotReviewer, write_slots
 from app.ai.agents.state import (
     GenerationResult,
     InventoryAnalysis,
@@ -56,16 +56,18 @@ from app.inventory.units import (
     to_stock,
 )
 
-logger = logging.getLogger("freshplate.ai.recipes")
-
 EXPIRING_WITHIN_DAYS = 5
 MAX_QUALITY_RETRIES = 1
-QUALITY_RETRY_MIN_BUDGET_SECONDS = 20.0
 GENERATION_DOCS_CEILING = 5
 _GROUNDING_CHECK_SECONDS = 1.0
 # Generation calls stop this long before the pipeline deadline so the meal
 # review can start: Gemini rejects a request deadline under its minimum.
 MEAL_REVIEW_RESERVE_SECONDS = GEMINI_MIN_DEADLINE_SECONDS + _GROUNDING_CHECK_SECONDS
+# A rewrite starts only when its generation call and its meal review can
+# both still get Gemini's minimum deadline.
+QUALITY_RETRY_MIN_BUDGET_SECONDS = (
+    MEAL_REVIEW_RESERVE_SECONDS + GEMINI_MIN_DEADLINE_SECONDS
+)
 # Embedding every pantry item name blurs the retrieval query, so only the
 # highest-priority names are embedded.
 RETRIEVAL_QUERY_TERM_LIMIT = 30
@@ -221,6 +223,11 @@ async def generate_recipes(
     *,
     prompt: PromptTemplate | None = None,
     deadline: PipelineDeadline | None = None,
+    review: SlotReviewer | None = None,
+    quality_retry_limit: int = MAX_QUALITY_RETRIES,
+    retry_only_when_no_valid: bool = False,
+    on_kept: Callable[[Recipe], None] | None = None,
+    stop: asyncio.Event | None = None,
 ) -> GenerationResult:
     """Generate a batch with one concurrent provider call per recipe.
 
@@ -234,30 +241,51 @@ async def generate_recipes(
     recipe is mapped back to real food ids, with a null id for each basic,
     before it is returned.
 
+    With ``review``, each call's recipe is reviewed as soon as that call
+    returns, and a rejected recipe is rewritten alone with its rejection as
+    feedback (see ``write_slots``). A rewrite needs
+    ``QUALITY_RETRY_MIN_BUDGET_SECONDS`` left on the deadline. Kept recipes
+    are listed in the order they were kept, so the fastest come first, and
+    any whose title repeats an earlier one's dish is dropped.
+
     Calls stop ``MEAL_REVIEW_RESERVE_SECONDS`` before the pipeline deadline
     when that still leaves them Gemini's minimum call time, so the meal
     review can still run. A call that fails or is still running then drops
-    only its own recipe. A call
-    that returns no recipe is the model saying the kitchen can't make a
-    meal for its direction. A kitchen with no usable food or a batch
-    ceiling of zero makes no call.
+    only its own recipe. A call that returns no recipe is the model saying
+    the kitchen can't make a meal for its direction. A kitchen with no
+    usable food or a batch ceiling of zero makes no call.
+
+    Args:
+        state: The recipe state after ``analyze_inventory``.
+        provider: The model client generation runs on.
+        prompt: The generation prompt, or None to load ``generate_recipes``.
+        deadline: The pipeline deadline, or None to read the state's.
+        review: Reviews one recipe, or None to keep every recipe unreviewed.
+        quality_retry_limit: The most rewrites per rejected recipe.
+        retry_only_when_no_valid: Rewrite rejected recipes only when no
+            recipe in the batch was kept.
+        on_kept: Called with each recipe the moment it is kept.
+        stop: When set, ends the batch at once. Recipes still being written
+            or reviewed are dropped.
+
+    Returns:
+        Every recipe written and the number of rewrites. With ``review``,
+        also the kept recipes and the rejection reasons of the recipes that
+        were not replaced.
 
     Raises:
-        ProviderError: When at least one call fails and none returns a
-            recipe, so a provider outage never reads as an empty kitchen.
+        ProviderError: When at least one call fails and no recipe is kept,
+            so a provider outage never reads as an empty kitchen.
         ValueError: When the state is malformed.
     """
     template = prompt or load_prompt("generate_recipes")
     batch_ceiling = _batch_ceiling(state)
     usable_items = _usable_items(state.get("usable_items", []))
-    retry_count = _retry_count(state)
-    if state.get("quality_feedback"):
-        # The router bounds retries against the caller's configured limit,
-        # so the counter must stay truthful: capping it here would let a
-        # limit above the default retry forever.
-        retry_count = retry_count + 1
+    reviewed: dict[str, Any] = (
+        {} if review is None else {"valid_recipes": [], "quality_feedback": None}
+    )
     if not usable_items or batch_ceiling == 0:
-        return {"generated_recipes": [], "retry_count": retry_count}
+        return {"generated_recipes": [], "retry_count": 0, **reviewed}
 
     basics: KitchenBasics = state["kitchen_basics"]
     labels = FoodLabels((item["id"] for item in usable_items), basics)
@@ -268,49 +296,70 @@ async def generate_recipes(
         {item["id"]: item["units"] for item in usable_items},
         extra_units=basics.units,
     )
-    calls_deadline = _generation_deadline(deadline or _state_deadline(state))
-    outcomes = await asyncio.gather(
-        *(
-            _generate_one(
-                provider,
-                f"{shared_prompt}\n\n{direction}",
-                response_model=response_model,
-                template=template,
-                labels=labels,
-                deadline=calls_deadline,
-            )
-            for direction in recipe_directions(
-                usable_items,
-                batch_ceiling,
-                offset=_shown_title_count(state),
-                dish=dish,
-            )
+    active_deadline = deadline or _state_deadline(state)
+    calls_deadline = _generation_deadline(active_deadline)
+
+    async def write(direction: str, feedback: str | None) -> Recipe | None:
+        retry = (
+            ""
+            if feedback is None
+            else f"\n\nQuality feedback from the previous attempt:\n{feedback}"
+        )
+        return await _generate_one(
+            provider,
+            f"{shared_prompt}\n\n{direction}{retry}",
+            response_model=response_model,
+            template=template,
+            labels=labels,
+            deadline=calls_deadline,
+        )
+
+    kept: list[Recipe] = []
+
+    def keep(recipe: Recipe) -> None:
+        kept.append(recipe)
+        if on_kept is not None:
+            on_kept(recipe)
+
+    outcomes = await write_slots(
+        recipe_directions(
+            usable_items,
+            batch_ceiling,
+            offset=_shown_title_count(state),
+            dish=dish,
         ),
-        return_exceptions=True,
+        write=write,
+        review=review,
+        quality_retry_limit=quality_retry_limit,
+        retry_only_when_no_valid=retry_only_when_no_valid,
+        can_retry=lambda: active_deadline is None
+        or active_deadline.remaining_seconds >= QUALITY_RETRY_MIN_BUDGET_SECONDS,
+        on_kept=keep,
+        stop=stop,
     )
 
-    recipes: list[Recipe] = []
-    failures: list[BaseException] = []
-    for index, outcome in enumerate(outcomes):
-        if isinstance(outcome, ProviderError):
-            logger.warning(
-                "Recipe generation call %s/%s dropped: %r",
-                index + 1,
-                len(outcomes),
-                outcome,
-            )
-            failures.append(outcome)
-        elif isinstance(outcome, BaseException):
-            raise outcome
-        else:
-            recipes.extend(outcome)
-    if failures and not recipes:
-        # An empty batch tells the feed the kitchen can't make a meal, so
-        # only calls that all answered may say so.
+    failures = [outcome.failure for outcome in outcomes if outcome.failure]
+    if failures and not kept:
         raise ProviderError(
             "No recipe generation call returned a recipe", cause=failures[0]
         ) from failures[0]
-    return {"generated_recipes": recipes, "retry_count": retry_count}
+    if review is not None:
+        reviewed = {
+            "valid_recipes": drop_near_duplicate_titles(kept),
+            "quality_feedback": "\n".join(
+                outcome.feedback
+                for outcome in outcomes
+                if outcome.accepted is None and outcome.feedback
+            )
+            or None,
+        }
+    return {
+        "generated_recipes": [
+            recipe for outcome in outcomes for recipe in outcome.written
+        ],
+        "retry_count": sum(outcome.retries for outcome in outcomes),
+        **reviewed,
+    }
 
 
 async def _generate_one(
@@ -321,8 +370,8 @@ async def _generate_one(
     template: PromptTemplate,
     labels: FoodLabels,
     deadline: PipelineDeadline | None,
-) -> list[Recipe]:
-    """Return the recipe one generation call writes, or an empty list."""
+) -> Recipe | None:
+    """Return the recipe one generation call writes, or None when it writes none."""
     response = await provider.generate(
         prompt,
         response_model=response_model,
@@ -330,10 +379,8 @@ async def _generate_one(
         deadline=deadline,
         thinking=template.thinking,
     )
-    return [
-        labels.resolve(recipe)
-        for recipe in RecipeGenerationResponse.model_validate(response).recipes[:1]
-    ]
+    recipes = RecipeGenerationResponse.model_validate(response).recipes
+    return labels.resolve(recipes[0]) if recipes else None
 
 
 def _shown_title_count(state: Mapping[str, Any]) -> int:
@@ -367,9 +414,7 @@ def check_quality(state: Mapping[str, Any]) -> QualityResult:
     positive amount. A recipe still needs at least one inventory food. Of
     the grounded recipes, one whose title repeats an earlier one's dish is
     dropped without feedback, because the calls that wrote them could
-    not see each other. An empty batch is how the generator reports a
-    kitchen that cannot make a meal, so it produces no quality feedback and
-    never triggers a retry.
+    not see each other. An empty batch produces no quality feedback.
     """
     usable_items = _usable_items(state.get("usable_items", []))
     inventory_by_id = {item["id"]: item for item in usable_items}
@@ -400,31 +445,6 @@ def check_quality(state: Mapping[str, Any]) -> QualityResult:
         "valid_recipes": drop_near_duplicate_titles(valid_recipes),
         "quality_feedback": "\n".join(failures) if failures else None,
     }
-
-
-def route_after_quality(
-    state: Mapping[str, Any],
-    *,
-    quality_retry_limit: int = MAX_QUALITY_RETRIES,
-    retry_only_when_no_valid: bool = False,
-    deadline: PipelineDeadline | None = None,
-) -> Literal["retry", "finish"]:
-    """Retry only when generated recipes were rejected, within the retry budget.
-
-    A retry also needs ``QUALITY_RETRY_MIN_BUDGET_SECONDS`` left on
-    ``deadline``, which defaults to the state's deadline.
-    """
-    if retry_only_when_no_valid and state.get("valid_recipes"):
-        return "finish"
-    if state.get("quality_feedback") and _retry_count(state) < quality_retry_limit:
-        deadline = deadline or _state_deadline(state)
-        if (
-            deadline is not None
-            and deadline.remaining_seconds < QUALITY_RETRY_MIN_BUDGET_SECONDS
-        ):
-            return "finish"
-        return "retry"
-    return "finish"
 
 
 def normalize_query_term(value: str) -> str:
@@ -547,9 +567,6 @@ def _generation_prompt(
         lines.append(", ".join(str(title) for title in exclude_titles) or "None")
 
     lines.extend(_steering_lines(state.get("steering")))
-    feedback = state.get("quality_feedback")
-    if feedback:
-        lines.extend(("", "Quality feedback from the previous attempt:", str(feedback)))
     return "\n".join(lines)
 
 
@@ -774,13 +791,6 @@ def _batch_ceiling(state: Mapping[str, Any]) -> int:
         raise ValueError(
             f"Recipe batch_ceiling must be an integer between 0 and {MAX_BATCH_CEILING}"
         )
-    return value
-
-
-def _retry_count(state: Mapping[str, Any]) -> int:
-    value = state.get("retry_count", 0)
-    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise ValueError("Recipe retry_count must be a non-negative integer")
     return value
 
 

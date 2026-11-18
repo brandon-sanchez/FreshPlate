@@ -162,8 +162,7 @@ def main() -> None:
     Reads ``DEMO_DATABASE_URL`` (a service-role connection string),
     ``DEMO_HOUSEHOLD_ID`` and ``DEMO_USER_ID`` from the environment and
     calls ``public.reset_demo_household`` in one transaction, which deletes
-    the household's foods, lots, cook history and inventory rows and inserts
-    the seed.
+    the household's foods, lots and cook history and inserts the seed.
 
     Raises:
         SystemExit: When a variable is missing or not a UUID, or the reset
