@@ -341,6 +341,82 @@ async def test_invalid_inventory_skips_the_judge():
     assert provider.calls == []
 
 
+GRAM_KITCHEN = [
+    {
+        "id": "chicken",
+        "name": "Chicken thighs",
+        "available": 2000,
+        "stock_base": "g",
+        "category": "Meat & Seafood",
+    },
+    {
+        "id": "parsley",
+        "name": "Parsley",
+        "available": 500,
+        "stock_base": "g",
+        "category": "Produce",
+    },
+]
+
+
+def _gram_recipe(*ingredients):
+    return Recipe.model_validate(
+        {
+            "title": "Fixture dish",
+            "cook_time_minutes": 20,
+            "servings": 2,
+            "ingredients": [
+                {
+                    "name": name,
+                    "inventory_item_id": food,
+                    "use_amount": grams,
+                    "unit": "g",
+                }
+                for food, name, grams in ingredients
+            ],
+            "steps": ["Cook it."],
+        }
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ingredients", "verdict"),
+    [
+        ([("parsley", "Parsley", 60)], "wrong_dish: no main component"),
+        ([("chicken", "Chicken thighs", 150)], "insufficient: about 75 g"),
+    ],
+    ids=["no main component", "under-portioned"],
+)
+async def test_code_rejects_a_clear_non_meal_without_a_judge_call(ingredients, verdict):
+    provider = MealFakeProvider()
+    state = analyze_inventory({"kitchen_basics": NO_BASICS, "inventory": GRAM_KITCHEN})
+
+    review = await review_recipe(
+        _gram_recipe(*ingredients), state, provider, deadline=PipelineDeadline(30)
+    )
+
+    assert review.recipe is None
+    assert f"Recipe 'Fixture dish': {verdict}" in review.feedback
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_full_portion_goes_on_to_the_judge():
+    provider = MealFakeProvider()
+    state = analyze_inventory({"kitchen_basics": NO_BASICS, "inventory": GRAM_KITCHEN})
+
+    review = await review_recipe(
+        _gram_recipe(("chicken", "Chicken thighs", 400)),
+        state,
+        provider,
+        deadline=PipelineDeadline(30),
+    )
+
+    assert review.recipe is not None
+    assert provider.judged_titles == ["Fixture dish"]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("answers", "verdict"),
