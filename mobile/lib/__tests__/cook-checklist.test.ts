@@ -1,10 +1,10 @@
 import {
   addedLine,
   confirmationBody,
-  formatStock,
   linesFromPlan,
   matchAddable,
   reloadLines,
+  shortfallNote,
   stepAmount,
 } from "@/lib/cook-checklist";
 import type { CookPlan, CookPlanFood, CookPlanLine } from "@/types/cook";
@@ -177,6 +177,7 @@ describe("confirmationBody", () => {
       unit: "g",
       available: 400,
       wholeUnitsOnly: false,
+      subUnit: null,
     });
 
     const body = confirmationBody(cook, [{ ...rice, amount: 100 }]);
@@ -224,6 +225,18 @@ describe("step", () => {
     expect(stepAmount(garlic, 1)).toBe(0.25);
     expect(stepAmount(garlic, -1)).toBe(0);
   });
+
+  it("steps a counted food with a smaller unit one smaller unit at a time", () => {
+    const [garlic] = linesFromPlan(
+      plan(food({ each_label: "head", whole_units_only: false, draw: 0.2 })),
+    );
+    const cloves = { ...garlic, subUnit: { label: "clove", perUnit: 0.1 } };
+
+    expect(stepAmount(cloves, 1)).toBe(0.3);
+    expect(stepAmount(cloves, -1)).toBe(0.1);
+    expect(stepAmount({ ...cloves, amount: 0.3 }, 1)).toBe(0.4);
+    expect(stepAmount({ ...cloves, amount: 0.7 }, -1)).toBe(0.6);
+  });
 });
 
 describe("reloadLines", () => {
@@ -235,7 +248,7 @@ describe("reloadLines", () => {
           food({ food_id: "milk", name: "Milk", stock_base: "ml", each_label: null, available: 500, draw: 200 }),
         ),
       ),
-      addedLine({ foodId: "rice", name: "Rice", stockBase: "g", unit: "g", available: 400, wholeUnitsOnly: false }),
+      addedLine({ foodId: "rice", name: "Rice", stockBase: "g", unit: "g", available: 400, wholeUnitsOnly: false, subUnit: null }),
     ];
 
     const reloaded = reloadLines(
@@ -260,20 +273,27 @@ describe("reloadLines", () => {
   });
 });
 
-describe("formatStock", () => {
-  it("names counts in the plural and weights in their largest unit", () => {
-    expect(formatStock(1, "egg", false)).toBe("1 egg");
-    expect(formatStock(2.5, "egg", false)).toBe("2.5 eggs");
-    expect(formatStock(1500, "g", false)).toBe("1.5 kg");
-    expect(formatStock(1995, "ml", false)).toBe("1.995 l");
-    expect(formatStock(750, "ml", true)).toBe("about 750 ml");
+describe("shortfallNote", () => {
+  it("says how much comes off when the amount used is more than the stock", () => {
+    const [chicken] = linesFromPlan(
+      plan(food({ stock_base: "g", each_label: null, whole_units_only: false, available: 230, draw: 425 })),
+    );
+
+    expect(shortfallNote(chicken)).toBe("More than the 230 g you have");
+    expect(shortfallNote({ ...chicken, available: 0 })).toBe("None left to deduct");
+  });
+
+  it("says nothing when the stock covers the amount", () => {
+    const [eggs] = linesFromPlan(plan(food({ draw: 6, available: 6 })));
+
+    expect(shortfallNote(eggs)).toBeNull();
   });
 });
 
 describe("Add item", () => {
   it("matches name and word starts, skips listed foods, and stops at five", () => {
     const names = ["Milk", "Oat milk", "Millet", "Almond milk", "Milkshake mix", "Mild salsa", "Soy milk", "Chamomile"];
-    const foods = names.map((name) => ({ foodId: name, name, stockBase: "ml" as const, unit: "ml", available: 1, wholeUnitsOnly: false }));
+    const foods = names.map((name) => ({ foodId: name, name, stockBase: "ml" as const, unit: "ml", available: 1, wholeUnitsOnly: false, subUnit: null }));
 
     expect(matchAddable(foods, " mil", new Set(["Milk"])).map((f) => f.name)).toEqual([
       "Millet",

@@ -11,6 +11,7 @@ import type { CookPlan } from "@/types/cook";
 const mockApiFetch = jest.fn();
 const mockFoodStock = jest.fn();
 const mockStockQuery: Record<string, jest.Mock> = {};
+const mockUnits: { current: object[] } = { current: [] };
 
 jest.mock("@/lib/supabase", () => ({
   supabase: { from: (table: string) => mockFrom(table) },
@@ -25,6 +26,9 @@ jest.mock("@/lib/api", () => ({
 }));
 
 function mockFrom(table: string) {
+  if (table === "food_units") {
+    return { select: () => ({ eq: async () => ({ data: mockUnits.current, error: null }) }) };
+  }
   for (const method of ["select", "eq", "gt"]) {
     mockStockQuery[method] = jest.fn(() => query);
   }
@@ -107,6 +111,7 @@ async function setup() {
 }
 
 beforeEach(async () => {
+  mockUnits.current = [];
   jest.clearAllMocks();
   mockFoodStock.mockReturnValue({ data: [rice], error: null });
   await AsyncStorage.clear();
@@ -141,8 +146,19 @@ it("plans the active cook's recipe and lists foods in stock for Add item", async
       unit: "g",
       available: 400,
       wholeUnitsOnly: false,
+      subUnit: null,
     },
   ]);
+});
+
+it("gives each line its food's smaller unit", async () => {
+  mockUnits.current = [{ food_id: "eggs", unit_key: "half", base_per_unit: 0.5 }];
+  respond([planWith(6)], () => ({}));
+  const { result } = await setup();
+
+  await waitFor(() =>
+    expect(result.current.lines[0].subUnit).toEqual({ label: "half", perUnit: 0.5 }),
+  );
 });
 
 it("deducts the confirmed amounts, refreshes the inventory and ends the cook", async () => {
@@ -189,6 +205,7 @@ it("reloads stock and marks the changed lines when another cook got there first"
       unit: "g",
       available: 400,
       wholeUnitsOnly: false,
+      subUnit: null,
     }),
   );
   mockFoodStock.mockReturnValue({ data: [], error: null });

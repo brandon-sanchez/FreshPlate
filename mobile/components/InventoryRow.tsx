@@ -15,7 +15,8 @@ import UrgencyBar from "@/components/UrgencyBar";
 import FoodPhoto, { FOOD_PHOTO_RADIUS_RATIO } from "@/components/food-photo";
 import { SkeletonBar } from "@/components/skeleton";
 import type { FoodRow } from "@/lib/foodRows";
-import { formatAmount } from "@/lib/amount";
+import { useFoodSubUnits } from "@/hooks/useFoodSubUnits";
+import { formatAmount, type SubUnit } from "@/lib/amount";
 
 const PHOTO_SIZE = 48;
 const ROW_CONTENT_STYLE = {
@@ -64,6 +65,7 @@ function InventoryRow({
   photoEnabled,
 }: InventoryRowProps) {
   const { colors, fonts, card } = useTheme();
+  const subUnit = useFoodSubUnits()[row.foodId] ?? null;
   const { days } = row;
   const urgencyLabel = days === null ? null : getUrgency(days).label;
   const labelColor =
@@ -109,7 +111,7 @@ function InventoryRow({
       onPress={onPress ? () => onPress(row) : undefined}
       disabled={!onPress}
       accessibilityRole={onPress ? "button" : undefined}
-      accessibilityLabel={accessibilitySummary(row)}
+      accessibilityLabel={accessibilitySummary(row, subUnit)}
       android_ripple={{ color: colors.border, foreground: true }}
       style={ANDROID_RIPPLE_CLIP}
     >
@@ -157,7 +159,7 @@ function InventoryRow({
                 letterSpacing: -0.05,
               }}
             >
-              {metaLine(row)}
+              {metaLine(row, subUnit)}
             </Text>
             <UrgencyBar daysUntilExpiration={days} width={92} />
           </View>
@@ -212,8 +214,8 @@ export function InventoryRowSkeleton() {
   );
 }
 
-function metaLine(row: FoodRow): string {
-  const parts = [formatAmount(row.total, row.unit, row.isEstimate)];
+function metaLine(row: FoodRow, subUnit: SubUnit | null): string {
+  const parts = [formatAmount(row.total, row.unit, row.isEstimate, subUnit)];
   if (row.lots.length > 1) parts.push(`${row.lots.length} batches`);
   parts.push(row.locations.map(capitalize).join(", "));
   if (row.isLeftover) parts.push("Leftover");
@@ -222,8 +224,8 @@ function metaLine(row: FoodRow): string {
   return parts.join(" · ");
 }
 
-function accessibilitySummary(row: FoodRow): string {
-  const parts = [row.name, formatAmount(row.total, row.unit, row.isEstimate)];
+function accessibilitySummary(row: FoodRow, subUnit: SubUnit | null): string {
+  const parts = [row.name, formatAmount(row.total, row.unit, row.isEstimate, subUnit)];
   if (row.lots.length > 1) parts.push(`${row.lots.length} batches`);
   parts.push(expirySummary(row.days));
   const hidden = hiddenExpiredLots(row);

@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -19,6 +19,7 @@ const FOOTER_TOP_PADDING = 16;
 const CONFIRM_BUTTON_HEIGHT = 54;
 const FOOTER_BOTTOM_GAP = 14;
 const KEYBOARD_GAP = 16;
+const DOUBLE_TAP_GUARD_MS = 700;
 
 type CookChecklistProps = {
   /** Called by "Back", which returns to the recipe without changing anything. */
@@ -30,7 +31,9 @@ type CookChecklistProps = {
 /**
  * The done-cooking checklist for the active cook: one card per tracked food,
  * "Add item", the untracked ingredients greyed, and one confirm button that
- * deducts everything. Reads and confirms through {@link useCookChecklist}.
+ * deducts everything. The button stays disabled until the checklist has
+ * loaded and been on screen for a moment. Reads and confirms through
+ * {@link useCookChecklist}.
  */
 export default function CookChecklist({ onBack, onConfirmed }: CookChecklistProps) {
   const { colors, fonts } = useTheme();
@@ -42,7 +45,8 @@ export default function CookChecklist({ onBack, onConfirmed }: CookChecklistProp
   const footerPadding = insets.bottom + FOOTER_BOTTOM_GAP;
   const ingredients = checklist.cook?.recipe.ingredients ?? [];
   const listed = new Set(checklist.lines.map((line) => line.foodId));
-  const canConfirm = checklist.status === "ready" && !checklist.confirming;
+  const settled = useSettled(checklist.status === "ready");
+  const canConfirm = settled && !checklist.confirming;
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.bg }]}>
@@ -172,6 +176,16 @@ export default function CookChecklist({ onBack, onConfirmed }: CookChecklistProp
       </View>
     </View>
   );
+}
+
+function useSettled(ready: boolean): boolean {
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    if (!ready) return;
+    const timer = setTimeout(() => setSettled(true), DOUBLE_TAP_GUARD_MS);
+    return () => clearTimeout(timer);
+  }, [ready]);
+  return ready && settled;
 }
 
 function UntrackedCard({

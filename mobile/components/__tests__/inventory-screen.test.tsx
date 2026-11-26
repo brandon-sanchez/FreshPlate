@@ -124,10 +124,10 @@ it("shows one row per food with its batches stacked, counting foods in the subti
   expect(await screen.findByText("2 items · 1 expired")).toBeTruthy();
   await chooseTab("Urgency");
   expect(screen.getAllByText("Milk")).toHaveLength(1);
-  expect(screen.getByText("2000 ml · 2 batches · Fridge, Freezer")).toBeTruthy();
-  expect(screen.getByText("6 egg · Fridge")).toBeTruthy();
+  expect(screen.getByText("2 l · 2 batches · Fridge, Freezer")).toBeTruthy();
+  expect(screen.getByText("6 eggs · Fridge")).toBeTruthy();
 
-  fireEvent.press(screen.getByLabelText("Milk, 2000 ml, 2 batches, expires in 3 days"));
+  fireEvent.press(screen.getByLabelText("Milk, 2 l, 2 batches, expires in 3 days"));
   expect(mockPush).toHaveBeenCalledWith("/food/food-milk");
 });
 
@@ -210,8 +210,8 @@ it("splits a food across places in the Location view it opens on", async () => {
   await screen.findByText("2 items · 1 expired");
 
   expect(screen.getAllByText("Milk")).toHaveLength(2);
-  expect(screen.getByText("1000 ml · Fridge")).toBeTruthy();
-  expect(screen.getByText("1000 ml · Freezer")).toBeTruthy();
+  expect(screen.getByText("1 l · Fridge")).toBeTruthy();
+  expect(screen.getByText("1 l · Freezer")).toBeTruthy();
   expect(screen.queryByText(/batches/)).toBeNull();
 });
 
@@ -223,8 +223,8 @@ it("counts a food with an expired batch behind a fresh one as expired and says s
   renderScreen();
 
   expect(await screen.findByText("1 item · 1 expired")).toBeTruthy();
-  expect(screen.getByText("1000 ml · 2 batches · Fridge · 1 expired")).toBeTruthy();
-  expect(screen.getByLabelText("Milk, 1000 ml, 2 batches, expires in 4 days, 1 expired")).toBeTruthy();
+  expect(screen.getByText("1 l · 2 batches · Fridge · 1 expired")).toBeTruthy();
+  expect(screen.getByLabelText("Milk, 1 l, 2 batches, expires in 4 days, 1 expired")).toBeTruthy();
 });
 
 it("opens Review expired from the subtitle in any view, even when the expired batch sits behind a fresh one", async () => {
@@ -364,7 +364,7 @@ it("filters by place from the menu as each option is checked, and clears from th
   fireEvent.press(screen.getByRole("checkbox", { name: "Freezer" }));
 
   expect(rowNames()).toEqual(["Milk"]);
-  expect(screen.getByText("1000 ml · Freezer")).toBeTruthy();
+  expect(screen.getByText("1 l · Freezer")).toBeTruthy();
   expect(screen.getByRole("checkbox", { name: "Freezer", checked: true })).toBeTruthy();
   expect(screen.getByText("Expiry date, soonest first · Freezer")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Sort and filter" }).props.accessibilityValue).toEqual({

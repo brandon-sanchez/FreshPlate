@@ -4,7 +4,8 @@ import Feather from "@expo/vector-icons/Feather";
 import FoodPhoto from "@/components/food-photo";
 import { card } from "@/constants/theme";
 import { useTheme } from "@/hooks/useTheme";
-import { formatStock, matchAddable, type AddableFood } from "@/lib/cook-checklist";
+import { formatAmount } from "@/lib/amount";
+import { matchAddable, type AddableFood } from "@/lib/cook-checklist";
 
 type CookAddItemProps = {
   /** The household's foods with unexpired stock. */
@@ -72,7 +73,7 @@ export default function CookAddItem({
             {food.name}
           </Text>
           <Text style={[styles.matchStock, { color: colors.textMuted, fontFamily: fonts.body }]}>
-            {formatStock(food.available, food.unit, false)}
+            {formatAmount(food.available, food.unit, false, food.subUnit)}
           </Text>
         </Pressable>
       ))}

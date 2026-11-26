@@ -155,7 +155,7 @@ it("lists only expired batches, most overdue first", async () => {
 
   expect(await screen.findByText("2 expired batches")).toBeTruthy();
   expect(screen.getAllByLabelText(/Expired \d+ days ago/).map((c) => c.props.accessibilityLabel)).toEqual([
-    "Eggs, 6 egg, Expired 9 days ago",
+    "Eggs, 6 eggs, Expired 9 days ago",
     "Milk, 500 ml, Expired 2 days ago",
   ]);
 });

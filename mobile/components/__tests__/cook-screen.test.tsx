@@ -115,6 +115,11 @@ function renderCookScreen() {
 
 async function confirmCook() {
   await screen.findByText("Eggs");
+  await waitFor(() =>
+    expect(screen.getByTestId("cook-confirm").props.accessibilityState).toMatchObject({
+      disabled: false,
+    }),
+  );
   await act(async () => {
     fireEvent.press(screen.getByTestId("cook-confirm"));
   });

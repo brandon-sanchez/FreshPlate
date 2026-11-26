@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
+import { useFoodStock } from "@/hooks/useFoodStock";
 import { useTheme } from "@/hooks/useTheme";
+import { foodNameKey } from "@/lib/foodName";
 import {
   MAX_KITCHEN_BASICS,
   MAX_KITCHEN_BASIC_NAME_LENGTH,
@@ -19,7 +21,9 @@ type KitchenBasicsEditorProps = {
 
 /**
  * Lists the household's kitchen basics as removable pills, with a field to add
- * one. Reads and writes through the `useKitchenBasics` hooks.
+ * one. Reads and writes through the `useKitchenBasics` hooks. A basic the
+ * kitchen also stocks as a food, read through {@link useFoodStock}, is
+ * deducted like that food, and a note under the pills says so.
  */
 export default function KitchenBasicsEditor({
   onInputFocus,
@@ -27,12 +31,17 @@ export default function KitchenBasicsEditor({
 }: KitchenBasicsEditorProps) {
   const { colors, fonts } = useTheme();
   const basics = useKitchenBasics();
+  const stock = useFoodStock();
   const add = useAddKitchenBasic();
   const remove = useRemoveKitchenBasic();
   const [draft, setDraft] = useState("");
 
   const list = basics.data ?? [];
   const full = list.length >= MAX_KITCHEN_BASICS;
+  const stocked = new Set((stock.data ?? []).map((food) => foodNameKey(food.name)));
+  const deducted = list
+    .filter((basic) => stocked.has(foodNameKey(basic.name)))
+    .map((basic) => basic.name);
 
   const submit = () => {
     const name = draft.trim();
@@ -155,6 +164,17 @@ export default function KitchenBasicsEditor({
           </Pressable>
         </View>
       )}
+      {deducted.length > 0 ? note(stockedNote(deducted)) : null}
     </View>
   );
+}
+
+function stockedNote(names: readonly string[]): string {
+  const listed =
+    names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  const verb = names.length === 1 ? "is" : "are";
+  const pronoun = names.length === 1 ? "it" : "them";
+  return `${listed} ${verb} in your kitchen, so cooking deducts ${pronoun} like any food.`;
 }
