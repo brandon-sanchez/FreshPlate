@@ -1,0 +1,15 @@
+<!--
+  scripts/render-app-icons.swift renders every icon, splash and favicon PNG in
+  this folder from this file. Colors mirror `colors.light` in constants/theme.ts:
+  accent #2F5D4A, bg #F5F3EE, border #E2DED4 and accentSoft #DCE8DE.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <circle cx="512" cy="524" r="336" fill="#F5F3EE"/>
+  <circle cx="512" cy="524" r="258" fill="none" stroke="#E2DED4" stroke-width="12"/>
+  <g transform="translate(512 524) rotate(-45)">
+    <path d="M-200 0 C-140 -150 90 -160 215 0 C90 160 -140 150 -200 0 Z" fill="#2F5D4A"/>
+    <path d="M-262 0 H-170" stroke="#2F5D4A" stroke-width="18" stroke-linecap="round"/>
+    <path d="M-150 0 H130" stroke="#F5F3EE" stroke-width="16" stroke-linecap="round"/>
+  </g>
+  <path transform="translate(806 196) scale(11) translate(-12 -10)" d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z" fill="#DCE8DE"/>
+</svg>
