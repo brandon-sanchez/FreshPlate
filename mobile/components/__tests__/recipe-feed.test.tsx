@@ -39,6 +39,11 @@ jest.mock("@expo/vector-icons/FontAwesome", () => {
   return MockIcon;
 });
 
+jest.mock("@expo/vector-icons/Ionicons", () => {
+  const MockIcon = () => null;
+  return MockIcon;
+});
+
 import RecipeFeed from "@/components/recipe-feed";
 import { ToastHost } from "@/components/toastConfig";
 import Toast from "@/lib/toast";
