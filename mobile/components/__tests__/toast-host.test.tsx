@@ -1,5 +1,5 @@
 import React from "react";
-import { Keyboard, StyleSheet, type KeyboardEvent } from "react-native";
+import { Dimensions, Keyboard, StyleSheet, type KeyboardEvent } from "react-native";
 import { act, fireEvent, render, screen } from "@testing-library/react-native";
 import { ToastHost, showUndoToast } from "@/components/toastConfig";
 import Toast from "@/lib/toast";
@@ -19,11 +19,12 @@ function toastStyle() {
   return StyleSheet.flatten(screen.getByTestId("toast").props.style);
 }
 
-it("sits at the bottom right, just above the tab bar", () => {
+it("sits centred at the bottom, just above the tab bar", () => {
+  jest.spyOn(Dimensions, "get").mockReturnValue({ width: 440, height: 956, scale: 3, fontScale: 1 });
   render(<ToastHost bottomInset={118} />);
   act(() => Toast.show({ type: "success", text1: "Saved" }));
   expect(screen.getByText("Saved")).toBeTruthy();
-  expect(toastStyle()).toMatchObject({ right: 16, bottom: 130 });
+  expect(toastStyle()).toMatchObject({ left: 50, width: 340, bottom: 130 });
 });
 
 it("rides above the keyboard while it is open", () => {

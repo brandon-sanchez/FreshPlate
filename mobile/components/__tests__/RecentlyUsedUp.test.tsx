@@ -1,5 +1,6 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import { StyleSheet } from "react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const mockRows = jest.fn();
@@ -10,7 +11,7 @@ const mockQuery = {
   order: async () => ({ data: mockRows(), error: null }),
 };
 
-jest.mock("@expo/vector-icons/FontAwesome", () => () => null);
+jest.mock("@expo/vector-icons/Feather", () => () => null);
 jest.mock("@/lib/supabase", () => ({
   supabase: { from: () => mockQuery, rpc: (...args: unknown[]) => mockRpc(...args) },
 }));
@@ -23,6 +24,7 @@ jest.mock("@/lib/toast", () => ({ __esModule: true, default: { show: jest.fn() }
 import RecentlyUsedUp from "@/components/RecentlyUsedUp";
 
 const NOW = new Date("2026-11-17T12:00:00");
+const LAYOUT = { nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 120 } } };
 
 const eggs = {
   lot_id: "lot-eggs",
@@ -121,4 +123,28 @@ it("renders nothing when no food ran out recently", async () => {
   const { toJSON } = renderSection();
 
   await waitFor(() => expect(toJSON()).toBeNull());
+});
+
+it("lines up with the inventory sections' side margin", async () => {
+  renderSection();
+
+  await screen.findByRole("button", { name: "Recently used up, 2 foods" });
+
+  expect(StyleSheet.flatten(screen.getByTestId("recently-used-up").props.style)).toMatchObject({
+    paddingHorizontal: 16,
+  });
+});
+
+it("asks once to be scrolled into view when the section or a Restore form opens", async () => {
+  const onExpand = jest.fn();
+  renderSection({ onExpand });
+  fireEvent.press(await screen.findByRole("button", { name: "Recently used up, 2 foods" }));
+
+  fireEvent(screen.getByTestId("recently-used-up-list"), "layout", LAYOUT);
+  fireEvent(screen.getByTestId("recently-used-up-list"), "layout", LAYOUT);
+  expect(onExpand).toHaveBeenCalledTimes(1);
+
+  fireEvent.press(screen.getByRole("button", { name: "Restore Eggs" }));
+  fireEvent(screen.getByTestId("restore-form-lot-eggs"), "layout", LAYOUT);
+  expect(onExpand).toHaveBeenCalledTimes(2);
 });
